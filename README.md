@@ -7,7 +7,7 @@ Intercepted traffic is stored in a local SQLite Database. You can export the SQL
 
 ## License
 
-Copyright [2021] [Thomas Cory]
+Copyright 2021 Thomas Cory
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
