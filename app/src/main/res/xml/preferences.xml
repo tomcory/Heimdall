@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <PreferenceCategory
+        app:key="monitoring_category"
+        app:title="Monitoring">
+
+        <ListPreference
+            app:key="monitoring_scope"
+            app:title="Monitoring scope (coming soon)"
+            android:enabled="false"
+            app:defaultValue="all"
+            app:entries="@array/monitoring_scope_entries"
+            app:entryValues="@array/monitoring_scope_entry_values"
+            app:useSimpleSummaryProvider="true"
+            app:icon="@drawable/ic_eye_settings_outline" />
+
+        <Preference
+            app:key="whitelist"
+            app:title="Edit whitelist"
+            android:enabled="false"
+            app:summary="Limit monitoring to specific applications"
+            app:icon="@drawable/ic_eye_plus_outline" />
+
+        <Preference
+            app:key="blacklist"
+            app:title="Edit blacklist"
+            android:enabled="false"
+            app:summary="Disable monitoring for specific applications"
+            app:icon="@drawable/ic_eye_minus_outline" />
+
+        <CheckBoxPreference
+            app:key="exclude_system"
+            app:title="Exclude system services"
+            app:summary="Disable monitoring of Android system services"
+            android:icon="@drawable/ic_eye_off_outline" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:key="vpn_category"
+        app:title="Advanced VPN Settings">
+
+        <EditTextPreference
+            app:key="dns_server"
+            app:title="DNS server"
+            app:defaultValue="1.1.1.1"
+            app:summary="DNS server used by the VPN interface"
+            app:icon="@drawable/ic_dns" />
+
+        <EditTextPreference
+            app:key="vpn_subnet"
+            app:title="VPN subnet"
+            app:defaultValue="10.120.0.1/32"
+            app:summary="IP address range used by the VPN interface"
+            app:icon="@drawable/ic_subnet" />
+
+        <Preference
+            app:key="vpn_reset"
+            app:title="Reset to defaults"
+            app:summary="Apply default VPN settings"
+            app:icon="@drawable/ic_reset" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:key="debug_category"
+        app:title="Debugging">
+
+        <Preference
+            app:key="pref_reset"
+            app:title="Clear SharedPreferences"
+            app:summary="Clear and reset all SharedPreferences"
+            app:icon="@drawable/ic_reset" />
+    </PreferenceCategory>
+</PreferenceScreen>

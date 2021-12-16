@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="stepper_titles">
+        <item>Choose an App</item>
+        <item>Patch the App</item>
+        <item>Download patched App</item>
+        <item>Install patched App</item>
+    </string-array>
+</resources>

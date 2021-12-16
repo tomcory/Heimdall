@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="monitoring_scope_entry_values">
+        <item>all</item>
+        <item>whitelist</item>
+        <item>blacklist</item>
+    </array>
+    <array name="monitoring_scope_entries">
+        <item>All applications</item>
+        <item>Whitelist</item>
+        <item>Blacklist</item>
+    </array>
+</resources>

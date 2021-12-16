@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#717171</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorPrimaryLight">#BABABA</color>
+    <color name="colorAccent">#8BC34A</color>
+
+    <color name="white">#FFFFFF</color>
+
+    <color name="colorPrimaryOrig">#1976d2</color>
+    <color name="colorPrimaryDarkOrig">#0d47a1</color>
+    <color name="colorPrimaryLightOrig">#63a4ff</color>
+
+    <color name="red50Base">#D50000</color>
+    <string-array name="paletteRed50">
+        <item>#D50000</item>
+        <item>#FF1744</item>
+        <item>#FF5252</item>
+        <item>#FF8A80</item>
+    </string-array>
+
+    <color name="lightBlue50Base">#0091EA</color>
+    <string-array name="paletteLightBlue50">
+        <item>#0091EA</item>
+        <item>#00B0FF</item>
+        <item>#40C4FF</item>
+        <item>#80D8FF</item>
+    </string-array>
+
+    <color name="green50Base">#00C853</color>
+    <string-array name="paletteGreen50">
+        <item>#00C853</item>
+        <item>#00E676</item>
+        <item>#69F0AE</item>
+        <item>#B9F6CA</item>
+    </string-array>
+
+    <color name="amber50Base">#FFAB00</color>
+    <string-array name="paletteAmber50">
+        <item>#FFAB00</item>
+        <item>#FFC400</item>
+        <item>#FFD740</item>
+        <item>#FFE57F</item>
+    </string-array>
+
+    <color name="materialButtonColour">#FFE57F</color>
+</resources>

@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Heimdall</string>
+    <string name="channel_name">Heimdall Notification Channel</string>
+    <string name="channel_description">Notification Channel for the HeimdallVpnService foreground service</string>
+    <string name="notification_title">Heimdall is active</string>
+    <string name="notification_text">…and keeping watch.</string>
+    <string name="notification_stop_vpn">Stop VPN Service</string>
+    <string name="default_dns">1.1.1.1</string>
+    <string name="default_subnet">10.120.0.1/32</string>
+
+    <string name="app_page_value_format">%d %s</string>
+    <string name="app_page_count_format">%d Apps</string>
+
+    <string name="across">across</string>
+</resources>
