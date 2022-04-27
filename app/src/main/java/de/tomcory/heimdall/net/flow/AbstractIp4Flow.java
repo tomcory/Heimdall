@@ -179,7 +179,7 @@ public abstract class AbstractIp4Flow {
     }
 
     public synchronized void setFlowStatus(FlowStatus flowStatus) {
-        Timber.d("FlowStatus change: " + this.flowStatus.name() + " -> " + flowStatus.name() + " " + StringUtils.address(this));
+        Timber.d(this.flowId + ": FlowStatus change: " + this.flowStatus.name() + " -> " + flowStatus.name() + " " + StringUtils.address(this));
         this.flowStatus = flowStatus;
 
         if(this.flowStatus == FlowStatus.CLOSED || this.flowStatus == FlowStatus.ABORTED) {

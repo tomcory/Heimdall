@@ -143,7 +143,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
 
         if(flow.getFlowStatus() != AbstractIp4Flow.FlowStatus.CONNECTED) {
             // the flow is not ready to forward data, abort
-            Timber.e("Got ACK (data, invalid state " + flow.getFlowStatus().name() + ") " + StringUtils.addressOut(outgoingPacket));
+            Timber.e(flow.getFlowId() + ": Got ACK (data, invalid state " + flow.getFlowStatus().name() + ") " + StringUtils.addressOut(outgoingPacket));
             abortAndRst(flow);
 
         } else {
@@ -161,7 +161,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                 try {
                     socketChannel.write(buffer);
                 } catch (IOException e) {
-                    Timber.e(e, "Error writing to SocketChannel %s", StringUtils.addressOut(outgoingPacket));
+                    Timber.e(e, flow.getFlowId() + ": Error writing to SocketChannel %s", StringUtils.addressOut(outgoingPacket));
                     abortAndRst(flow);
                     break;
                 }
@@ -177,29 +177,21 @@ public class OutgoingTrafficHandler extends HandlerThread {
     }
 
     private void handleAckEmpty(@NonNull IpV4Packet outgoingPacket, @NonNull Tcp4Flow flow) {
+        //TODO: Android 10 seems to randomly send empty ACKs - why? -> ignoring random ACKs for now
         if(flow.getFlowStatus() == AbstractIp4Flow.FlowStatus.CONNECTING) {
             // establishing handshake complete, set status to CONNECTED
             flow.setFlowStatus(AbstractIp4Flow.FlowStatus.CONNECTED);
 
-        }
-        /* else if(flow.getFlowStatus() == AbstractIp4Flow.FlowStatus.CONNECTED) {
-            // ignore empty ACK packets, there is no packet loss that would make acknowledgements useful
-        }*/
-        else if(flow.getFlowStatus() == AbstractIp4Flow.FlowStatus.CLOSING) {
+        } else if(flow.getFlowStatus() == AbstractIp4Flow.FlowStatus.CLOSING) {
             // closing handshake complete, set status to CLOSED
             flow.setFlowStatus(AbstractIp4Flow.FlowStatus.CLOSED);
             FlowCache.removeFlow(flow);
-
-        } else {
-            // there is no good reason for an acknowledgement in any other flow state, abort
-            Timber.w("Got ACK (empty, invalid state " + flow.getFlowStatus().name() + ") " + StringUtils.addressOut(outgoingPacket));
-            abortAndRst(flow);
         }
     }
 
     private void handleSynAck(@NonNull IpV4Packet outgoingPacket, @NonNull Tcp4Flow flow) {
         // SYN ACK packets should not be sent by the client, abort
-        Timber.w("Got SYN ACK (invalid) %s", StringUtils.addressOut(outgoingPacket));
+        Timber.w(flow.getFlowId() + ": Got SYN ACK (invalid) %s", StringUtils.addressOut(outgoingPacket));
         abortAndRst(flow);
     }
 
@@ -233,7 +225,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                     flow.getSelectionKey().channel().close();
                 }
             } catch (IOException e) {
-                Timber.e(e, "Error closing SocketChannel %s", StringUtils.addressOut(outgoingPacket));
+                Timber.e(e, flow.getFlowId() + ": Error closing SocketChannel %s", StringUtils.addressOut(outgoingPacket));
             }
             flow.increaseTheirSeqNum(1);
             IpV4Packet finAckResponse = flow.buildFinAck();
@@ -282,7 +274,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                     socketChannel.connect(new InetSocketAddress(outgoingPacket.getHeader().getDstAddr().getHostAddress(), tcpHeader.getDstPort().valueAsInt()));
 
                 } catch (IOException e) {
-                    Timber.e(e, "Error opening SocketChannel %s", StringUtils.addressOut(outgoingPacket));
+                    Timber.e(e, flow.getFlowId() + ": Error opening SocketChannel %s", StringUtils.addressOut(outgoingPacket));
                     abortAndRst(flow);
                     return;
                 }
@@ -297,7 +289,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                     }
 
                 } catch (ClosedChannelException e) {
-                    Timber.e(e, "Error registering SocketChannel %s", StringUtils.addressOut(outgoingPacket));
+                    Timber.e(e, flow.getFlowId() + ": Error registering SocketChannel %s", StringUtils.addressOut(outgoingPacket));
                     abortAndRst(flow);
                 }
 
@@ -390,7 +382,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                 datagramChannel.connect(new InetSocketAddress(outgoingPacket.getHeader().getDstAddr().getHostAddress(), udpHeader.getDstPort().valueAsInt()));
 
             } catch (IOException e) {
-                Timber.e(e, "Error opening DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
+                Timber.e(e, flow.getFlowId() + ": Error opening DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
                 FlowCache.removeFlow(flow);
                 return;
             }
@@ -405,7 +397,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                 }
 
             } catch (ClosedChannelException e) {
-                Timber.e(e, "Error registering DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
+                Timber.e(e, flow.getFlowId() + ": Error registering DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
                 FlowCache.removeFlow(flow);
                 return;
             }
@@ -423,7 +415,7 @@ public class OutgoingTrafficHandler extends HandlerThread {
                 try {
                     datagramChannel.write(buffer);
                 } catch (IOException | BufferOverflowException e) {
-                    Timber.e(e, "Error writing to DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
+                    Timber.e(e, flow.getFlowId() + ": Error writing to DatagramChannel %s", StringUtils.addressOut(outgoingPacket));
                     FlowCache.removeFlow(flow);
                     break;
                 }

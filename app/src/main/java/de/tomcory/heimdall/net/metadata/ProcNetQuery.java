@@ -1,10 +1,13 @@
 package de.tomcory.heimdall.net.metadata;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.PermissionInfo;
 import android.net.ConnectivityManager;
 import android.os.Build;
 import android.system.OsConstants;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
@@ -14,7 +17,9 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.util.List;
 
 import de.tomcory.heimdall.net.flow.AbstractIp4Flow;
 import de.tomcory.heimdall.net.flow.Tcp4Flow;
@@ -55,6 +60,7 @@ public class ProcNetQuery {
 
                 try {
                     app.appLabel = (String) pm.getApplicationLabel(pm.getApplicationInfo(packages[0], PackageManager.GET_META_DATA));
+
 
                 } catch (PackageManager.NameNotFoundException e) {
                     Timber.e(e, "Error retrieving application metadata");
@@ -133,5 +139,35 @@ public class ProcNetQuery {
             }
         }
         return -1;
+    }
+
+    public static void checkAllGrantedPermissions(Context context) {
+        final PackageManager pm = context.getPackageManager();
+        // Loop each package requesting <manifest> permissions
+        for (final PackageInfo pi : pm.getInstalledPackages(PackageManager.GET_PERMISSIONS)) {
+            final String[] requestedPermissions = pi.requestedPermissions;
+            if (requestedPermissions == null) {
+                // No permissions defined in <manifest>
+                continue;
+            }
+            // Loop each <uses-permission> tag to retrieve the permission flag
+            for (int i = 0, len = requestedPermissions.length; i < len; i++) {
+                final String requestedPerm = requestedPermissions[i];
+                // Retrieve the protection level for each requested permission
+                int protLevel;
+                try {
+                    protLevel = pm.getPermissionInfo(requestedPerm, 0).protectionLevel;
+                } catch (PackageManager.NameNotFoundException e) {
+                    Log.e(TAG, "Unknown permission: " + requestedPerm, e);
+                    continue;
+                }
+                final boolean system = protLevel == PermissionInfo.PROTECTION_SIGNATURE;
+                final boolean dangerous = protLevel == PermissionInfo.PROTECTION_DANGEROUS;
+                final boolean granted = (pi.requestedPermissionsFlags[i]
+                        & PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
+
+                Timber.d("%s - %s: %s", pi.packageName, requestedPerm, granted ? "granted" : "denied");
+            }
+        }
     }
 }

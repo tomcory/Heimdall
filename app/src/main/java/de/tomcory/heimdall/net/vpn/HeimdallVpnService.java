@@ -326,9 +326,6 @@ public class HeimdallVpnService extends VpnService {
                 .setSession("Heimdall")
                 .addDnsServer(dnsServer)
                 .addAddress(baseAddress, prefixLength)
-
-                //TODO: this is a dirty fix which allows us to gain the NETWORK_STACK permission by opening a VPN in parallel to our proxy. The VPN doesn't accept any traffic this way.
-                //.addRoute("0.0.0.0", 0);
                 .addRoute("0.0.0.0", 0);
 
         String monitoringScope = sharedPreferences.getString("monitoring_scope", "all");

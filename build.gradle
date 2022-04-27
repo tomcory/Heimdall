@@ -2,14 +2,14 @@
 buildscript {
 
     ext {
-        gradle_version = '7.0.3'
+        gradle_version = '7.1.3'
         kotlin_version = '1.6.10'
         room_version = '2.4.0'
         coroutine_version = '1.3.7'
         lifecycle_version = '2.4.0'
         livedata_version = '2.4.0'
         test_version = '1.4.0'
-        navigation_version = '2.3.5'
+        navigation_version = '2.4.1'
         data_binding_compiler_version = gradle_version // Always need to be the same.
     }
 
