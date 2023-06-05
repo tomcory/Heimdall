@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Heimdall</string>
     <string name="channel_name">Heimdall Notification Channel</string>
@@ -5,11 +6,65 @@
     <string name="notification_title">Heimdall is active</string>
     <string name="notification_text">…and keeping watch.</string>
     <string name="notification_stop_vpn">Stop VPN Service</string>
+    <string name="ca_dialog_message">Heimdall needs to install a root certificate to be able to analyse encrypted TLS traffic. Please select install to continue.</string>
+    <string name="ca_dialog_title">Install Root Certificate</string>
+    <string name="ca_dialog_install">Install</string>
+    <string name="ca_dialog_cancel">Cancel</string>
+    <string name="menu_home">Dashboard</string>
+    <string name="menu_graph">Graph</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_connections">Connections</string>
+    <string name="launch_button_description">Launch Button</string>
+    <string name="menu_research">Insights</string>
+    <string name="conList_hostname">subdomain.example.com</string>
+    <string name="conList_package">com.example.app</string>
+    <string name="conList_address">255.255.255.255</string>
+    <string name="conList_appLogo_desc">Logo of the corresponding app</string>
+    <string name="statsTitleBytesRec">Bytes received</string>
+    <string name="thisSession">This session</string>
+    <string name="total">Total</string>
+    <string name="statsTitleConnections">Connections</string>
+    <string name="statsTitlePackets">Transferred Packets</string>
+    <string name="statsTitleBytesSent">Bytes sent</string>
+    <string name="monitoringInactive">Monitoring inactive</string>
+    <string name="monitoringActive">Monitoring active</string>
+    <string name="status_indicator">Status indicator</string>
     <string name="default_dns">1.1.1.1</string>
     <string name="default_subnet">10.120.0.1/32</string>
+    <string name="tls_indicator">TLS indicator</string>
+    <string name="style_label_default">styleLabelDefault</string>
+    <string name="style_label_retro">styleLabelRetro</string>
+    <string name="style_label_night">styleLabelNight</string>
+    <string name="style_label_grayscale">styleLabelGrayscale</string>
+    <string name="style_label_no_pois_no_transit">styleLabelNoPoisNoTransit</string>
+    <string name="style_choose">Choose Style</string>
+    <string name="style_set_to">Apply %s</string>
+    <string name="style_label_clean">styleLabelClean</string>
+    <string name="menu_map">Map</string>
+    <string name="menu_apps">Apps</string>
+    <string name="menu_hosts">Hosts</string>
 
-    <string name="app_page_value_format">%d %s</string>
+    <!-- fragment_app_detail-->
+    <string name="app_detail_string_hosts">Unique hosts</string>
+    <string name="app_detail_string_domains">Unique domains</string>
+    <string name="app_detail_string_flows">Recorded flows</string>
+    <string name="app_detail_string_traffic">Overall traffic volume</string>
+    <string name="app_detail_string_download">Download volume</string>
+    <string name="app_detail_string_upload">Upload volume</string>
+    <string name="app_detail_string_header_destinations">Destinations</string>
+    <string name="app_detail_string_header_hosts">Hosts</string>
+    <string name="app_detail_string_header_trafficstats">Traffic Statistics</string>
+
+    <string name="app_page_value_format" formatted="false">%d %s</string>
     <string name="app_page_count_format">%d Apps</string>
 
     <string name="across">across</string>
+    <string name="map_toolbar_title">Choropleth Map</string>
+    <!-- TODO: Remove or change this placeholder text -->
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+    <string name="title_activity_stepper">StepperActivity</string>
+    <string name="menu_http">HTTP</string>
+    <string name="menu_export">Export</string>
+    <string name="title_activity_main">MainActivity</string>
+
 </resources>

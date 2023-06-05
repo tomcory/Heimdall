@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <array name="app_metrics">
+        <item>Connections</item>
+        <item>Traffic Volume</item>
+        <item>Download</item>
+        <item>Upload</item>
+    </array>
+</resources>

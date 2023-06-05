@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+option java_package = "de.tomcory.heimdall";
+option java_multiple_files = true;
+
+enum MonitoringScopeApps {
+  APPS_ALL = 0;
+  APPS_NON_SYSTEM = 1;
+  APPS_WHITELIST = 2;
+  APPS_BLACKLIST = 3;
+}
+
+enum MonitoringScopeHosts {
+  HOSTS_ALL = 0;
+  HOSTS_WHITELIST = 1;
+  HOSTS_BLACKLIST = 2;
+}
+
+message Preferences {
+  // indicates whether transport-layer packets are written to the database
+  bool vpn_persist_transport_layer = 1;
+  // address of the DNS server used by the VPN
+  string vpn_dns_server = 2;
+  // base address of the VPN
+  string vpn_base_address = 3;
+  // route captured by the VPN
+  string vpn_route = 4;
+  // indicates whether an external proxy is used by the VPN (requires Android 10+)
+  bool vpn_use_proxy = 5;
+  // address of the proxy used by the VPN
+  string vpn_proxy_address = 6;
+  // list of whitelisted package names
+  repeated string vpn_whitelisted_apps = 7;
+  // list of blacklisted package names
+  repeated string vpn_blacklisted_apps = 8;
+  // defines the scope of apps captured by the VPN
+  MonitoringScopeApps vpn_monitoringScope = 9;
+  // indicates whether the MitM component is enabled
+  bool mitm_enable = 10;
+  // the path to the CA certificate required by the MitM component
+  string mitm_ca_cert_path = 11;
+  // defines the scope of apps captured by the MitM component
+  MonitoringScopeApps mitm_monitoringScope = 12;
+  // defines the scope of hosts captured by the MitM component
+  MonitoringScopeHosts mitm_monitoringScopeHosts = 13;
+  // list of whitelisted package names
+  repeated string mitm_whitelisted_apps = 14;
+  // list of blacklisted package names
+  repeated string mitm_blacklisted_apps = 15;
+}

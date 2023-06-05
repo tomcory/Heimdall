@@ -39,6 +39,51 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        app:key="persistence_category"
+        app:title="Persistence">
+
+        <CheckBoxPreference
+            app:key="graph"
+            app:title="Enable graph (coming soon)"
+            app:enabled="false"
+            app:summary="Store monitored flow data on the network graph"
+            app:icon="@drawable/ic_graph" />
+
+        <ListPreference
+            app:key="log_level"
+            app:title="Logged data"
+            app:defaultValue="flows"
+            app:entries="@array/log_level_entries"
+            app:entryValues="@array/log_level_entry_values"
+            app:useSimpleSummaryProvider="true"
+            app:icon="@drawable/ic_file_replace_outline" />
+
+        <CheckBoxPreference
+            app:key="geolocation_lookup"
+            app:title="Get geolocation data for hosts"
+            app:defaultValue="true"
+            app:enabled="true"
+            app:summary="Query a geolocation database for the destinations of monitored connections"
+            app:icon="@drawable/ic_earth" />
+
+        <CheckBoxPreference
+            app:key="appinfo_lookup"
+            app:title="Get additional app info"
+            app:defaultValue="true"
+            app:enabled="true"
+            app:summary="Query androidrank.com for additional details of monitored apps"
+            app:icon="@drawable/ic_google_play" />
+
+        <Preference
+            app:key="db_reset"
+            app:title="Clear database (coming soon)"
+            app:enabled="false"
+            app:summary="Delete all logged data"
+            app:icon="@drawable/ic_delete" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
         app:key="vpn_category"
         app:title="Advanced VPN Settings">
 

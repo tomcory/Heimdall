@@ -7,5 +7,4 @@
 /captures
 .externalNativeBuild
 .cxx
-/bifrost-backend/uploads
 /secure.properties

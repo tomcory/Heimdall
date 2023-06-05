@@ -1,0 +1,19 @@
+graph {
+    fill-color: #000000;
+}
+
+node {
+    stroke-mode: none;
+}
+
+node.host {
+    fill-color: #f5f5f5;
+}
+
+node.app {
+    fill-color: #C50E1F;
+}
+
+edge {
+    fill-color: #f5f5f5;
+}

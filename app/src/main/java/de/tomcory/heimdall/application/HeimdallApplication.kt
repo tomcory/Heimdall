@@ -1,23 +1,18 @@
 package de.tomcory.heimdall.application
 
 import android.app.Application
-import android.os.Process
-import de.tomcory.heimdall.persistence.database.TrafficDatabase
+import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import timber.log.Timber
 
 class HeimdallApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-
-        val pid = Process.myPid()
-        val whiteList = "logcat -P '/$pid'"
-        Runtime.getRuntime().exec(whiteList).waitFor()
-
+        //StrictMode.enableDefaults()
         Timber.plant(Timber.DebugTree())
 
         // initialise a TrafficDatabase singleton instance
-        if (TrafficDatabase.init(this)) {
+        if (HeimdallDatabase.init(this)) {
             Timber.d("TrafficDatabase instance created")
         }
     }

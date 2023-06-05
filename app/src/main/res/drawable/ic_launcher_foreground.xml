@@ -1,16 +1,31 @@
-<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-  <group android:scaleX="0.32597923"
-      android:scaleY="0.32597923"
-      android:translateX="36.88609"
-      android:translateY="24.192">
-    <group android:translateY="146.25">
-      <path android:pathData="M83.8125,-0L83.8125,-52L21.796875,-52L21.796875,-0L14,-0L14,-109L21.796875,-109L21.796875,-59L83.8125,-59L83.8125,-109L91.484375,-109L91.484375,-0L83.8125,-0Z"
-          android:fillColor="#FFFFFF"/>
-    </group>
+  <group android:scaleX="0.93618864"
+      android:scaleY="0.93618864"
+      android:translateX="30.24"
+      android:translateY="37.621384">
+    <path
+        android:pathData="m1,1.014v16.253h16.253v16.253h16.253v-16.253h16.253v-16.253"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round">
+      <aapt:attr name="android:strokeColor">
+        <gradient 
+            android:startX="1"
+            android:startY="1.014"
+            android:endX="23.698"
+            android:endY="3.762"
+            android:tileMode="mirror"
+            android:type="linear">
+          <item android:offset="0" android:color="#FFA67E45"/>
+          <item android:offset="1" android:color="#FFF8F1A6"/>
+        </gradient>
+      </aapt:attr>
+    </path>
   </group>
 </vector>

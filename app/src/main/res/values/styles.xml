@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
 
     <!-- Base application theme. -->
@@ -7,11 +8,68 @@
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
         <item name="colorControlHighlight">@color/colorPrimaryLight</item>
+        <!-- <item name="android:navigationBarColor">@android:color/black</item>-->
+
+        <item name="android:textViewStyle">@style/RobotoTextViewStyle</item>
+        <item name="android:buttonStyle">@style/RobotoButtonStyle</item>
+        <item name="toolbarNavigationButtonStyle">@style/TintedNavigation</item>
         <item name="android:windowContentTransitions">true</item>
+    </style>
+
+    <style name="TintedNavigation" parent="Widget.AppCompat.Toolbar.Button.Navigation">
+        <item name="tint">@color/chevron</item>
+    </style>
+
+    <style name="RobotoTextViewStyle" parent="android:Widget.TextView">
+        <item name="android:fontFamily">sans-serif-light</item>
+    </style>
+
+    <style name="RobotoButtonStyle" parent="android:Widget.Holo.Button">
+        <item name="android:fontFamily">sans-serif-light</item>
     </style>
 
     <style name="TabLayoutTextAppearance" parent="TextAppearance.AppCompat.Widget.ActionBar.Title.Inverse">
         <item name="android:textSize">12sp</item>
         <item name="android:textAllCaps">true</item>
+    </style>
+    <style name="Stepper.CardView" parent="CardView">
+        <item name="cardElevation">4dp</item>
+        <item name="cardCornerRadius">12dp</item>
+    </style>
+    <color name="chevron">#30000000</color>
+
+    <style name="HeimdallMaterialButton" parent="Widget.MaterialComponents.Button.UnelevatedButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingLeft">24dp</item>
+        <item name="android:paddingRight">24dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:singleLine">true</item>
+        <item name="colorPrimary">@color/materialButtonColour</item>
+        <item name="colorOnPrimary">?attr/colorPrimaryDark</item>
+        <item name="android:theme">@style/HeimdallMaterialButton</item>
+        <item name="cornerRadius">20dp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="iconPadding">3dp</item>
+        <item name="iconSize">22dp</item>
+        <item name="iconGravity">textStart</item>
+    </style>
+
+    <style name="HeimdallMaterialButton.ExtendedFab" parent="Widget.MaterialComponents.Button">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">56dp</item>
+        <item name="android:paddingLeft">24dp</item>
+        <item name="android:paddingRight">24dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:theme">@style/HeimdallMaterialButton</item>
+        <item name="cornerRadius">24dp</item>
+        <item name="android:letterSpacing">0</item>
     </style>
 </resources>

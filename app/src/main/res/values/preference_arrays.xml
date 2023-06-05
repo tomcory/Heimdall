@@ -10,4 +10,15 @@
         <item>Whitelist</item>
         <item>Blacklist</item>
     </array>
+
+    <array name="log_level_entry_values">
+        <item>none</item>
+        <item>flows</item>
+        <item>packets</item>
+    </array>
+    <array name="log_level_entries">
+        <item>Nothing</item>
+        <item>Flows</item>
+        <item>Flows and packets</item>
+    </array>
 </resources>
