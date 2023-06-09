@@ -6,7 +6,7 @@ import timber.log.Timber
 class QuicConnection(id: Int, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
 
     init {
-        Timber.w("%s Creating QUIC connection", id)
+        Timber.d("%s Creating QUIC connection", id)
     }
 
     override fun unwrapOutbound(payload: ByteArray) {

@@ -16,7 +16,7 @@ class TlsConnection(
     : EncryptionLayerConnection(id, transportLayer) {
 
     init {
-        Timber.w("%s Creating TLS connection", id)
+        Timber.d("%s Creating TLS connection, MitM %s", id, if(doMitm) "enabled" else "disabled")
     }
 
     private var state: ConnectionState = ConnectionState.NEW

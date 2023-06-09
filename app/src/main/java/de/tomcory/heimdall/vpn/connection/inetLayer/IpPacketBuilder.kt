@@ -53,7 +53,7 @@ abstract class IpPacketBuilder protected constructor(
                 is IpV6Packet -> IpV6PacketBuilder.buildStray(strayPacket, payloadBuilder)
                 else -> null
             }
-            Timber.d("Built response for stray packet: %s", strayResponse)
+            //Timber.d("Built response for stray packet: %s", strayResponse)
             return strayResponse
         }
     }

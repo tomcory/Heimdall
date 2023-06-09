@@ -11,6 +11,7 @@ import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceManager
 import de.tomcory.heimdall.R
@@ -18,11 +19,13 @@ import de.tomcory.heimdall.persistence.VpnStats
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.Session
 import de.tomcory.heimdall.ui.main.MainActivity
+import de.tomcory.heimdall.ui.main.preferencesStore
 import de.tomcory.heimdall.ui.notification.NotificationIntentService
 import de.tomcory.heimdall.util.OsUtils
 import de.tomcory.heimdall.vpn.mitm.VpnComponentLaunchException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -52,9 +55,9 @@ class HeimdallVpnService : VpnService() {
         return when(val intentExtra = intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
             START_SERVICE, START_SERVICE_PROXY -> {
-                val useProxy = intentExtra == START_SERVICE
+                val useProxy = intentExtra == START_SERVICE_PROXY
 
-                Timber.d("Received %s", if(useProxy) "START_SERVICE" else "START_SERVICE_PROXY")
+                Timber.d("Received %s", if(useProxy) "START_SERVICE_PROXY" else "START_SERVICE")
 
                 // promote this service to the foreground to prevent it from being put to sleep
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
@@ -128,6 +131,9 @@ class HeimdallVpnService : VpnService() {
 
     private suspend fun launchServiceComponents(useProxy: Boolean) {
 
+        val dataStore = applicationContext.preferencesStore
+        val doMitm = dataStore.data.first().mitmEnable
+
         // (re)initialise the Statistics singleton
         VpnStats.initialise(applicationContext)
         Timber.d("VpnStats initialised")
@@ -141,7 +147,7 @@ class HeimdallVpnService : VpnService() {
 
         // launch the traffic-handling components through the ComponentManager
         try {
-            componentManager = ComponentManager(FileInputStream(vpnInterface?.fileDescriptor), FileOutputStream(vpnInterface?.fileDescriptor), this)
+            componentManager = ComponentManager(FileInputStream(vpnInterface?.fileDescriptor), FileOutputStream(vpnInterface?.fileDescriptor), this, doMitm)
         } catch (e: VpnComponentLaunchException) {
             Timber.e("Failed to initialise traffic handlers")
             stopVpnComponents()
@@ -207,17 +213,18 @@ class HeimdallVpnService : VpnService() {
 
         val monitoringScope = sharedPreferences.getString("monitoring_scope", "all")
         when (monitoringScope) {
-            "all" -> Timber.w("Monitoring scope: all")
-            "whitelist" -> Timber.w("Monitoring scope: whitelist")
-            "blacklist" -> Timber.w("Monitoring scope: blacklist")
+            "all" -> Timber.d("Monitoring scope: all")
+            "whitelist" -> Timber.d("Monitoring scope: whitelist")
+            "blacklist" -> Timber.d("Monitoring scope: blacklist")
         }
 
         //TODO: replace with proper implementation
         try {
             builder.addDisallowedApplication("de.tomcory.heimdall")
-            OsUtils.getSystemApps(context = this).forEach {
-                builder.addDisallowedApplication(it)
-            }
+            //TODO: add toggle for this
+//            OsUtils.getSystemApps(context = this).forEach {
+//                builder.addDisallowedApplication(it)
+//            }
         } catch (e: Exception) {
             Timber.e("Couldn't add Heimdall package as disallowed app")
         }

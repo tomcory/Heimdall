@@ -22,7 +22,7 @@ import java.nio.channels.Selector
  */
 abstract class TransportLayerConnection protected constructor(
     val deviceWriter: Handler,
-    val mitmManager: CertificateSniffingMitmManager,
+    val mitmManager: CertificateSniffingMitmManager?,
     val localPort: Port,
     val remotePort: Port,
     val ipPacketBuilder: IpPacketBuilder
@@ -172,13 +172,13 @@ abstract class TransportLayerConnection protected constructor(
 
             val connection =  when (initialPacket.payload) {
                 is TcpPacket -> {
-                    Timber.d("Creating new TcpConnection")
                     val tcpPacket = initialPacket.payload as TcpPacket
                     if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
-                        Timber.w("Resetting unknown TCP packet: %s", initialPacket)
+                        Timber.w("Resetting unknown TCP packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {
+                        Timber.d("Creating new TcpConnection")
                         TcpConnection(
                             manager,
                             deviceWriter,

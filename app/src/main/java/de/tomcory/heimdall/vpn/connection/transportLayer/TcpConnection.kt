@@ -43,7 +43,7 @@ class TcpConnection internal constructor(
 ) {
 
     init {
-        Timber.w("%s Creating TCP connection", id)
+        Timber.d("%s Creating TCP connection", id)
     }
 
     private val MAX_PAYLOAD_SIZE = Short.MAX_VALUE.toInt()

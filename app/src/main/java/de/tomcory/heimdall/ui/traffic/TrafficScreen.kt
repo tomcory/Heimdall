@@ -28,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,8 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
+import de.tomcory.heimdall.ui.main.preferencesStore
 import de.tomcory.heimdall.ui.settings.PreferencesScreen
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
 import de.tomcory.heimdall.vpn.components.HeimdallVpnService
@@ -65,20 +68,26 @@ fun TrafficScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    val dataStore = LocalContext.current.preferencesStore
+    val preferences = dataStore.data.collectAsState(initial = PreferencesSerializer.defaultValue)
+
     val startForResult = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) {
         if(it.resultCode == Activity.RESULT_OK) {
             coroutineScope.launch {
-                Timber.d("Starting proxy server...")
-                proxyServer = try {
-                    launchProxy(context)
-                } catch (e: Exception) {
-                    null
+                val useProxy = preferences.value.vpnUseProxy
+                if(useProxy) {
+                    Timber.d("Starting proxy server...")
+                    proxyServer = try {
+                        launchProxy(context)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    proxyRunning = proxyServer != null
                 }
-                proxyRunning = proxyServer != null
 
-                if(proxyRunning) {
+                if(!useProxy || proxyRunning) {
                     Timber.d("Starting VpnService with fresh VPN permission...")
-                    if(launchVpn(context) != null) {
+                    if(launchVpn(context, useProxy) != null) {
                         vpnRunning = true
                     }
                 }
@@ -110,9 +119,10 @@ fun TrafficScreen() {
                     contentColor = if(!switchingMonitoringState) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                     onClick = {
                         if(!switchingMonitoringState) {
+                            val useProxy = preferences.value.vpnUseProxy
                             switchingMonitoringState = true
                             coroutineScope.launch {
-                                if(!proxyRunning && ! vpnRunning) {
+                                if((!proxyRunning || !useProxy) && !vpnRunning) {
                                     Timber.d("Preparing VpnService...")
                                     val vpnIntent = VpnService.prepare(context)
                                     if (vpnIntent != null) {
@@ -121,17 +131,19 @@ fun TrafficScreen() {
                                     } else {
                                         // Permission already granted, launch proxy and VPN
                                         coroutineScope.launch {
-                                            Timber.d("Starting proxy server...")
-                                            proxyServer = try {
-                                                launchProxy(context)
-                                            } catch (e: Exception) {
-                                                null
+                                            if(useProxy) {
+                                                Timber.d("Starting proxy server...")
+                                                proxyServer = try {
+                                                    launchProxy(context)
+                                                } catch (e: Exception) {
+                                                    null
+                                                }
+                                                proxyRunning = proxyServer != null
                                             }
-                                            proxyRunning = proxyServer != null
 
-                                            if(proxyRunning) {
-                                                Timber.d("Starting VpnService with fresh VPN permission...")
-                                                if(launchVpn(context) != null) {
+                                            if(!useProxy || proxyRunning) {
+                                                Timber.d("Starting VpnService with existing VPN permission...")
+                                                if(launchVpn(context, useProxy) != null) {
                                                     vpnRunning = true
                                                 }
                                             }
@@ -158,7 +170,7 @@ fun TrafficScreen() {
                         Icon(painter = rememberVectorPainter(image = Icons.Outlined.Face), contentDescription = "Traffic icon")
                     }
                     Spacer(modifier = Modifier.width(16.dp))
-                    Text(text = if(proxyRunning && vpnRunning) "Stop Monitoring" else "Start Monitoring")
+                    Text(text = if((proxyRunning || !preferences.value.vpnUseProxy) && vpnRunning) "Stop Monitoring" else "Start Monitoring")
                 }
             }
         ) {
@@ -179,8 +191,14 @@ fun TrafficScreen() {
     }
 }
 
-fun launchVpn(context: Context) : ComponentName? {
-    return context.startService(Intent(context, HeimdallVpnService::class.java).putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.START_SERVICE_PROXY))
+fun launchVpn(context: Context, useProxy: Boolean) : ComponentName? {
+    return context.startService(
+        Intent(context, HeimdallVpnService::class.java)
+            .putExtra(
+                HeimdallVpnService.VPN_ACTION,
+                if(useProxy) HeimdallVpnService.START_SERVICE_PROXY else HeimdallVpnService.START_SERVICE
+            )
+    )
 }
 
 suspend fun launchProxy(context: Context) : HeimdallHttpProxyServer {

@@ -26,7 +26,8 @@ import java.nio.channels.Selector
 class ComponentManager(
     val outboundStream: FileInputStream,
     val inboundStream: FileOutputStream,
-    val vpnService: VpnService?
+    val vpnService: VpnService?,
+    val doMitM: Boolean
 ) {
 
     private var devicePollThread: DevicePollThread? = null
@@ -52,7 +53,7 @@ class ComponentManager(
         subjectOU = "HeimdallCertUnit")
 
     // set up the man-in-the-middle manager
-    val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
+    val mitmManager: CertificateSniffingMitmManager? = if(doMitM) CertificateSniffingMitmManager(authority) else null
 
     // set up the NIO selector that is used to poll the outgoing sockets for incoming packets
     val selector: Selector = try {

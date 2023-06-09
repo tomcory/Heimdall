@@ -39,7 +39,7 @@ class UdpConnection internal constructor(
 ) {
 
     init {
-        Timber.w("%s Creating UDP connection", id)
+        Timber.d("%s Creating UDP connection", id)
     }
 
     override val appId = manager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, this)

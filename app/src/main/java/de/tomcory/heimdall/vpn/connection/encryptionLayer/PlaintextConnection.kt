@@ -6,7 +6,7 @@ import timber.log.Timber
 class PlaintextConnection(id: Int, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
 
     init {
-        //Timber.w("%s Creating plaintext connection", id)
+        Timber.d("%s Creating plaintext connection", id)
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
