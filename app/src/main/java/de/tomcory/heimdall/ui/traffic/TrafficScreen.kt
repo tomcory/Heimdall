@@ -44,7 +44,7 @@ import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
 import de.tomcory.heimdall.ui.main.preferencesStore
 import de.tomcory.heimdall.ui.settings.PreferencesScreen
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
-import de.tomcory.heimdall.vpn.components.HeimdallVpnService
+import de.tomcory.heimdall.scanner.traffic.components.HeimdallVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -203,7 +203,7 @@ fun launchVpn(context: Context, useProxy: Boolean) : ComponentName? {
 
 suspend fun launchProxy(context: Context) : HeimdallHttpProxyServer {
     return withContext(Dispatchers.IO) {
-        val newAuth = de.tomcory.heimdall.vpn.mitm.Authority.getDefaultInstance(context)
+        val newAuth = de.tomcory.heimdall.scanner.traffic.mitm.Authority.getDefaultInstance(context)
         val oldAuth = Authority(newAuth.keyStoreDir, newAuth.alias, newAuth.password, newAuth.issuerCN, newAuth.issuerO, newAuth.issuerOU, newAuth.subjectO, newAuth.subjectOU)
         val proxyServer = HeimdallHttpProxyServer(InetSocketAddress("127.0.0.1", 9090), CertificateSniffingMitmManager(oldAuth), context)
         proxyServer.start()

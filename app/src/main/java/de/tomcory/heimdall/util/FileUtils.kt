@@ -2,8 +2,8 @@ package de.tomcory.heimdall.util
 
 import android.content.Context
 import android.net.Uri
-import de.tomcory.heimdall.vpn.mitm.Authority
-import de.tomcory.heimdall.vpn.mitm.KeyStoreHelper
+import de.tomcory.heimdall.scanner.traffic.mitm.Authority
+import de.tomcory.heimdall.scanner.traffic.mitm.KeyStoreHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber

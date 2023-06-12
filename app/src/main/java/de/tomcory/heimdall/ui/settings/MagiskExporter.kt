@@ -20,8 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import de.tomcory.heimdall.util.FileUtils
-import de.tomcory.heimdall.vpn.mitm.Authority
-import de.tomcory.heimdall.vpn.mitm.KeyStoreHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
