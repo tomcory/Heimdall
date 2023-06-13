@@ -28,8 +28,7 @@ class HeimdallApplication : Application() {
             }
 
             broadcastReceiver = HeimdallBroadcastReceiver(
-                LibraryScanner.create(),
-                PermissionScanner()
+                libraryScanner = LibraryScanner.create()
             )
 
             val filter = IntentFilter()
