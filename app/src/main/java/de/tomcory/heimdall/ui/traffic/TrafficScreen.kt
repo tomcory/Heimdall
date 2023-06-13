@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
+import de.tomcory.heimdall.scanner.library.ExodusUpdater
 import de.tomcory.heimdall.ui.main.preferencesStore
 import de.tomcory.heimdall.ui.settings.PreferencesScreen
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
@@ -185,7 +187,11 @@ fun TrafficScreen() {
                     .padding(it)
                     .background(MaterialTheme.colorScheme.surface)
             ) {
-
+                Button(onClick = { coroutineScope.launch {
+                    ExodusUpdater.updateAll()
+                } }) {
+                    Text(text = "Get Trackers")
+                }
             }
         }
     }

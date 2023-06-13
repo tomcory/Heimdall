@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.scanner.permission
 
-import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -9,8 +8,11 @@ import de.tomcory.heimdall.persistence.database.entity.AppXPermission
 import de.tomcory.heimdall.persistence.database.entity.Permission
 import timber.log.Timber
 
-object PermissionScanner {
+class PermissionScanner {
 
+    /**
+     * List of all dangerous permissions as of Android 13
+     */
     private val dangerousPermissions = listOf(
         "android.permission.ACCEPT_HANDOVER",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
@@ -55,7 +57,7 @@ object PermissionScanner {
         "android.permission.WRITE_EXTERNAL_STORAGE"
     )
 
-    suspend fun scanGivenApp(context: Context, packageName: String) {
+    suspend fun scanApp(context: Context, packageName: String) {
 
         Timber.d("Scanning permissions of $packageName")
 
@@ -83,6 +85,6 @@ object PermissionScanner {
         // insert app-permission cross-reference into database
         permissions
             ?.map { permission -> AppXPermission(packageName, permission) }
-            ?.let { HeimdallDatabase.instance?.appXPermissionDao?.insertAppXPermission(*it.toTypedArray()) }
+            ?.let { HeimdallDatabase.instance?.appXPermissionDao?.insert(*it.toTypedArray()) }
     }
 }

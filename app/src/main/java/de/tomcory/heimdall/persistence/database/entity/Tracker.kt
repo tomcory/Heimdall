@@ -1,13 +1,16 @@
 package de.tomcory.heimdall.persistence.database.entity
 
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 @Entity
 data class Tracker(
-    @PrimaryKey
-    @ColumnInfo(index = true)
-    val className: String,
+    @PrimaryKey(autoGenerate = true)
+    val id: Int = 0,
     val name: String,
-    val web: String)
+    val categories: String,
+    val codeSignature: String,
+    val networkSignature: String,
+    val creationDate: String,
+    val web: String
+)

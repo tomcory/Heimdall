@@ -12,7 +12,7 @@ import de.tomcory.heimdall.persistence.database.entity.PermissionWithApps
 @Dao
 interface AppXPermissionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAppXPermission(vararg crossRef: AppXPermission)
+    suspend fun insert(vararg crossRef: AppXPermission)
 
     @Transaction
     @Query("SELECT * FROM App WHERE packageName = :packageName")

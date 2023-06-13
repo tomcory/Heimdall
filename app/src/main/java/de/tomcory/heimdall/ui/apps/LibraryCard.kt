@@ -13,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat.startActivity
-import de.tomcory.heimdall.dex.identifyTrackerLibs
 import de.tomcory.heimdall.persistence.database.entity.Tracker
 import kotlinx.coroutines.delay
 
@@ -32,7 +31,6 @@ fun LibraryCard(pkgInfo: PackageInfo, pm: PackageManager) {
 
     LaunchedEffect(key1 = null, block = {
         //trackers = identifyTrackerLibs(pkgInfo, context)
-        trackers = identifyTrackerLibs(pkgInfo, context)
 
         loadingTrackers = false
     })

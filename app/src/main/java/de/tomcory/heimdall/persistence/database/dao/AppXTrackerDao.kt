@@ -8,7 +8,7 @@ import de.tomcory.heimdall.persistence.database.entity.TrackerWithApps
 @Dao
 interface AppXTrackerDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAppXTracker(crossRef: AppXTracker)
+    suspend fun insert(vararg crossRef: AppXTracker)
 
     @Transaction
     @Query("SELECT * FROM App WHERE packageName = :packageName")
@@ -19,8 +19,8 @@ interface AppXTrackerDao {
     suspend fun getAppsWithTrackers(): List<AppWithTrackers>
 
     @Transaction
-    @Query("SELECT * FROM Tracker WHERE className = :className")
-    suspend fun getTrackerWithApps(className: String): TrackerWithApps
+    @Query("SELECT * FROM Tracker WHERE id = :trackerId")
+    suspend fun getTrackerWithApps(trackerId: Int): TrackerWithApps
 
     @Transaction
     @Query("SELECT * FROM Tracker")

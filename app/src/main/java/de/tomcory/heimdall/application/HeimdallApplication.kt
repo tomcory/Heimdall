@@ -5,31 +5,47 @@ import android.content.Intent
 import android.content.IntentFilter
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.scanner.HeimdallBroadcastReceiver
+import de.tomcory.heimdall.scanner.library.LibraryScanner
+import de.tomcory.heimdall.scanner.permission.PermissionScanner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 class HeimdallApplication : Application() {
 
-    private val broadcastReceiver = HeimdallBroadcastReceiver()
+    private var broadcastReceiver: HeimdallBroadcastReceiver? = null
 
     override fun onCreate() {
         super.onCreate()
         //StrictMode.enableDefaults()
-        Timber.plant(Timber.DebugTree())
 
-        // initialise a TrafficDatabase singleton instance
-        if (HeimdallDatabase.init(this)) {
-            Timber.d("TrafficDatabase instance created")
+        CoroutineScope(Dispatchers.IO).launch {
+            Timber.plant(Timber.DebugTree())
+
+            if (HeimdallDatabase.init(this@HeimdallApplication)) {
+                Timber.d("Database instance created")
+            }
+
+            broadcastReceiver = HeimdallBroadcastReceiver(
+                LibraryScanner.create(),
+                PermissionScanner()
+            )
+
+            val filter = IntentFilter()
+            filter.addAction(Intent.ACTION_PACKAGE_ADDED)
+            filter.addAction(Intent.ACTION_PACKAGE_REMOVED)
+            filter.addDataScheme("package")
+            registerReceiver(broadcastReceiver, filter)
+
+            Timber.d("HeimdallBroadcastReceiver registered")
         }
-
-        val filter = IntentFilter()
-        filter.addAction(Intent.ACTION_PACKAGE_ADDED)
-        filter.addAction(Intent.ACTION_PACKAGE_REMOVED)
-        filter.addDataScheme("package")
-        registerReceiver(broadcastReceiver, filter)
     }
 
     override fun onTerminate() {
         super.onTerminate()
-        unregisterReceiver(broadcastReceiver)
+        Timber.d("Terminating")
+        broadcastReceiver?.let { unregisterReceiver(it) }
+        Timber.uprootAll()
     }
 }
