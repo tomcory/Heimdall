@@ -1,26 +1,42 @@
 package de.tomcory.heimdall.ui.settings
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import de.tomcory.heimdall.MonitoringScopeApps
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoryHeadline(text: String, description: String = "") {
     var openDialog by remember { mutableStateOf(false) }
@@ -56,7 +72,32 @@ fun CategoryHeadline(text: String, description: String = "") {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActionPreference(text: String, onClick: suspend () -> Unit) {
+    val coroutineScope = rememberCoroutineScope()
+    var showProgress by remember { mutableStateOf(false) }
+
+    ListItem(
+        headlineContent = { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        trailingContent = {
+            if(showProgress) {
+                CircularProgressIndicator()
+            }
+        },
+        modifier = Modifier.clickable {
+            coroutineScope.launch {
+                withContext(Dispatchers.IO) {
+                    showProgress = true
+                    Timber.w("Executing action")
+                    onClick()
+                    Timber.w("Execution complete")
+                    showProgress = false
+                }
+            }
+        }
+    )
+}
+
 @Composable
 fun BooleanPreference(text: String, value: Boolean, onValueChange: suspend (Boolean) -> Unit) {
     var rememberedValue by remember { mutableStateOf(value) }
@@ -77,7 +118,6 @@ fun BooleanPreference(text: String, value: Boolean, onValueChange: suspend (Bool
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: suspend (Int) -> Unit) {
     var rememberedValue by remember { mutableStateOf(value) }
@@ -120,7 +160,6 @@ fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: s
 
 
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StringPreference(text: String, dialogText: String, value: String, onValueChange: suspend (String) -> Unit) {
     var rememberedValue by remember { mutableStateOf(value) }
@@ -163,7 +202,6 @@ fun StringPreference(text: String, dialogText: String, value: String, onValueCha
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MonitoringScopePreference(text: String, dialogText: String, value: MonitoringScopeApps, onValueChange: suspend (MonitoringScopeApps) -> Unit) {
     var rememberedValue by remember { mutableStateOf(value) }
@@ -203,7 +241,9 @@ fun MonitoringScopePreference(text: String, dialogText: String, value: Monitorin
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .selectable(selected = it == selectedOption, onClick = { onOptionSelected(it) })
+                                    .selectable(
+                                        selected = it == selectedOption,
+                                        onClick = { onOptionSelected(it) })
                             ) {
                                 RadioButton(selected = it == selectedOption, onClick = { onOptionSelected(it) })
                                 Text(
@@ -243,6 +283,12 @@ fun CategoryHeadlinePreview() {
 @Composable
 fun BooleanPreferencePreview() {
     BooleanPreference("Enable MitM", true) {}
+}
+
+@Preview
+@Composable
+fun ActionPreferencePreview() {
+    ActionPreference("Launch the missiles!") {}
 }
 
 @Preview
