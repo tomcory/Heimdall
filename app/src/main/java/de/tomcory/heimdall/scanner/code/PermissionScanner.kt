@@ -1,8 +1,6 @@
-package de.tomcory.heimdall.scanner.permission
+package de.tomcory.heimdall.scanner.code
 
-import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
+import android.content.pm.PackageInfo
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.AppXPermission
 import de.tomcory.heimdall.persistence.database.entity.Permission
@@ -57,25 +55,13 @@ class PermissionScanner {
         "android.permission.WRITE_EXTERNAL_STORAGE"
     )
 
-    suspend fun scanApp(context: Context, packageName: String) {
+    suspend fun scanApp(packageInfo: PackageInfo) {
 
-        Timber.d("Scanning permissions of $packageName")
-
-        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getPackageInfo(
-                packageName,
-                PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
-            )
-        } else {
-            context.packageManager.getPackageInfo(
-                packageName,
-                PackageManager.GET_PERMISSIONS
-            )
-        }
+        Timber.d("Scanning permissions of ${packageInfo.packageName}")
 
         val permissions = packageInfo.requestedPermissions?.toList()
 
-        Timber.d("Permissions of $packageName: $permissions")
+        Timber.d("Permissions of ${packageInfo.packageName}: $permissions")
 
         // insert permissions into database
         permissions
@@ -84,7 +70,7 @@ class PermissionScanner {
 
         // insert app-permission cross-reference into database
         permissions
-            ?.map { permission -> AppXPermission(packageName, permission) }
+            ?.map { permission -> AppXPermission(packageInfo.packageName, permission) }
             ?.let { HeimdallDatabase.instance?.appXPermissionDao?.insert(*it.toTypedArray()) }
     }
 }

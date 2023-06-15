@@ -1,18 +1,13 @@
 package de.tomcory.heimdall.ui.settings
 
-import android.content.Context
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
@@ -21,16 +16,19 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
-import de.tomcory.heimdall.ui.apps.AppInfo
+import de.tomcory.heimdall.scanner.code.ScanManager
 import de.tomcory.heimdall.ui.main.preferencesStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PreferencesScreen(onDismissRequest: () -> Unit) {
     /*
+        Scanner
+            - ScanService toggle
+            - PermissionScanner toggle
+            - LibraryScanner toggle
+            - LibraryScanner autoload trackers
         VPN
             - Monitoring scope (apps)
                 - all | no system | whitelist | blacklist
@@ -95,10 +93,13 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
             }
         ) {
             LazyColumn(modifier = Modifier.padding(it)) {
+
                 item {
-                    Button(onClick = {  }) {
-                        
-                    }
+                    ScannerPreferences(snackBarHostState)
+                }
+
+                item {
+                    Divider()
                 }
 
                 item {
@@ -114,6 +115,104 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
+    val dataStore = LocalContext.current.preferencesStore
+    val context = LocalContext.current
+    val preferences =
+        dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
+    val coroutineScope = rememberCoroutineScope()
+
+    Column {
+        CategoryHeadline(text = "Scanner preferences")
+
+        BooleanPreference(
+            text = "Scan apps on installation",
+            value = preferences.value.scanEnable,
+            onValueChange = { value ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().setScanEnable(value).build()
+                    }
+                }
+            }
+        )
+
+        ActionPreference(text = "Scan apps now", onClick = {
+            ScanManager.create(context).scanAllApps(context)
+        })
+
+        BooleanPreference(
+            text = "Enable PermissionScanner",
+            value = preferences.value.scanPermissionScannerEnable,
+            onValueChange = { value ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().setScanPermissionScannerEnable(value).build()
+                    }
+                }
+            }
+        )
+
+        BooleanPreference(
+            text = "Enable LibraryScanner",
+            value = preferences.value.scanLibraryScannerEnable,
+            onValueChange = { value ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().setScanLibraryScannerEnable(value).build()
+                    }
+                }
+            }
+        )
+
+        BooleanPreference(
+            text = "Automatically load Exodus trackers",
+            value = preferences.value.scanLibraryScannerPrepopulate,
+            onValueChange = { value ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().setScanLibraryScannerEnable(value).build()
+                    }
+                }
+            }
+        )
+
+        MonitoringScopePreference(
+            text = "ScanManager monitoring scope",
+            dialogText = "ScanService monitoring scope",
+            value = preferences.value.scanMonitoringScope,
+            onValueChange = { value ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().setScanMonitoringScope(value).build()
+                    }
+                }
+            }
+        )
+
+        BlackWhitelistPreference(
+            text = "Configure ScanManager white-/blacklist",
+            whitelistSource = { preferences.value.scanWhitelistedAppsList },
+            blacklistSource = { preferences.value.scanBlacklistedAppsList },
+            onSave = { newWhitelist, newBlacklist ->
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().clearVpnWhitelistedApps()
+                            .addAllScanWhitelistedApps(newWhitelist).build()
+                    }
+                }
+                coroutineScope.launch {
+                    dataStore.updateData { preferences ->
+                        preferences.toBuilder().clearVpnBlacklistedApps()
+                            .addAllScanBlacklistedApps(newBlacklist).build()
+                    }
+                }
+            }
+        )
     }
 }
 
@@ -234,10 +333,10 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
 
     Column {
 
-        CategoryHeadline(text = "MitM preferences")
+        CategoryHeadline(text = "MitM-VPN preferences")
 
         BooleanPreference(
-            text = "Enable MitM",
+            text = "Enable MitM-VPN",
             value = preferences.value.mitmEnable,
             onValueChange = { value ->
                 coroutineScope.launch {
@@ -251,8 +350,8 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
         MagiskExportPreference(snackBarHostState)
 
         MonitoringScopePreference(
-            text = "MitM monitoring scope",
-            dialogText = "MitM monitoring scope",
+            text = "MitM-VPN monitoring scope",
+            dialogText = "MitM-VPN monitoring scope",
             value = preferences.value.mitmMonitoringScope,
             onValueChange = { value ->
                 coroutineScope.launch {
@@ -264,7 +363,7 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
         )
 
         BlackWhitelistPreference(
-            text = "Configure MitM white-/blacklist",
+            text = "Configure MitM-VPN white-/blacklist",
             whitelistSource = { preferences.value.mitmWhitelistedAppsList },
             blacklistSource = { preferences.value.mitmBlacklistedAppsList },
             onSave = { newWhitelist, newBlacklist ->

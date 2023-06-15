@@ -15,6 +15,10 @@ object PreferencesSerializer : Serializer<Preferences> {
         .setVpnRoute("0.0.0.0/0")
         .setVpnProxyAddress("127.0.0.1:9090")
         .addVpnBlacklistedApps("de.tomcory.heimdall")
+        .setScanEnable(true)
+        .setScanPermissionScannerEnable(true)
+        .setScanLibraryScannerEnable(true)
+        .setScanLibraryScannerPrepopulate(true)
         .build()
 
     override suspend fun readFrom(input: InputStream): Preferences {

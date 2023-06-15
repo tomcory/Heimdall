@@ -1,4 +1,4 @@
-package de.tomcory.heimdall.scanner.library
+package de.tomcory.heimdall.scanner.code
 
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.Tracker

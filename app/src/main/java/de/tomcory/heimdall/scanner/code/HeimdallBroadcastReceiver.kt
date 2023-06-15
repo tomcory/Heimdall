@@ -1,26 +1,20 @@
-package de.tomcory.heimdall.scanner
+package de.tomcory.heimdall.scanner.code
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
-import de.tomcory.heimdall.scanner.library.LibraryScanner
-import de.tomcory.heimdall.scanner.permission.PermissionScanner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
 class HeimdallBroadcastReceiver(
-    private val appInfoCollector: AppInfoCollector = AppInfoCollector(),
-    private val libraryScanner: LibraryScanner?,
-    private val permissionScanner: PermissionScanner = PermissionScanner()
+    private val scanManager: ScanManager
 ) : BroadcastReceiver() {
 
     init {
-        Timber.d("HeimdallBroadcastReceiver created %s %s",
-            if(libraryScanner != null) "with libraryScanner" else "",
-            if(permissionScanner != null) "with permissionScanner" else "")
+        Timber.d("HeimdallBroadcastReceiver created")
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -33,9 +27,7 @@ class HeimdallBroadcastReceiver(
     private fun actionPackageAdded(context: Context, packageName: String) {
         Timber.d("App installed: $packageName")
         CoroutineScope(Dispatchers.IO).launch {
-            appInfoCollector.scanApp(context, packageName)
-            permissionScanner?.scanApp(context, packageName)
-            libraryScanner?.scanApp(context, packageName)
+            scanManager.scanApp(context, packageName)
         }
     }
 

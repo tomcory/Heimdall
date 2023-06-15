@@ -48,9 +48,17 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".scanner.code.ScanService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+        </service>
+
         <service
             android:name=".scanner.traffic.components.NotificationIntentService"
-            android:exported="false" />
+            android:exported="false">
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

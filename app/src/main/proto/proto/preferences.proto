@@ -29,9 +29,9 @@ message Preferences {
   bool vpn_use_proxy = 5;
   // address of the proxy used by the VPN
   string vpn_proxy_address = 6;
-  // list of whitelisted package names
+  // list of whitelisted package names for the VpnService
   repeated string vpn_whitelisted_apps = 7;
-  // list of blacklisted package names
+  // list of blacklisted package names for the VpnService
   repeated string vpn_blacklisted_apps = 8;
   // defines the scope of apps captured by the VPN
   MonitoringScopeApps vpn_monitoringScope = 9;
@@ -47,4 +47,18 @@ message Preferences {
   repeated string mitm_whitelisted_apps = 14;
   // list of blacklisted package names
   repeated string mitm_blacklisted_apps = 15;
+  // indicates whether the ScanService should be started
+  bool scan_enable = 16;
+  // indicates whether the PermissionScanner is run by the ScanService
+  bool scan_permission_scanner_enable = 17;
+  // indicates whether the LibraryScanner is run by the ScanService
+  bool scan_library_scanner_enable = 18;
+  // defines the scope of apps scanned by the ScanService
+  MonitoringScopeApps scan_monitoringScope = 19;
+  // indicates whether the LibraryScanner auto-loads Exodus
+  bool scan_library_scanner_prepopulate = 20;
+  // list of whitelisted package names for the ScanManager
+  repeated string scan_whitelisted_apps = 21;
+  // list of blacklisted package names for the ScanManager
+  repeated string scan_blacklisted_apps = 22;
 }

@@ -2,8 +2,6 @@ package de.tomcory.heimdall.scanner.traffic.components
 
 import android.annotation.SuppressLint
 import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +12,7 @@ import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceManager
 import de.tomcory.heimdall.R
+import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.persistence.VpnStats
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.Session
@@ -102,22 +101,12 @@ class HeimdallVpnService : VpnService() {
     @SuppressLint("ObsoleteSdkInt")
     private fun createForegroundNotification(): Notification {
 
-        //TODO: make it work for SDK < O
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, getString(R.string.channel_name), NotificationManager.IMPORTANCE_LOW)
-            channel.description = getString(R.string.channel_description)
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm != null) {
-                nm.createNotificationChannel(channel)
-            } else {
-                Timber.e("Error creating NotificationChannel: NotificationManager is null")
-            }
-        }
         val stopVpnIntent = Intent(this, NotificationIntentService::class.java)
         stopVpnIntent.action = NotificationIntentService.STOP_VPN
         val activityPendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stopVpnPendingIntent = PendingIntent.getService(this, 0, stopVpnIntent, PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+
+        return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_eye_check_outline)
             .setContentTitle(getString(R.string.notification_title))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -327,7 +316,6 @@ class HeimdallVpnService : VpnService() {
         const val START_SERVICE = 0
         const val STOP_SERVICE = 1
         const val START_SERVICE_PROXY = 2
-        private const val CHANNEL_ID = "de.tomcory.heimdall.ui.notification.CHANNEL"
         private const val ONGOING_NOTIFICATION_ID = 235
     }
 }

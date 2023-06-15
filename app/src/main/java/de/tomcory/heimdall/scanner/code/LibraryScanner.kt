@@ -1,8 +1,6 @@
-package de.tomcory.heimdall.scanner.library
+package de.tomcory.heimdall.scanner.code
 
-import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
+import android.content.pm.PackageInfo
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.AppXTracker
 import de.tomcory.heimdall.persistence.database.entity.Tracker
@@ -21,23 +19,13 @@ class LibraryScanner private constructor(val trackers: List<Tracker>) {
         trackerSignatures.forEach { (signature, tracker) -> trackerTrie.insert(signature, tracker) }
     }
 
-    suspend fun scanApp(context: Context, packageName: String) {
+    suspend fun scanApp(packageInfo: PackageInfo) {
 
-        Timber.d("Scanning dex classes of $packageName")
-
-        val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getPackageInfo(
-                packageName,
-                PackageManager.PackageInfoFlags.of(0L)
-            )
-        } else {
-            context.packageManager.getPackageInfo(
-                packageName,
-                0
-            )
-        }
+        Timber.d("Scanning dex classes of ${packageInfo.packageName}")
 
         val apkFile = ApkFile(File(packageInfo.applicationInfo.publicSourceDir))
+
+        Timber.d("${packageInfo.packageName} comprises %s dex classes", apkFile.dexClasses.size)
 
         val containedTrackers = mutableSetOf<AppXTracker>()
 
@@ -45,7 +33,7 @@ class LibraryScanner private constructor(val trackers: List<Tracker>) {
             val className = dexClass.packageName
             if (className.length >= shortestSignatureLength && className.contains(".")) {
                 trackerTrie.search(className)?.let {
-                    if(containedTrackers.add(AppXTracker(packageName, it.id))) {
+                    if(containedTrackers.add(AppXTracker(packageInfo.packageName, it.id))) {
                         Timber.d("Found tracker: %s", it.name)
                     }
                 }
@@ -77,8 +65,15 @@ class LibraryScanner private constructor(val trackers: List<Tracker>) {
     }
 
     companion object {
-        suspend fun create(): LibraryScanner? {
-            val trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
+        suspend fun create(autoPopulate: Boolean = false): LibraryScanner? {
+            var trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
+
+            if(autoPopulate && trackers.isNullOrEmpty()) {
+                Timber.d("No trackers found. Auto-populating database.")
+                ExodusUpdater.updateAll()
+            }
+
+            trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
 
             return if(trackers.isNullOrEmpty()) {
                  null
