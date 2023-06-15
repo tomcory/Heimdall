@@ -35,7 +35,6 @@ import de.tomcory.heimdall.MonitoringScopeApps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import timber.log.Timber
 
 @Composable
 fun CategoryHeadline(text: String, description: String = "") {
@@ -66,7 +65,9 @@ fun CategoryHeadline(text: String, description: String = "") {
             confirmButton = {
                 TextButton(onClick = {
                     openDialog = false
-                }) { Text("Got it") }
+                }) {
+                    Text("Got it")
+                }
             }
         )
     }
@@ -88,9 +89,7 @@ fun ActionPreference(text: String, onClick: suspend () -> Unit) {
             coroutineScope.launch {
                 withContext(Dispatchers.IO) {
                     showProgress = true
-                    Timber.w("Executing action")
                     onClick()
-                    Timber.w("Execution complete")
                     showProgress = false
                 }
             }
@@ -101,7 +100,6 @@ fun ActionPreference(text: String, onClick: suspend () -> Unit) {
 @Composable
 fun BooleanPreference(text: String, value: Boolean, onValueChange: suspend (Boolean) -> Unit) {
     var rememberedValue by remember { mutableStateOf(value) }
-    var openDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     rememberedValue = value
@@ -111,10 +109,13 @@ fun BooleanPreference(text: String, value: Boolean, onValueChange: suspend (Bool
         trailingContent = {
             Switch(checked = rememberedValue, onCheckedChange = {
                 rememberedValue = it
-                coroutineScope.launch { onValueChange(it) }
+                coroutineScope.launch {
+                    withContext(Dispatchers.IO) {
+                        onValueChange(it)
+                    }
+                }
             })
-        },
-        modifier = Modifier.clickable { openDialog = true }
+        }
     )
 }
 
@@ -148,12 +149,22 @@ fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: s
             confirmButton = {
                 TextButton(onClick = {
                     coroutineScope.launch {
-                        onValueChange(rememberedValue)
-                        openDialog = false
+                        withContext(Dispatchers.IO) {
+                            onValueChange(rememberedValue)
+                            openDialog = false
+                        }
                     }
-                }) { Text("Confirm") }
+                }) {
+                    Text("Confirm")
+                }
             },
-            dismissButton = { TextButton(onClick = { openDialog = false }) { Text("Dismiss") } }
+            dismissButton = {
+                TextButton(onClick = {
+                    openDialog = false
+                }) {
+                    Text("Dismiss")
+                }
+            }
         )
     }
 }
@@ -192,12 +203,22 @@ fun StringPreference(text: String, dialogText: String, value: String, onValueCha
             confirmButton = {
                 TextButton(onClick = {
                     coroutineScope.launch {
-                        onValueChange(rememberedValue)
-                        openDialog = false
+                        withContext(Dispatchers.IO) {
+                            onValueChange(rememberedValue)
+                            openDialog = false
+                        }
                     }
-                }) { Text("Confirm") }
+                }) {
+                    Text("Confirm")
+                }
             },
-            dismissButton = { TextButton(onClick = { openDialog = false }) { Text("Dismiss") } }
+            dismissButton = {
+                TextButton(onClick = {
+                    openDialog = false
+                }) {
+                    Text("Dismiss")
+                }
+            }
         )
     }
 }
@@ -262,12 +283,20 @@ fun MonitoringScopePreference(text: String, dialogText: String, value: Monitorin
                 confirmButton = {
                     TextButton(onClick = {
                         coroutineScope.launch {
-                            onValueChange(selectedOption)
-                            openDialog = false
+                            withContext(Dispatchers.IO) {
+                                onValueChange(selectedOption)
+                                openDialog = false
+                            }
                         }
                     }) { Text("Confirm") }
                 },
-                dismissButton = { TextButton(onClick = { openDialog = false }) { Text("Dismiss") } }
+                dismissButton = {
+                    TextButton(onClick = {
+                        openDialog = false
+                    }) {
+                        Text("Dismiss")
+                    }
+                }
             )
         }
     }
@@ -276,7 +305,7 @@ fun MonitoringScopePreference(text: String, dialogText: String, value: Monitorin
 @Preview
 @Composable
 fun CategoryHeadlinePreview() {
-    CategoryHeadline(text = "VPN preferences", description = "Lorep impsum dolor sit in nominem padri ed filii et spiritus sanctus. El mundo es en una situation paranormal.")
+    CategoryHeadline(text = "VPN preferences", description = "Lorem impsum dolor sit in nominem padri ed filii et spiritus sanctus. El mundo es en una situation paranormal.")
 }
 
 @Preview

@@ -18,7 +18,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
 import de.tomcory.heimdall.scanner.code.ScanManager
 import de.tomcory.heimdall.ui.main.preferencesStore
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,7 +94,7 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
             LazyColumn(modifier = Modifier.padding(it)) {
 
                 item {
-                    ScannerPreferences(snackBarHostState)
+                    ScannerPreferences()
                 }
 
                 item {
@@ -103,7 +102,7 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
                 }
 
                 item {
-                    VpnPreferences(snackBarHostState)
+                    VpnPreferences()
                 }
 
                 item {
@@ -119,12 +118,11 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
 }
 
 @Composable
-fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
+fun ScannerPreferences() {
     val dataStore = LocalContext.current.preferencesStore
     val context = LocalContext.current
     val preferences =
         dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
-    val coroutineScope = rememberCoroutineScope()
 
     Column {
         CategoryHeadline(text = "Scanner preferences")
@@ -133,10 +131,8 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             text = "Scan apps on installation",
             value = preferences.value.scanEnable,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setScanEnable(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setScanEnable(value).build()
                 }
             }
         )
@@ -149,10 +145,8 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             text = "Enable PermissionScanner",
             value = preferences.value.scanPermissionScannerEnable,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setScanPermissionScannerEnable(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setScanPermissionScannerEnable(value).build()
                 }
             }
         )
@@ -161,10 +155,8 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             text = "Enable LibraryScanner",
             value = preferences.value.scanLibraryScannerEnable,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setScanLibraryScannerEnable(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setScanLibraryScannerEnable(value).build()
                 }
             }
         )
@@ -173,10 +165,8 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             text = "Automatically load Exodus trackers",
             value = preferences.value.scanLibraryScannerPrepopulate,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setScanLibraryScannerEnable(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setScanLibraryScannerEnable(value).build()
                 }
             }
         )
@@ -186,10 +176,8 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "ScanService monitoring scope",
             value = preferences.value.scanMonitoringScope,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setScanMonitoringScope(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setScanMonitoringScope(value).build()
                 }
             }
         )
@@ -199,17 +187,13 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
             whitelistSource = { preferences.value.scanWhitelistedAppsList },
             blacklistSource = { preferences.value.scanBlacklistedAppsList },
             onSave = { newWhitelist, newBlacklist ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnWhitelistedApps()
-                            .addAllScanWhitelistedApps(newWhitelist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnWhitelistedApps()
+                        .addAllScanWhitelistedApps(newWhitelist).build()
                 }
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnBlacklistedApps()
-                            .addAllScanBlacklistedApps(newBlacklist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnBlacklistedApps()
+                        .addAllScanBlacklistedApps(newBlacklist).build()
                 }
             }
         )
@@ -217,11 +201,10 @@ fun ScannerPreferences(snackBarHostState: SnackbarHostState) {
 }
 
 @Composable
-fun VpnPreferences(snackBarHostState: SnackbarHostState) {
+fun VpnPreferences() {
     val dataStore = LocalContext.current.preferencesStore
     val preferences =
         dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
-    val coroutineScope = rememberCoroutineScope()
 
     Column {
 
@@ -232,10 +215,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "VPN monitoring scope",
             value = preferences.value.vpnMonitoringScope,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnMonitoringScope(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnMonitoringScope(value).build()
                 }
             }
         )
@@ -245,17 +226,13 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             whitelistSource = { preferences.value.vpnWhitelistedAppsList },
             blacklistSource = { preferences.value.vpnBlacklistedAppsList },
             onSave = { newWhitelist, newBlacklist ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnWhitelistedApps()
-                            .addAllVpnWhitelistedApps(newWhitelist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnWhitelistedApps()
+                        .addAllVpnWhitelistedApps(newWhitelist).build()
                 }
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnBlacklistedApps()
-                            .addAllVpnBlacklistedApps(newBlacklist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnBlacklistedApps()
+                        .addAllVpnBlacklistedApps(newBlacklist).build()
                 }
             }
         )
@@ -264,10 +241,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             text = "Persist transport-layer packets",
             value = preferences.value.vpnPersistTransportLayer,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnPersistTransportLayer(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnPersistTransportLayer(value).build()
                 }
             }
         )
@@ -277,10 +252,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "VPN base address",
             value = preferences.value.vpnBaseAddress,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnBaseAddress(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnBaseAddress(value).build()
                 }
             }
         )
@@ -290,10 +263,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "VPN capture route",
             value = preferences.value.vpnBaseAddress,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnRoute(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnRoute(value).build()
                 }
             }
         )
@@ -302,10 +273,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             text = "Use proxy",
             value = preferences.value.vpnUseProxy,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnUseProxy(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnUseProxy(value).build()
                 }
             }
         )
@@ -315,10 +284,8 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "Proxy address",
             value = preferences.value.vpnProxyAddress,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setVpnProxyAddress(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setVpnProxyAddress(value).build()
                 }
             }
         )
@@ -329,7 +296,6 @@ fun VpnPreferences(snackBarHostState: SnackbarHostState) {
 fun MitmPreferences(snackBarHostState: SnackbarHostState) {
     val dataStore = LocalContext.current.preferencesStore
     val preferences = dataStore.data.collectAsState(initial = PreferencesSerializer.defaultValue)
-    val coroutineScope = rememberCoroutineScope()
 
     Column {
 
@@ -339,10 +305,8 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
             text = "Enable MitM-VPN",
             value = preferences.value.mitmEnable,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setMitmEnable(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setMitmEnable(value).build()
                 }
             }
         )
@@ -354,10 +318,8 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
             dialogText = "MitM-VPN monitoring scope",
             value = preferences.value.mitmMonitoringScope,
             onValueChange = { value ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().setMitmMonitoringScope(value).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().setMitmMonitoringScope(value).build()
                 }
             }
         )
@@ -367,17 +329,13 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
             whitelistSource = { preferences.value.mitmWhitelistedAppsList },
             blacklistSource = { preferences.value.mitmBlacklistedAppsList },
             onSave = { newWhitelist, newBlacklist ->
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnWhitelistedApps()
-                            .addAllVpnWhitelistedApps(newWhitelist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnWhitelistedApps()
+                        .addAllVpnWhitelistedApps(newWhitelist).build()
                 }
-                coroutineScope.launch {
-                    dataStore.updateData { preferences ->
-                        preferences.toBuilder().clearVpnBlacklistedApps()
-                            .addAllVpnBlacklistedApps(newBlacklist).build()
-                    }
+                dataStore.updateData { preferences ->
+                    preferences.toBuilder().clearVpnBlacklistedApps()
+                        .addAllVpnBlacklistedApps(newBlacklist).build()
                 }
             }
         )
@@ -387,7 +345,7 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
 @Preview
 @Composable
 fun VpnPreferencesPreview() {
-    VpnPreferences(SnackbarHostState())
+    VpnPreferences()
 }
 
 @Preview
