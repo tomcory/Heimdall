@@ -1,6 +1,6 @@
 package de.tomcory.heimdall;
 
-import static org.junit.Assert.*;
+/*import static org.junit.Assert.*;
 
 import android.content.Intent;
 
@@ -18,7 +18,7 @@ import org.robolectric.shadows.ShadowLog;
 import de.tomcory.heimdall.vpn.components.HeimdallVpnService;
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase;
 
-/*@RunWith(RobolectricTestRunner.class)
+@RunWith(RobolectricTestRunner.class)
 public class HttpTest {
 
     private ServiceController<HeimdallVpnService> controller;
