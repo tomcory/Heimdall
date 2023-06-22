@@ -13,4 +13,7 @@ interface AppDao {
 
     @Query("UPDATE App SET isInstalled = 0 WHERE packageName = :packageName")
     suspend fun updateIsInstalled(packageName: String)
+
+    @Query("SELECT * FROM App")
+    suspend fun getAll(): List<App>
 }

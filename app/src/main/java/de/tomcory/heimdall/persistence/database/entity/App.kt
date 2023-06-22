@@ -4,7 +4,6 @@ import android.graphics.drawable.Drawable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Ignore
-import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Entity
@@ -15,5 +14,10 @@ data class App(
     val label: String,
     val versionName: String,
     val versionCode: Long,
-    val isInstalled: Boolean = true
-)
+    val isInstalled: Boolean = true,
+    val isSystem: Boolean = false,
+    val flags: Int = 0
+) {
+    @Ignore
+    var icon: Drawable? = null
+}
