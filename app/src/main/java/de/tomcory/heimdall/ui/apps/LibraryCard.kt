@@ -2,7 +2,6 @@ package de.tomcory.heimdall.ui.apps
 
 import android.content.Intent
 import android.content.pm.PackageInfo
-import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.foundation.clickable
@@ -13,24 +12,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat.startActivity
+import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.Tracker
-import kotlinx.coroutines.delay
-
-
-suspend fun testSuspend() {
-    delay(5000L)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryCard(pkgInfo: PackageInfo, pm: PackageManager) {
+fun LibraryCard(pkgInfo: PackageInfo) {
 
     val context = LocalContext.current
     var trackers = listOf<Tracker>()
     var loadingTrackers by remember { mutableStateOf(true) }
 
     LaunchedEffect(key1 = null, block = {
-        //trackers = identifyTrackerLibs(pkgInfo, context)
+        trackers = HeimdallDatabase.instance?.appXTrackerDao
+            ?.getAppWithTrackers(pkgInfo.packageName)?.trackers ?: trackers
 
         loadingTrackers = false
     })

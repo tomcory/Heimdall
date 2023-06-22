@@ -77,7 +77,7 @@ fun AppMetadataScreen(packageName: String) {
             }
 
             item {
-                LibraryCard(pkgInfo = pkgInfo, pm = pm)
+                LibraryCard(pkgInfo = pkgInfo)
             }
         }
     }

@@ -68,7 +68,7 @@ fun AppDetailScreen(packageName: String, onDismissRequest: () -> Unit) {
             }
 
             item {
-                LibraryCard(pkgInfo = pkgInfo, pm = pm)
+                LibraryCard(pkgInfo = pkgInfo)
             }
         }
     }

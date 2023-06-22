@@ -1,7 +1,6 @@
 package de.tomcory.heimdall.ui.apps
 
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.graphics.drawable.Drawable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -11,47 +10,47 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import com.google.accompanist.drawablepainter.rememberDrawablePainter
-import de.tomcory.heimdall.R
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavHostController
+import com.google.accompanist.drawablepainter.rememberDrawablePainter
+import de.tomcory.heimdall.R
+import de.tomcory.heimdall.persistence.database.HeimdallDatabase
+import de.tomcory.heimdall.persistence.database.entity.App
+import de.tomcory.heimdall.scanner.code.ScanManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun AppInfoList(paddingValues: PaddingValues, apps: List<AppInfo>) {
+fun AppInfoList(paddingValues: PaddingValues, apps: List<App>) {
     LazyColumn(modifier = Modifier.padding(paddingValues)) {
         items(apps) {
             var showAppDetailDialog by remember { mutableStateOf(false) }
-            ListItem(
-                headlineContent = {
-                    Text(text = it.label)
-                },
-                supportingContent = {
-                    Text(text = it.pkg)
-                },
-                leadingContent = {
-                    Image(painter = rememberDrawablePainter(drawable = it.icon), contentDescription = "App icon", modifier = Modifier.size(40.dp))
-                },
-                modifier = Modifier.clickable { showAppDetailDialog = true }
+            AppListItem(
+                app = it,
+                modifier = Modifier.clickable {
+                    showAppDetailDialog = true
+                }
             )
 
             if(showAppDetailDialog) {
@@ -59,20 +58,69 @@ fun AppInfoList(paddingValues: PaddingValues, apps: List<AppInfo>) {
                     onDismissRequest = { showAppDetailDialog = false },
                     properties = DialogProperties(usePlatformDefaultWidth = false)
                 ) {
-                    AppDetailScreen(packageName = it.pkg, onDismissRequest = { showAppDetailDialog = false })
+                    AppDetailScreen(packageName = it.packageName, onDismissRequest = { showAppDetailDialog = false })
                 }
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppListItem(app: App, modifier: Modifier) {
+    ListItem(
+        headlineContent = {
+            if(!app.isInstalled) {
+                StrikethroughText(text = app.label)
+            } else {
+                Text(text = app.label)
+            }
+
+        },
+        supportingContent = {
+            if(!app.isInstalled) {
+                StrikethroughText(text = app.packageName)
+            } else {
+                Text(text = app.packageName)
+            }
+        },
+        leadingContent = {
+            val painter = if(app.icon == null) {
+                painterResource(R.drawable.robot)
+            } else {
+                rememberDrawablePainter(drawable = app.icon)
+            }
+
+            val colorFilter = if(!app.isInstalled) {
+                ColorFilter.colorMatrix(ColorMatrix().apply {
+                    setToSaturation(0f) // setting saturation to 0 will convert image to grayscale
+                })
+            } else {
+                null
+            }
+
+            Image(painter = painter, contentDescription = "App icon", modifier = Modifier.size(40.dp), colorFilter = colorFilter)
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+fun StrikethroughText(text: String, modifier: Modifier = Modifier) {
+    val annotatedString = buildAnnotatedString {
+        withStyle(style = SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+            append(text)
+        }
+    }
+
+    Text(text = annotatedString, modifier = modifier)
+}
+
 @Composable
 fun AppsScreen(navController: NavHostController?) {
     val context = LocalContext.current
     var loadingApps by remember { mutableStateOf(true) }
 
-    var apps by remember { mutableStateOf(listOf<AppInfo>()) }
+    var apps by remember { mutableStateOf(listOf<App>()) }
 
     LaunchedEffect(key1 = null, block = {
         apps = getApps(context)
@@ -146,7 +194,7 @@ fun AppsScreenPreview() {
 }
 
 @Composable
-fun AppInfoCard(appInfo: AppInfo) {
+fun AppInfoCard(app: App) {
 
     var isSelected by remember { mutableStateOf(false) }
     val surfaceColor by animateColorAsState(
@@ -162,11 +210,7 @@ fun AppInfoCard(appInfo: AppInfo) {
             .fillMaxWidth()
     ) {
         Image(
-            painter = if (appInfo.icon == null) {
-                painterResource(id = R.drawable.robot)
-            } else {
-                rememberDrawablePainter(drawable = appInfo.icon)
-            },
+            painter = rememberDrawablePainter(drawable = app.icon),
             contentDescription = "App Icon",
             modifier = Modifier
                 .size(56.dp)
@@ -176,14 +220,14 @@ fun AppInfoCard(appInfo: AppInfo) {
 
         Column(verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxHeight()) {
             Text(
-                text = appInfo.label,
+                text = app.label,
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
             Text(
-                text = appInfo.pkg,
+                text = app.packageName,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -200,21 +244,19 @@ fun AppInfoCard(appInfo: AppInfo) {
     }
 }
 
-data class AppInfo(val pkg: String, val aid: Int, val label: String, val icon: Drawable?, val flags: Int)
-
-suspend fun getApps(context: Context): List<AppInfo> = withContext(Dispatchers.IO) {
-    val pm = context.packageManager
-    val apps = pm.getInstalledApplications(0)
-
-    apps.filter { app -> app.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-        .map { app ->
-            AppInfo(
-                app.packageName,
-                app.uid,
-                app.loadLabel(pm).toString(),
-                app.loadIcon(pm),
-                0
-            )
+suspend fun getApps(context: Context): List<App> = withContext(Dispatchers.IO) {
+    val apps = HeimdallDatabase.instance?.appDao?.getAll() ?: listOf()
+    apps.forEach {
+        if(it.icon == null && it.isInstalled) {
+            it.icon = ScanManager.getAppIcon(context, it.packageName)
         }
-        .sortedBy { app -> app.label }
+    }
+    return@withContext apps
 }
+
+data class AppInfo(
+    val packageName: String,
+    val label: String,
+    var icon: Drawable? = null,
+    var flags: Int = 0
+)
