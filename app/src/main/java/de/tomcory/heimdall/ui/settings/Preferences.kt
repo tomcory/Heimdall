@@ -1,5 +1,8 @@
 package de.tomcory.heimdall.ui.settings
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import de.tomcory.heimdall.MonitoringScopeApps
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -73,23 +78,35 @@ fun CategoryHeadline(text: String, description: String = "") {
     }
 }
 
+/**
+ * Wraps a suspending action, e.g. a one-time database population. If the action has determinate progress,
+ * emit it via the Flow<Float> passed to the onClick function and set hasProgress to true to display a determinate
+ * CircularProgressIndicator instead of the default indeterminate version.
+ */
 @Composable
-fun ActionPreference(text: String, onClick: suspend () -> Unit) {
+fun ActionPreference(text: String, hasProgress: Boolean = false, onClick: suspend (progress: MutableStateFlow<Float>) -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     var showProgress by remember { mutableStateOf(false) }
+    val progressFlow = MutableStateFlow(0f)
+    val progressState by progressFlow.collectAsState()
+    val rememberHasProgress by remember { mutableStateOf(hasProgress) }
 
     ListItem(
         headlineContent = { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
-            if(showProgress) {
-                CircularProgressIndicator()
+            AnimatedVisibility(visible = showProgress, enter = fadeIn(), exit = fadeOut()) {
+                if(rememberHasProgress) {
+                    CircularProgressIndicator(progressState)
+                } else {
+                    CircularProgressIndicator()
+                }
             }
         },
         modifier = Modifier.clickable {
             coroutineScope.launch {
                 withContext(Dispatchers.IO) {
                     showProgress = true
-                    onClick()
+                    onClick(progressFlow)
                     showProgress = false
                 }
             }

@@ -137,9 +137,9 @@ fun ScannerPreferences() {
             }
         )
 
-        ActionPreference(text = "Scan apps now", onClick = {
-            ScanManager.create(context).scanAllApps(context)
-        })
+        ActionPreference(text = "Scan apps now", hasProgress = true) {
+            ScanManager.create(context).scanAllApps(context, it)
+        }
 
         BooleanPreference(
             text = "Enable PermissionScanner",

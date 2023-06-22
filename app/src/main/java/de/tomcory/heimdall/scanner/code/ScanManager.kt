@@ -5,12 +5,14 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.NameNotFoundException
+import android.graphics.drawable.Drawable
 import android.os.Build
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import de.tomcory.heimdall.persistence.database.entity.App
 import de.tomcory.heimdall.ui.main.preferencesStore
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
 
@@ -52,7 +54,8 @@ class ScanManager private constructor(
             packageName = packageName,
             label = packageInfo.applicationInfo.loadLabel(pm).toString(),
             versionName = packageInfo.versionName,
-            versionCode = packageInfo.longVersionCode
+            versionCode = packageInfo.longVersionCode,
+            isSystem = packageInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
         )
 
         HeimdallDatabase.instance?.appDao?.insertApps(app)
@@ -65,13 +68,18 @@ class ScanManager private constructor(
         }
     }
 
-    suspend fun scanAllApps(context: Context) {
+    suspend fun scanAllApps(context: Context, progress: MutableStateFlow<Float>? = null) {
+
+        progress?.emit(0.01f)
+
         val pm: PackageManager = context.packageManager
         val packages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(PackageManager.GET_META_DATA.toLong()))
         } else {
             pm.getInstalledPackages(PackageManager.GET_META_DATA)
         }
+
+        progress?.emit(0.05f)
 
         val dataStore = context.preferencesStore.data.first()
         val scope = dataStore.scanMonitoringScope
@@ -85,13 +93,19 @@ class ScanManager private constructor(
                 packageName = it.packageName,
                 label = it.applicationInfo.loadLabel(pm).toString(),
                 versionName = it.versionName ?: "",
-                versionCode = it.longVersionCode
+                versionCode = it.longVersionCode,
+                isSystem = it.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
             )
         }
+
+        progress?.emit(0.1f)
 
         Timber.d("Found ${apps.size} apps.")
 
         HeimdallDatabase.instance?.appDao?.insertApps(*apps.toTypedArray())
+
+        val progressStep = 0.89f / filtered.size
+        var progressValue = 0.1f
 
         filtered.forEach {
             if(dataStore.scanPermissionScannerEnable) {
@@ -109,7 +123,12 @@ class ScanManager private constructor(
                     Timber.e(e, "Error scanning dex classes of ${it.packageName}")
                 }
             }
+
+            progressValue += progressStep
+            progress?.emit(progressValue)
         }
+
+        progress?.emit(1f)
     }
 
     private fun getScanPredicate(scope: MonitoringScopeApps): (PackageInfo) -> Boolean = when(scope) {
@@ -128,6 +147,28 @@ class ScanManager private constructor(
                     context.preferencesStore.data.first().scanLibraryScannerPrepopulate
                 )
             )
+        }
+
+        fun getAppIcon(context: Context, packageName: String): Drawable {
+            val pm: PackageManager = context.packageManager
+            val packageInfo = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.getPackageInfo(
+                        packageName,
+                        PackageManager.PackageInfoFlags.of((PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS).toLong())
+                    )
+                } else {
+                    pm.getPackageInfo(
+                        packageName,
+                        PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS
+                    )
+                }
+            } catch (e: NameNotFoundException) {
+                Timber.e("App $packageName not found, cannot get its icon")
+                return pm.defaultActivityIcon
+            }
+
+            return packageInfo.applicationInfo.loadIcon(pm)
         }
     }
 }
