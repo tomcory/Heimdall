@@ -7,8 +7,10 @@ import de.tomcory.heimdall.scanner.traffic.mitm.KeyStoreHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
+import java.io.InputStreamReader
 import java.io.OutputStream
 
 object FileUtils {
@@ -63,5 +65,24 @@ object FileUtils {
         val keyStore = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
         Timber.d("Building Magisk module...")
         return KeyStoreHelper.createMagiskModuleWithCertificate(context, keyStore, authority) ?: ""
+    }
+
+    fun populateTrieFromRawFile(context: Context, resId: Int, trie: Trie<String>) {
+        val startTime = System.currentTimeMillis()
+
+        val inputStream = context.resources.openRawResource(resId)
+        val reader = BufferedReader(InputStreamReader(inputStream))
+        var lineCounter = 0
+
+        reader.use { r ->
+            r.forEachLine { line ->
+                trie.insert(line, line)
+                lineCounter++
+            }
+        }
+
+        reader.close()
+
+        Timber.d("Inserted $lineCounter entries into trie in ${System.currentTimeMillis() - startTime}ms")
     }
 }
