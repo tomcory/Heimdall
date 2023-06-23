@@ -2,7 +2,6 @@ package de.tomcory.heimdall.ui.settings
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import android.content.pm.PackageManager.ApplicationInfoFlags
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
@@ -18,17 +17,15 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.ui.apps.AppInfo
@@ -43,7 +40,6 @@ suspend fun getAllPackages(context: Context): List<AppInfo> {
         .map { app ->
             AppInfo(
                 app.packageName,
-                app.uid,
                 app.loadLabel(pm).toString(),
                 app.loadIcon(pm),
                 app.flags
@@ -62,14 +58,13 @@ fun getAppInfo(packageName: String, context: Context): AppInfo {
 
     return AppInfo(
         app.packageName,
-        app.uid,
         app.loadLabel(pm).toString(),
         app.loadIcon(pm),
         app.flags
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlackWhitelistPreference(
     text: String,
@@ -210,7 +205,9 @@ fun BlackWhitelistPreference(
                             LaunchedEffect(key1 = "") {
                                 allApps = getAllPackages(context)
                                 filteredApps =
-                                    allApps.filter { app -> app.flags and filterFlags == 0 }.filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.pkg) }
+                                    allApps
+                                        .filter { app -> app.flags and filterFlags == 0 }
+                                        .filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.packageName) }
                             }
 
                             Surface(modifier = Modifier.padding(it)) {
@@ -224,7 +221,9 @@ fun BlackWhitelistPreference(
                                                     rememberFilterSystem = !rememberFilterSystem
                                                     filterFlags = filterFlags xor ApplicationInfo.FLAG_SYSTEM
                                                     Timber.w("FilterFlags: %s", filterFlags)
-                                                    filteredApps = allApps.filter { app -> app.flags and filterFlags == 0 }.filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.pkg) }
+                                                    filteredApps = allApps
+                                                        .filter { app -> app.flags and filterFlags == 0 }
+                                                        .filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.packageName) }
                                                 },
                                                 label = { Text(text = "System") },
                                                 leadingIcon = {
@@ -240,7 +239,8 @@ fun BlackWhitelistPreference(
                                                     rememberFilterUpdatedSystem = !rememberFilterUpdatedSystem
                                                     filterFlags = filterFlags xor ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
                                                     Timber.w("FilterFlags: %s", filterFlags)
-                                                    filteredApps = allApps.filter { app -> app.flags and filterFlags == 0 }.filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.pkg) }
+                                                    filteredApps = allApps.filter { app -> app.flags and filterFlags == 0 }
+                                                        .filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.packageName) }
                                                 },
                                                 label = { Text(text = "Preinstalled") },
                                                 leadingIcon = {
@@ -255,7 +255,9 @@ fun BlackWhitelistPreference(
                                                 selected = rememberFilterBlacklist,
                                                 onClick = {
                                                     rememberFilterBlacklist = !rememberFilterBlacklist
-                                                    filteredApps = allApps.filter { app -> app.flags and filterFlags == 0 }.filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.pkg) }
+                                                    filteredApps = allApps
+                                                        .filter { app -> app.flags and filterFlags == 0 }
+                                                        .filter { app -> rememberFilterBlacklist || !mutableBlacklist.contains(app.packageName) }
                                                 },
                                                 label = { Text(text = "Blacklisted") },
                                                 leadingIcon = {
@@ -271,9 +273,9 @@ fun BlackWhitelistPreference(
                                         item {
                                             SelectableAppItem(
                                                 appInfo = it,
-                                                selected = mutableWhitelist.contains(it.pkg),
-                                                onSelect = { mutableWhitelist.add(it.pkg) },
-                                                onDeselect = { mutableWhitelist.remove(it.pkg) })
+                                                selected = mutableWhitelist.contains(it.packageName),
+                                                onSelect = { mutableWhitelist.add(it.packageName) },
+                                                onDeselect = { mutableWhitelist.remove(it.packageName) })
                                         }
                                     }
                                 }
@@ -286,13 +288,12 @@ fun BlackWhitelistPreference(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SelectableAppItem(appInfo: AppInfo, selected: Boolean, onSelect: () -> Unit, onDeselect: () -> Unit) {
     var rememberSelected by remember { mutableStateOf(selected) }
     ListItem(
         headlineContent = { Text(appInfo.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { Text(appInfo.pkg, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = { Text(appInfo.packageName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingContent = {
             Box(modifier = Modifier.size(40.dp)) {
                 Image(painter = rememberDrawablePainter(drawable = appInfo.icon), contentDescription = "App Icon", modifier = Modifier.size(40.dp))
@@ -305,17 +306,16 @@ fun SelectableAppItem(appInfo: AppInfo, selected: Boolean, onSelect: () -> Unit,
         modifier = Modifier.selectable(rememberSelected) {
             rememberSelected = !rememberSelected
             if (rememberSelected) {
-                Timber.w("Item selected: %s", appInfo.pkg)
+                Timber.w("Item selected: %s", appInfo.packageName)
                 onSelect()
             } else {
-                Timber.w("Item deselected: %s", appInfo.pkg)
+                Timber.w("Item deselected: %s", appInfo.packageName)
                 onDeselect()
             }
         }
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlackWhitelistEmptyItem(onclick: () -> Unit) {
     ListItem(
@@ -325,7 +325,6 @@ fun BlackWhitelistEmptyItem(onclick: () -> Unit) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BlackWhiteListHeadline(text: String, onAddButtonClick: () -> Unit) {
     ListItem(
@@ -344,16 +343,15 @@ fun BlackWhiteListHeadline(text: String, onAddButtonClick: () -> Unit) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SelectedAppListItem(appInfo: AppInfo, onDeleteItem: suspend (String) -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     ListItem(
         headlineContent = { Text(appInfo.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { Text(appInfo.pkg, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = { Text(appInfo.packageName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingContent = { Image(painter = rememberDrawablePainter(drawable = appInfo.icon), contentDescription = "App Icon", modifier = Modifier.size(40.dp)) },
         trailingContent = {
-            IconButton(onClick = { coroutineScope.launch { onDeleteItem(appInfo.pkg) } }) {
+            IconButton(onClick = { coroutineScope.launch { onDeleteItem(appInfo.packageName) } }) {
                 Icon(imageVector = Icons.Outlined.Delete, contentDescription = "Delete ")
             }
         }
@@ -385,14 +383,20 @@ fun BlackWhiteListHeadlinePreview() {
 @Preview
 @Composable
 fun SelectedAppListItemPreview() {
-    SelectedAppListItem(appInfo = AppInfo("com.example.test", 12345, "Example App", null, 0)) {}
+    val context = LocalContext.current
+    val drawable = ContextCompat.getDrawable(context, R.drawable.robot)
+
+    SelectedAppListItem(appInfo = AppInfo("com.example.test", "Example App", drawable!!, 0)) {}
 }
 
 @Preview
 @Composable
 fun SelectableAppItemPreview() {
+    val context = LocalContext.current
+    val drawable = ContextCompat.getDrawable(context, R.drawable.robot)
+
     SelectableAppItem(
-        appInfo = AppInfo("com.google.maps", 12345, "Google Maps", null, 0),
+        appInfo = AppInfo("com.example.test", "Example App", drawable!!, 0),
         selected = true,
         onSelect = {},
         onDeselect = {}
