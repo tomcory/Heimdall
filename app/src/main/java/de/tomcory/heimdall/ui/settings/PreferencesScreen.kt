@@ -353,3 +353,9 @@ fun VpnPreferencesPreview() {
 fun MitmPreferencesPreview() {
     MitmPreferences(SnackbarHostState())
 }
+
+@Preview
+@Composable
+fun ScannerPreferencesPreview() {
+    ScannerPreferences()
+}
