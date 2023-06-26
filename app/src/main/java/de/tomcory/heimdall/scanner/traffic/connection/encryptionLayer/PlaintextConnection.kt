@@ -3,7 +3,7 @@ package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
 import timber.log.Timber
 
-class PlaintextConnection(id: Int, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
+class PlaintextConnection(id: Long, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
 
     init {
         Timber.d("%s Creating plaintext connection", id)

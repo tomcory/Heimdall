@@ -3,7 +3,7 @@ package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
 import timber.log.Timber
 
-class QuicConnection(id: Int, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
+class QuicConnection(id: Long, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
 
     init {
         Timber.d("%s Creating QUIC connection", id)

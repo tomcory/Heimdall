@@ -4,7 +4,7 @@ import de.tomcory.heimdall.scanner.traffic.connection.appLayer.AppLayerConnectio
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 
-abstract class EncryptionLayerConnection(val id: Int, val transportLayer: TransportLayerConnection) {
+abstract class EncryptionLayerConnection(val id: Long, val transportLayer: TransportLayerConnection) {
 
     /**
      * Reference to the connection's application layer handler.
@@ -57,7 +57,7 @@ abstract class EncryptionLayerConnection(val id: Int, val transportLayer: Transp
          * @param mitmManager The MitmManager to be applied to the connection. If a null value is passed, the connection will be treated as plain text.
          * @param rawPayload The connection's first raw transport-layer payload.
          */
-        fun getInstance(id: Int, transportLayer: TransportLayerConnection, mitmManager: CertificateSniffingMitmManager?, rawPayload: ByteArray): EncryptionLayerConnection {
+        fun getInstance(id: Long, transportLayer: TransportLayerConnection, mitmManager: CertificateSniffingMitmManager?, rawPayload: ByteArray): EncryptionLayerConnection {
             if(mitmManager == null) {
                 return PlaintextConnection(id, transportLayer)
             }

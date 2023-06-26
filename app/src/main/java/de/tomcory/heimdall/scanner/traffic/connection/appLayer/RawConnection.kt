@@ -1,9 +1,8 @@
 package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
-import timber.log.Timber
 
-class RawConnection(id: Int, encryptionLayer: EncryptionLayerConnection) : AppLayerConnection(id, encryptionLayer) {
+class RawConnection(id: Long, encryptionLayer: EncryptionLayerConnection) : AppLayerConnection(id, encryptionLayer) {
 
     init {
         //Timber.w("%s Creating raw connection", id)

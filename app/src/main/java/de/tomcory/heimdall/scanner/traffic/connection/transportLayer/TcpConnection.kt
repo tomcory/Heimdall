@@ -30,26 +30,19 @@ import java.util.*
  * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
  */
 class TcpConnection internal constructor(
-    manager: ComponentManager,
+    componentManager: ComponentManager,
     deviceWriter: Handler,
     initialPacket: TcpPacket,
     ipPacketBuilder: IpPacketBuilder
 ) : TransportLayerConnection(
     deviceWriter,
-    manager.mitmManager,
+    componentManager,
     localPort = initialPacket.header.srcPort,
     remotePort = initialPacket.header.dstPort,
     ipPacketBuilder
 ) {
 
-    init {
-        Timber.d("%s Creating TCP connection", id)
-    }
-
     private val MAX_PAYLOAD_SIZE = Short.MAX_VALUE.toInt()
-
-    override val appId = manager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, this)
-    override val appPackage = manager.appFinder.getAppPackage(appId)
 
     private val window = initialPacket.header.window
     private val theirInitSeqNum = initialPacket.header.sequenceNumberAsLong
@@ -57,8 +50,10 @@ class TcpConnection internal constructor(
     private var theirSeqNum = theirInitSeqNum + 1 // SYN packets increase the client's sequence number by 1
     private var ourSeqNum = ourInitSeqNum
 
-    override val selectableChannel: SocketChannel = openChannel(ipPacketBuilder.remoteAddress, manager.vpnService)
-    override val selectionKey = connectChannel(manager.selector)
+    override val protocol = "TCP"
+    override val id = createDatabaseEntity()
+    override val selectableChannel: SocketChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+    override val selectionKey = connectChannel(componentManager.selector)
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
         state = TransportLayerState.CONNECTING

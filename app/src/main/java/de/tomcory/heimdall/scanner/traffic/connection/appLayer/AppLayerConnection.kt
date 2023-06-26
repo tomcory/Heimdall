@@ -2,7 +2,7 @@ package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 
-abstract class AppLayerConnection(val id: Int, val encryptionLayer: EncryptionLayerConnection) {
+abstract class AppLayerConnection(val id: Long, val encryptionLayer: EncryptionLayerConnection) {
 
     /**
      * Receives an outbound payload from the encryption layer, processes it and passes it back down to the encryption layer by calling its wrapOutbound() method.
@@ -22,7 +22,7 @@ abstract class AppLayerConnection(val id: Int, val encryptionLayer: EncryptionLa
          * You still need to call [unwrapOutbound] to actually process the payload once the instance is created.
          * @param payload The raw application-layer payload.
          */
-        fun getInstance(payload: ByteArray, id: Int, encryptionLayer: EncryptionLayerConnection): AppLayerConnection {
+        fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection): AppLayerConnection {
             //TODO: add DnsConnection
             return try {
                 if(payload.size > 7 && HTTP_METHODS.contains(payload.sliceArray(1..10).toString().substringBefore(' '))) {

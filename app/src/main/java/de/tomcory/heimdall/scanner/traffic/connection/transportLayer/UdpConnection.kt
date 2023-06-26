@@ -6,6 +6,7 @@ import android.os.Handler
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.components.DeviceWriteThread
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
+import de.tomcory.heimdall.util.ByteUtils
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.UdpPacket
 import org.pcap4j.packet.UnknownPacket
@@ -26,27 +27,21 @@ import java.util.*
  * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
  */
 class UdpConnection internal constructor(
-    manager: ComponentManager,
+    componentManager: ComponentManager,
     deviceWriter: Handler,
     initialPacket: UdpPacket,
     ipPacketBuilder: IpPacketBuilder
 ) : TransportLayerConnection(
     deviceWriter,
-    manager.mitmManager,
+    componentManager,
     localPort = initialPacket.header.srcPort,
     remotePort = initialPacket.header.dstPort,
     ipPacketBuilder
 ) {
-
-    init {
-        Timber.d("%s Creating UDP connection", id)
-    }
-
-    override val appId = manager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, this)
-    override val appPackage = manager.appFinder.getAppPackage(appId)
-
-    override val selectableChannel: DatagramChannel = openChannel(ipPacketBuilder.remoteAddress, manager.vpnService)
-    override val selectionKey = connectChannel(manager.selector)
+    override val protocol = "UDP"
+    override val id = createDatabaseEntity()
+    override val selectableChannel: DatagramChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+    override val selectionKey = connectChannel(componentManager.selector)
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): DatagramChannel {
         // open the channel now, but connect it asynchronously for better performance
@@ -88,8 +83,99 @@ class UdpConnection internal constructor(
             .payloadBuilder(UnknownPacket.newPacket(rawPayload, 0, rawPayload.size).builder)
     }
 
+    fun decodeDnsQuery(payload: ByteArray): String {
+        // The query starts at byte 12, skipping the DNS header
+        var index = 12
+
+        val result = StringBuilder()
+
+        while (index < payload.size) {
+            Timber.d(ByteUtils.bytesToHex(payload))
+            Timber.d("index: $index, payload: ${payload.size}")
+            // Read the length byte
+            val length = payload[index].toInt()
+
+            Timber.d("length: $length")
+
+            // If length is 0, we have reached the end of the query name
+            if (length == 0) break
+
+            // Append the label to the result string
+            val label = payload.sliceArray(index + 1 until index + 1 + length).toString(Charsets.UTF_8)
+            Timber.d("label: $label")
+            result.append(label)
+
+            // Move the index forward
+            index += length + 1
+
+            // If this isn't the last label, append a dot
+            if (payload[index].toInt() != 0) {
+                result.append('.')
+            }
+        }
+
+        val res = result.toString()
+
+        Timber.d("Decoded length %s", res.length)
+
+        return res
+    }
+
+    fun decodeDnsResponse(payload: ByteArray): Pair<String, List<String>> {
+        var index = 12
+
+        // Parsing the Question section to extract the queried domain name
+        val domainName = StringBuilder()
+        while (index < payload.size) {
+            val length = payload[index].toInt()
+            if (length == 0) {
+                index++ // Move past the null byte at the end of the domain name
+                break
+            }
+            val label = payload.sliceArray(index + 1 until index + 1 + length).toString(Charsets.UTF_8)
+            domainName.append(label)
+            index += length + 1
+            if (payload[index].toInt() != 0) {
+                domainName.append('.')
+            }
+        }
+
+        // Skipping Type and Class in Question section
+        index += 4
+
+        // Extracting IP addresses from the Answer section
+        val ipAddresses = mutableListOf<String>()
+        while (index < payload.size) {
+            // Skipping name, type, class, and TTL
+            index += 10
+
+            // Reading data length
+            val dataLength = ((payload[index].toInt() and 0xFF) shl 8) or (payload[index + 1].toInt() and 0xFF)
+            index += 2
+
+            // Assuming this is an A record, reading the IP address
+            if (dataLength == 4) { // IPv4 address
+                val ip = StringBuilder()
+                for (i in 0 until dataLength) {
+                    ip.append(payload[index + i].toInt() and 0xFF)
+                    if (i < dataLength - 1) {
+                        ip.append('.')
+                    }
+                }
+                ipAddresses.add(ip.toString())
+            }
+            index += dataLength
+        }
+
+        return Pair(domainName.toString(), ipAddresses)
+    }
+
     override fun wrapOutbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping UDP out (%s bytes)", id, payload.size)
+        Timber.w("%s Wrapping UDP out (%s bytes) to port %s", id, payload.size, remotePort.valueAsInt())
+        if(remotePort.valueAsInt() == 53) {
+            Timber.w("DNS")
+            Timber.w(decodeDnsQuery(payload))
+        }
         // if the application layer returned anything, write it to the connection's outward-facing channel
         if (payload.isNotEmpty()) {
             outBuffer.clear()
@@ -112,20 +198,25 @@ class UdpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping UDP in (%s bytes)", id, payload.size)
+        Timber.w("%s Wrapping UDP in (%s bytes) from port %s", id, payload.size, remotePort.valueAsInt())
+        if(remotePort.valueAsInt() == 53) {
+            Timber.w("DNS")
+            Timber.w(decodeDnsResponse(payload).toString())
+        }
         val forwardPacket = ipPacketBuilder.buildPacket(buildPayload(payload))
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_UDP, forwardPacket))
     }
 
     override fun unwrapOutbound(outgoingPacket: IpPacket) {
-        //Timber.d("%s Unwrapping UDP out (%s bytes)", id, outgoingPacket.payload.length())
+        Timber.w("%s Unwrapping UDP out (%s bytes)", id, outgoingPacket.payload.length())
+
         val payload = outgoingPacket.payload as UdpPacket? ?: return
         //TODO: below is just a placeholder for passOutboundToEncryptionLayer(payload.rawData)
         wrapOutbound(payload.rawData)
     }
 
     override fun unwrapInbound() {
-        //Timber.d("%s Unwrapping UDP in", id)
+        Timber.w("%s Unwrapping UDP in", id)
         if(selectionKey == null) {
             Timber.e("%s SelectionKey is null", id)
             state = TransportLayerState.ABORTED

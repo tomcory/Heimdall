@@ -3,7 +3,7 @@ package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import timber.log.Timber
 
-class HttpConnection(id: Int, encryptionLayer: EncryptionLayerConnection) : AppLayerConnection(id, encryptionLayer) {
+class HttpConnection(id: Long, encryptionLayer: EncryptionLayerConnection) : AppLayerConnection(id, encryptionLayer) {
 
     init {
         Timber.w("%s Creating HTTP connection", id)

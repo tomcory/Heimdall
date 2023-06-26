@@ -21,8 +21,8 @@ class AppFinder @JvmOverloads constructor(
     private val udp4File: File = File("/proc/net/udp"),
     private val udp6File: File = File("/proc/net/udp6")) {
 
-    val pm: PackageManager? = context?.packageManager
-    val cm: ConnectivityManager? = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
+    private val pm: PackageManager? = context?.packageManager
+    private val cm: ConnectivityManager? = context?.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
 
     fun getAppId(localAddress: InetAddress, remoteAddress: InetAddress, transportLayer: TransportLayerConnection): Int? {
         val aid = try {

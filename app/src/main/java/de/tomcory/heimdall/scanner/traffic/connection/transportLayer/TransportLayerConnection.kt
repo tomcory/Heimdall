@@ -1,11 +1,15 @@
 package de.tomcory.heimdall.scanner.traffic.connection.transportLayer
 
 import android.os.Handler
+import de.tomcory.heimdall.persistence.database.HeimdallDatabase
+import de.tomcory.heimdall.persistence.database.entity.Connection
 import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
@@ -22,7 +26,7 @@ import java.nio.channels.Selector
  */
 abstract class TransportLayerConnection protected constructor(
     val deviceWriter: Handler,
-    val mitmManager: CertificateSniffingMitmManager?,
+    val componentManager: ComponentManager,
     val localPort: Port,
     val remotePort: Port,
     val ipPacketBuilder: IpPacketBuilder
@@ -48,7 +52,7 @@ abstract class TransportLayerConnection protected constructor(
         ABORTED
     }
 
-    val id = (Math.random() * 10000).toInt()
+    protected abstract val id: Long
 
     private val ethernetFrameSize = 1500
     private val ipHeaderLength = 40
@@ -68,6 +72,11 @@ abstract class TransportLayerConnection protected constructor(
     protected val inBuffer: ByteBuffer = ByteBuffer.allocate(Short.MAX_VALUE.toInt())
 
     /**
+     * The connection's transport protocol's name.
+     */
+    protected abstract val protocol: String
+
+    /**
      * The connection's [SelectableChannel]'s key as registered with the [Selector].
      */
     protected abstract val selectionKey: SelectionKey?
@@ -85,12 +94,12 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * AID of the app holding the connection's local port.
      */
-    abstract val appId: Int?
+    val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, this)
 
     /**
      * Package name of the app holding the connection's local port.
      */
-    abstract val appPackage: String?
+    val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
 
     /**
      * Indicates the connection's state.
@@ -117,6 +126,22 @@ abstract class TransportLayerConnection protected constructor(
 
     abstract fun wrapInbound(payload: ByteArray)
 
+    protected fun createDatabaseEntity(): Long {
+        return runBlocking {
+            val ids = HeimdallDatabase.instance?.connectionDao?.insert(Connection(
+                protocol = protocol,
+                initialTimestamp = System.currentTimeMillis(),
+                initiator = appPackage ?: appId.toString(),
+                localPort = localPort.valueAsInt(),
+                remoteHost = ipPacketBuilder.remoteAddress.hostName,
+                remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                remotePort = remotePort.valueAsInt()
+            ))
+
+            return@runBlocking ids?.first() ?: -1
+        }
+    }
+
     /**
      * Closes the connection's outward-facing [SelectableChannel] and removes the connection from the [ConnectionCache]
      */
@@ -135,7 +160,7 @@ abstract class TransportLayerConnection protected constructor(
 
     fun passOutboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
-            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, mitmManager, payload)
+            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager.mitmManager, payload)
         }
         encryptionLayer?.unwrapOutbound(payload)
     }
@@ -160,25 +185,25 @@ abstract class TransportLayerConnection protected constructor(
             deviceWriter: Handler,)
         : TransportLayerConnection? {
 
-            Timber.d("Looking for connection")
-
             // if specified, query the connection cache for a matching connection
             ConnectionCache.findConnection(initialPacket)?.let {
-                Timber.d("Found connection: %s of type %s", it.id, it.javaClass.name)
                 return it
             }
-
-            Timber.d("No connection found, building a new one")
 
             val connection =  when (initialPacket.payload) {
                 is TcpPacket -> {
                     val tcpPacket = initialPacket.payload as TcpPacket
+//                    if(tcpPacket.header.dstPort.valueAsInt() == 853) {
+//                        Timber.w("Resetting DoT packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
+//                        deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
+//                        null
+//                    } else
                     if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
                         Timber.w("Resetting unknown TCP packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {
-                        Timber.d("Creating new TcpConnection")
+                        Timber.d("Creating new TcpConnection to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
                         TcpConnection(
                             manager,
                             deviceWriter,
@@ -189,16 +214,17 @@ abstract class TransportLayerConnection protected constructor(
                 }
 
                 is UdpPacket -> {
-                    Timber.d("Creating new UdpConnection")
+                    val udpPacket = initialPacket.payload as UdpPacket
+                    Timber.d("Creating new UdpConnection to %s:%s", initialPacket.header.dstAddr.hostAddress, udpPacket.header.dstPort.valueAsInt())
                     UdpConnection(
                         manager,
                         deviceWriter,
-                        initialPacket.payload as UdpPacket,
+                        udpPacket,
                         IpPacketBuilder.getInstance(initialPacket)
                     )
                 }
                 else -> {
-                    Timber.e("Invalid transport protocol")
+                    Timber.e("Invalid transport protocol %s", initialPacket.payload.javaClass)
                     null
                 }
             }

@@ -9,7 +9,7 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 
 class TlsConnection(
-    id: Int,
+    id: Long,
     transportLayer: TransportLayerConnection,
     private val mitmManager: CertificateSniffingMitmManager?,
     private val doMitm: Boolean = mitmManager != null,)
