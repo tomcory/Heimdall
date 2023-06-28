@@ -7,6 +7,7 @@ import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
+import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
 import kotlinx.coroutines.runBlocking
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
@@ -27,6 +28,7 @@ abstract class TransportLayerConnection protected constructor(
     val componentManager: ComponentManager,
     val localPort: Port,
     val remotePort: Port,
+    val remoteHost: String?,
     val ipPacketBuilder: IpPacketBuilder
 ) {
 
@@ -175,7 +177,7 @@ abstract class TransportLayerConnection protected constructor(
          */
         fun getInstance(
             initialPacket: IpPacket,
-            manager: ComponentManager,
+            componentManager: ComponentManager,
             deviceWriter: Handler,)
         : TransportLayerConnection? {
 
@@ -183,6 +185,8 @@ abstract class TransportLayerConnection protected constructor(
             ConnectionCache.findConnection(initialPacket)?.let {
                 return it
             }
+
+            val hostname = initialPacket.header.dstAddr.hostAddress?.let { DnsCache.get(it) }
 
             val connection =  when (initialPacket.payload) {
                 is TcpPacket -> {
@@ -193,32 +197,34 @@ abstract class TransportLayerConnection protected constructor(
 //                        null
 //                    } else
                     if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
-                        Timber.w("Resetting unknown TCP packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
+                        Timber.w("Resetting unknown TCP packet to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {
-                        Timber.d("Creating new TcpConnection to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
+                        Timber.d("Creating new TcpConnection to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         TcpConnection(
-                            manager,
-                            deviceWriter,
-                            initialPacket.payload as TcpPacket,
-                            IpPacketBuilder.getInstance(initialPacket)
+                            componentManager = componentManager,
+                            deviceWriter = deviceWriter,
+                            initialPacket = initialPacket.payload as TcpPacket,
+                            ipPacketBuilder = IpPacketBuilder.getInstance(initialPacket),
+                            remoteHost = hostname
                         )
                     }
                 }
 
                 is UdpPacket -> {
                     val udpPacket = initialPacket.payload as UdpPacket
-                    Timber.d("Creating new UdpConnection to %s:%s", initialPacket.header.dstAddr.hostAddress, udpPacket.header.dstPort.valueAsInt())
+                    Timber.d("Creating new UdpConnection to ${initialPacket.header.dstAddr.hostAddress}:${udpPacket.header.dstPort.valueAsInt()} ($hostname)")
                     UdpConnection(
-                        manager,
-                        deviceWriter,
-                        udpPacket,
-                        IpPacketBuilder.getInstance(initialPacket)
+                        componentManager = componentManager,
+                        deviceWriter = deviceWriter,
+                        initialPacket = udpPacket,
+                        ipPacketBuilder = IpPacketBuilder.getInstance(initialPacket),
+                        remoteHost = hostname
                     )
                 }
                 else -> {
-                    Timber.e("Invalid transport protocol %s", initialPacket.payload.javaClass)
+                    Timber.e("Invalid transport protocol ${initialPacket.payload.javaClass}")
                     null
                 }
             }

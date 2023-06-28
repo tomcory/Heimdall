@@ -32,13 +32,15 @@ class UdpConnection internal constructor(
     componentManager: ComponentManager,
     deviceWriter: Handler,
     initialPacket: UdpPacket,
-    ipPacketBuilder: IpPacketBuilder
+    ipPacketBuilder: IpPacketBuilder,
+    remoteHost: String?
 ) : TransportLayerConnection(
-    deviceWriter,
-    componentManager,
+    deviceWriter = deviceWriter,
+    componentManager = componentManager,
     localPort = initialPacket.header.srcPort,
     remotePort = initialPacket.header.dstPort,
-    ipPacketBuilder
+    remoteHost = remoteHost,
+    ipPacketBuilder = ipPacketBuilder
 ) {
     override val protocol = "UDP"
     override val id = createDatabaseEntity()
