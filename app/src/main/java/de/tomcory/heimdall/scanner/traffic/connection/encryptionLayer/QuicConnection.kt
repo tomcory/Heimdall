@@ -1,9 +1,19 @@
 package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
+import org.pcap4j.packet.Packet
 import timber.log.Timber
 
-class QuicConnection(id: Long, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
+class QuicConnection(
+    id: Long,
+    transportLayer: TransportLayerConnection,
+    componentManager: ComponentManager
+) : EncryptionLayerConnection(
+    id,
+    transportLayer,
+    componentManager
+) {
 
     init {
         Timber.d("%s Creating QUIC connection", id)
@@ -13,6 +23,10 @@ class QuicConnection(id: Long, transportLayer: TransportLayerConnection) : Encry
         //TODO: implement
         Timber.d("%s Unwrapping QUIC out", id)
         passOutboundToAppLayer(payload)
+    }
+
+    override fun unwrapOutbound(packet: Packet) {
+        passOutboundToAppLayer(packet)
     }
 
     override fun unwrapInbound(payload: ByteArray) {

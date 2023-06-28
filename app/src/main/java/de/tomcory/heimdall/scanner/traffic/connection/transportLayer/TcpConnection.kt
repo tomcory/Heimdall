@@ -1,13 +1,14 @@
 package de.tomcory.heimdall.scanner.traffic.connection.transportLayer
 
-import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Handler
+import android.system.OsConstants
 import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.components.DeviceWriteThread
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
 import org.pcap4j.packet.IpPacket
+import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
 import org.pcap4j.packet.UnknownPacket
 import org.pcap4j.packet.namednumber.TcpPort
@@ -20,14 +21,15 @@ import java.nio.ByteBuffer
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
-import java.util.*
+import java.util.Arrays
 
 /**
  * Represents a transport-layer connection using TCP.
  *
- * @param localAddress The local client's [InetAddress].
- * @param remoteAddress The remote host's [InetAddress].
- * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
+ * @param componentManager
+ * @param deviceWriter
+ * @param initialPacket TCP segment from which the necessary metadata is extracted to create the instance (ideally the very first segment of a new socket).
+ * @param ipPacketBuilder
  */
 class TcpConnection internal constructor(
     componentManager: ComponentManager,
@@ -42,8 +44,6 @@ class TcpConnection internal constructor(
     ipPacketBuilder
 ) {
 
-    private val MAX_PAYLOAD_SIZE = Short.MAX_VALUE.toInt()
-
     private val window = initialPacket.header.window
     private val theirInitSeqNum = initialPacket.header.sequenceNumberAsLong
     private val ourInitSeqNum = (Math.random() * 0xFFFFFFF).toLong()
@@ -54,17 +54,18 @@ class TcpConnection internal constructor(
     override val id = createDatabaseEntity()
     override val selectableChannel: SocketChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
     override val selectionKey = connectChannel(componentManager.selector)
+    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort.valueAsInt(), remotePort.valueAsInt(), OsConstants.IPPROTO_TCP)
+    override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
         state = TransportLayerState.CONNECTING
-        TrafficStats.setThreadStatsTag(42)
         val selectableChannel = SocketChannel.open()
         vpnService?.protect(selectableChannel.socket())
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().keepAlive = true
         selectableChannel.socket().tcpNoDelay = true
         selectableChannel.socket().soTimeout = 0
-        selectableChannel.socket().receiveBufferSize = 65535
+        selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort.valueAsInt()))
         //Timber.d("%s Connecting SocketChannel to %s:%s", id, remoteAddress, remotePort.valueAsInt())
         return selectableChannel
@@ -89,10 +90,10 @@ class TcpConnection internal constructor(
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_TCP, packet))
     }
 
-    override fun unwrapOutbound(outgoingPacket: IpPacket) {
-        val tcpHeader = outgoingPacket.payload.header as TcpPacket.TcpHeader
+    override fun unwrapOutbound(outgoingPacket: Packet) {
+        val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
         if (tcpHeader.ack) {
-            if (outgoingPacket.payload.payload != null && outgoingPacket.payload.payload.length() > 0) {
+            if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
                 //Timber.d("%s Unwrapping TCP out (%s bytes)", id, outgoingPacket.payload.length())
                 handleAckData(outgoingPacket) // data was sent and needs to be forwarded
             } else if (!tcpHeader.syn && !tcpHeader.fin) {
@@ -130,7 +131,7 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping TCP out (%s bytes)", id, payload.size)
+        Timber.d("%s Wrapping TCP out (%s bytes)", id, payload.size)
         if (payload.isNotEmpty()) {
             if(payload.size <= outBuffer.limit()) {
                 outBuffer.clear()
@@ -178,10 +179,10 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping TCP in (%s bytes)", id, payload.size)
+        Timber.d("%s Wrapping TCP in (%s bytes)", id, payload.size)
         // if the application layer returned anything, write it to the device's VPN interface
         if (payload.isNotEmpty()) {
-            if(payload.size <= Short.MAX_VALUE.toInt()) {
+            if(payload.size <= componentManager.maxPacketSize) {
                 // if the payload fits into a single TCP segment, wrap and write it directly
                 val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(payload))
                 increaseOurSeqNum(payload.size)
@@ -189,10 +190,10 @@ class TcpConnection internal constructor(
             } else {
                 // if the payload exceeds the max. TCP payload size, split it into multiple segments
                 //TODO: there has to be a better way...
-                //Timber.d("%s Splitting large payload (%s bytes)", id, payload.size)
+                Timber.d("%s Splitting large payload (%s bytes)", id, payload.size)
                 val largeBuffer = ByteBuffer.wrap(payload)
                 while(largeBuffer.hasRemaining()) {
-                    val temp = ByteArray(maxOf(largeBuffer.limit() - largeBuffer.position(), MAX_PAYLOAD_SIZE))
+                    val temp = ByteArray(maxOf(largeBuffer.limit() - largeBuffer.position(), componentManager.maxPacketSize))
                     largeBuffer.get(temp)
                     Timber.d("%s Writing split payload (%s bytes, %s remaining)", id, temp.size, largeBuffer.limit() - largeBuffer.position())
                     val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(temp))
@@ -203,22 +204,20 @@ class TcpConnection internal constructor(
         }
     }
 
-    private fun handleAckData(outgoingPacket: IpPacket) {
-        val tcpPacket = outgoingPacket.payload as TcpPacket
+    private fun handleAckData(outgoingPacket: Packet) {
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
             Timber.e("%s Got ACK (data, invalid state %s)", id, state)
             abortAndRst()
         } else {
             //Timber.i("%s Got ACK data (%s bytes)", id, outgoingPacket.payload.length())
-            increaseTheirSeqNum(tcpPacket.payload.rawData.size)
+            increaseTheirSeqNum(outgoingPacket.payload.length())
 
             // acknowledge packet to the client by sending an empty ACK
             writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
 
             // pass the payload to the encryption and application layers for processing and store the result
-            //TODO: below is just a placeholder for passOutboundToEncryptionLayer(tcpPacket.payload.rawData)
-            wrapOutbound(tcpPacket.payload.rawData)
+            passOutboundToEncryptionLayer(outgoingPacket.payload)
         }
     }
 
@@ -297,9 +296,8 @@ class TcpConnection internal constructor(
                     inBuffer.flip()
                     val rawData = Arrays.copyOf(inBuffer.array(), bytesRead)
 
-                    // pass the payload to the application layer for processing and store the result
-                    //TODO: below is just a placeholder for passInboundToEncryptionLayer(rawData)
-                    wrapInbound(rawData)
+                    // pass the payload to the encryption layer for processing and store the result
+                    passInboundToEncryptionLayer(rawData)
                 }
             }  catch (e: IOException) {
                 bytesRead = -1
@@ -315,6 +313,7 @@ class TcpConnection internal constructor(
                 ConnectionCache.removeConnection(this)
             } else {
                 // connection closed by server, move to CLOSING state and send a FIN to initiate the local closing handshake
+                Timber.d("%s SocketChannel closed, state transition %s -> CLOSING", id, state)
                 state = TransportLayerState.CLOSING
                 val finPacket = ipPacketBuilder.buildPacket(buildFin())
                 increaseOurSeqNum(1)

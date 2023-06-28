@@ -1,10 +1,16 @@
 package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
+import org.pcap4j.packet.Packet
 
-abstract class EncryptionLayerConnection(val id: Long, val transportLayer: TransportLayerConnection) {
+abstract class EncryptionLayerConnection(
+    val id: Long,
+    val transportLayer: TransportLayerConnection,
+    val componentManager: ComponentManager
+) {
 
     /**
      * Reference to the connection's application layer handler.
@@ -16,6 +22,13 @@ abstract class EncryptionLayerConnection(val id: Long, val transportLayer: Trans
             appLayer = AppLayerConnection.getInstance(payload, id, this)
         }
         appLayer?.unwrapOutbound(payload)
+    }
+
+    fun passOutboundToAppLayer(packet: Packet) {
+        if(appLayer == null) {
+            appLayer = AppLayerConnection.getInstance(packet, id, this)
+        }
+        appLayer?.unwrapOutbound(packet)
     }
 
     fun passInboundToAppLayer(payload: ByteArray) {
@@ -30,6 +43,8 @@ abstract class EncryptionLayerConnection(val id: Long, val transportLayer: Trans
      * Receives an outbound payload from the transport layer, processes it and passes it up to the application layer.
      */
     abstract fun unwrapOutbound(payload: ByteArray)
+
+    abstract fun unwrapOutbound(packet: Packet)
 
     /**
      * Receives an inbound payload from the transport layer, processes it and passes it up to the application layer.
@@ -49,26 +64,28 @@ abstract class EncryptionLayerConnection(val id: Long, val transportLayer: Trans
     companion object {
 
         /**
-         * Creates a [EncryptionLayerConnection] instance based on the protocol of the supplied payload (must be the very first transport-layer payload of the connection).
+         * Creates an [EncryptionLayerConnection] instance based on the protocol of the supplied payload (must be the very first transport-layer payload of the connection).
          * You still need to call [unwrapOutbound] to actually process the payload once the instance is created.
          *
          * @param id
          * @param transportLayer
-         * @param mitmManager The MitmManager to be applied to the connection. If a null value is passed, the connection will be treated as plain text.
+         * @param componentManager The ComponentManager responsible for the VPN session.
          * @param rawPayload The connection's first raw transport-layer payload.
          */
-        fun getInstance(id: Long, transportLayer: TransportLayerConnection, mitmManager: CertificateSniffingMitmManager?, rawPayload: ByteArray): EncryptionLayerConnection {
-            if(mitmManager == null) {
-                return PlaintextConnection(id, transportLayer)
-            }
-
-            return if (detectTls(rawPayload)) {
-                TlsConnection(id, transportLayer, mitmManager)
+        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray): EncryptionLayerConnection {
+            return if(!componentManager.doMitm) {
+                return PlaintextConnection(id, transportLayer, componentManager)
+            } else if (detectTls(rawPayload)) {
+                TlsConnection(id, transportLayer, componentManager)
             } else if(detectQuic(rawPayload)) {
-                QuicConnection(id, transportLayer)
+                QuicConnection(id, transportLayer, componentManager)
             } else {
-                PlaintextConnection(id, transportLayer)
+                PlaintextConnection(id, transportLayer, componentManager)
             }
+        }
+
+        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet): EncryptionLayerConnection {
+            return getInstance(id, transportLayer, componentManager, packet.rawData)
         }
 
         private fun detectTls(rawPayload: ByteArray): Boolean {

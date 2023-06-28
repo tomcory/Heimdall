@@ -7,9 +7,7 @@ import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
-import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
@@ -54,22 +52,17 @@ abstract class TransportLayerConnection protected constructor(
 
     protected abstract val id: Long
 
-    private val ethernetFrameSize = 1500
-    private val ipHeaderLength = 40
-
     /**
      * Buffer used for write operations on the connection's [SelectableChannel].
      * Using separate buffers allows for parallel read and write operations.
      */
-    //protected val outBuffer: ByteBuffer = ByteBuffer.allocate(ethernetFrameSize)
-    protected val outBuffer: ByteBuffer = ByteBuffer.allocate(Short.MAX_VALUE.toInt())
+    protected val outBuffer: ByteBuffer = ByteBuffer.allocate(componentManager.maxPacketSize)
 
     /**
      * Buffer used for read operations on the connection's [SelectableChannel].
      * Using separate buffers allows for parallel read and write operations.
      */
-    //protected val inBuffer: ByteBuffer = ByteBuffer.allocate(ethernetFrameSize - ipHeaderLength)
-    protected val inBuffer: ByteBuffer = ByteBuffer.allocate(Short.MAX_VALUE.toInt())
+    protected val inBuffer: ByteBuffer = ByteBuffer.allocate(componentManager.maxPacketSize)
 
     /**
      * The connection's transport protocol's name.
@@ -87,19 +80,14 @@ abstract class TransportLayerConnection protected constructor(
     protected abstract val selectableChannel: SelectableChannel
 
     /**
-     * Timestamp at which the connection instance was created.
-     */
-    val initialTimestamp = System.currentTimeMillis()
-
-    /**
      * AID of the app holding the connection's local port.
      */
-    val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, this)
+    protected abstract val appId: Int?
 
     /**
      * Package name of the app holding the connection's local port.
      */
-    val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
+    protected abstract val appPackage: String?
 
     /**
      * Indicates the connection's state.
@@ -110,15 +98,36 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * Reference to the connection's encryption layer handler.
      */
-    var encryptionLayer: EncryptionLayerConnection? = null
-        protected set
+    private var encryptionLayer: EncryptionLayerConnection? = null
+
+    fun passOutboundToEncryptionLayer(payload: ByteArray) {
+        if(encryptionLayer == null) {
+            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, payload)
+        }
+        encryptionLayer?.unwrapOutbound(payload)
+    }
+
+    fun passOutboundToEncryptionLayer(packet: Packet) {
+        if(encryptionLayer == null) {
+            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, packet)
+        }
+        encryptionLayer?.unwrapOutbound(packet)
+    }
+
+    fun passInboundToEncryptionLayer(payload: ByteArray) {
+        if(encryptionLayer == null) {
+            throw java.lang.IllegalStateException("Inbound data without an encryption layer instance!")
+        } else {
+            encryptionLayer?.unwrapInbound(payload)
+        }
+    }
 
     /**
      * Constructs a transport-layer payload [Packet.Builder] to be used by [IpPacketBuilder.buildPacket].
      */
     abstract fun buildPayload(rawPayload: ByteArray): Packet.Builder
 
-    abstract fun unwrapOutbound(outgoingPacket: IpPacket)
+    abstract fun unwrapOutbound(outgoingPacket: Packet)
 
     abstract fun unwrapInbound()
 
@@ -156,21 +165,6 @@ abstract class TransportLayerConnection protected constructor(
     fun closeSoft() {
         state = TransportLayerState.CLOSING
         selectableChannel.close()
-    }
-
-    fun passOutboundToEncryptionLayer(payload: ByteArray) {
-        if(encryptionLayer == null) {
-            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager.mitmManager, payload)
-        }
-        encryptionLayer?.unwrapOutbound(payload)
-    }
-
-    fun passInboundToEncryptionLayer(payload: ByteArray) {
-        if(encryptionLayer == null) {
-            throw java.lang.IllegalStateException("Inbound data without an encryption layer instance!")
-        } else {
-            encryptionLayer?.unwrapInbound(payload)
-        }
     }
 
     companion object {

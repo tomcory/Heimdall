@@ -1,9 +1,19 @@
 package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
+import org.pcap4j.packet.Packet
 import timber.log.Timber
 
-class PlaintextConnection(id: Long, transportLayer: TransportLayerConnection) : EncryptionLayerConnection(id, transportLayer) {
+class PlaintextConnection(
+    id: Long,
+    transportLayer: TransportLayerConnection,
+    componentManager: ComponentManager
+) : EncryptionLayerConnection(
+    id,
+    transportLayer,
+    componentManager
+) {
 
     init {
         Timber.d("%s Creating plaintext connection", id)
@@ -19,6 +29,11 @@ class PlaintextConnection(id: Long, transportLayer: TransportLayerConnection) : 
         //TODO: implement
         //Timber.d("%s Unwrapping plaintext in", id)
         passInboundToAppLayer(payload)
+    }
+
+    override fun unwrapOutbound(packet: Packet) {
+        //TODO: implement
+        passOutboundToAppLayer(packet)
     }
 
     override fun wrapOutbound(payload: ByteArray) {

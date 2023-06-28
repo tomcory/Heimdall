@@ -1,8 +1,9 @@
 package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.util.ByteUtils
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
-import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
+import org.pcap4j.packet.Packet
 import timber.log.Timber
 import java.nio.ByteBuffer
 import javax.net.ssl.SSLEngine
@@ -11,12 +12,15 @@ import javax.net.ssl.SSLEngineResult
 class TlsConnection(
     id: Long,
     transportLayer: TransportLayerConnection,
-    private val mitmManager: CertificateSniffingMitmManager?,
-    private val doMitm: Boolean = mitmManager != null,)
-    : EncryptionLayerConnection(id, transportLayer) {
+    componentManager: ComponentManager
+) : EncryptionLayerConnection(
+    id,
+    transportLayer,
+    componentManager
+) {
 
     init {
-        Timber.d("%s Creating TLS connection, MitM %s", id, if(doMitm) "enabled" else "disabled")
+        Timber.d("%s Creating TLS connection", id)
     }
 
     private var state: ConnectionState = ConnectionState.NEW
@@ -46,24 +50,24 @@ class TlsConnection(
     override fun unwrapOutbound(payload: ByteArray) {
         //Timber.d("%s Unwrapping TLS out (%s bytes)", id, payload.size)
 
-        // only reassemble and process records if we want to MITM or it's a new connection and we need to parse the remote hostname (SNI)
-        if(doMitm || state == ConnectionState.NEW) {
+        // only reassemble and process records if it's a new connection and we need to parse the remote hostname (SNI)
+        if(state == ConnectionState.NEW) {
             prepareRecords(payload, true)
         } else {
             transportLayer.wrapOutbound(payload)
         }
         //TODO: mitmManager.createClientSSLEngineFor()
+        //TODO: implement MitM
+    }
+
+    override fun unwrapOutbound(packet: Packet) {
+        unwrapOutbound(packet.rawData)
     }
 
     override fun unwrapInbound(payload: ByteArray) {
         //Timber.d("%s Unwrapping TLS in (%s bytes)", id, payload.size)
 
-        // only reassemble and process records if we want to MITM
-        if(doMitm) {
-            prepareRecords(payload, false)
-        } else {
-            transportLayer.wrapInbound(payload)
-        }
+        prepareRecords(payload, false)
     }
 
     override fun wrapOutbound(payload: ByteArray) {
@@ -142,7 +146,7 @@ class TlsConnection(
     }
 
     private fun setupClientSSLEngine() {
-        clientSSLEngine = serverSSLEngine?.session?.let { mitmManager?.createClientSSLEngineFor(it) }
+        clientSSLEngine = serverSSLEngine?.session?.let { componentManager.mitmManager.createClientSSLEngineFor(it) }
         state = ConnectionState.CLIENT_HANDSHAKE
         clientSSLEngine?.beginHandshake()
         Timber.e("%s ClientSSLEngine HandshakeStatus: %s", id, clientSSLEngine?.handshakeStatus)
@@ -217,12 +221,12 @@ class TlsConnection(
         Timber.d("%s Hostname: %s", id, hostname)
 
         // if we don't want to MITM, we can hand the unprocessed record straight back to the transport layer
-        if(!doMitm) {
+        if(!componentManager.doMitm) {
             transportLayer.wrapOutbound(record)
         }
 
         // create a new SSLEngine to handle the TLS session facing the remote host
-        serverSSLEngine = mitmManager?.createServerSSLEngine(sni, transportLayer.remotePort.valueAsInt())
+        serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort.valueAsInt())
         //serverSSLEngine = mitmManager?.createServerSSLEngine("www.google.de", 443)
 
         state = ConnectionState.SERVER_HANDSHAKE

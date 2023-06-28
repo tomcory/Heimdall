@@ -41,7 +41,7 @@ class OutboundTrafficHandler(
     private fun handleMessageImpl(msg: Message) {
         if((msg.what == 6 || msg.what == 17) && msg.obj is IpPacket) {
             val ipPacket = msg.obj as IpPacket
-            TransportLayerConnection.getInstance(ipPacket, manager, deviceWriter)?.unwrapOutbound(ipPacket)
+            TransportLayerConnection.getInstance(ipPacket, componentManager, deviceWriter)?.unwrapOutbound(ipPacket.payload)
         }
     }
 }
