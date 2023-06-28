@@ -24,19 +24,20 @@ import java.nio.channels.Selector
  * @throws VpnComponentLaunchException if the component initialisation failed.
  */
 class ComponentManager(
-    val outboundStream: FileInputStream,
-    val inboundStream: FileOutputStream,
+    private val outboundStream: FileInputStream,
+    private val inboundStream: FileOutputStream,
     val vpnService: VpnService?,
-    val doMitM: Boolean
+    val doMitm: Boolean = false,
+    val maxPacketSize: Int = Short.MAX_VALUE.toInt() / 2
 ) {
 
-    private var devicePollThread: de.tomcory.heimdall.scanner.traffic.components.DevicePollThread? = null
-    private var deviceWriteThread: de.tomcory.heimdall.scanner.traffic.components.DeviceWriteThread? = null
-    private var outboundTrafficHandler: de.tomcory.heimdall.scanner.traffic.components.OutboundTrafficHandler? = null
-    private var inboundTrafficHandler: de.tomcory.heimdall.scanner.traffic.components.InboundTrafficHandler? = null
+    private var devicePollThread: DevicePollThread? = null
+    private var deviceWriteThread: DeviceWriteThread? = null
+    private var outboundTrafficHandler: OutboundTrafficHandler? = null
+    private var inboundTrafficHandler: InboundTrafficHandler? = null
 
-    val interrupter: FileDescriptor
-    val interrupted: FileDescriptor
+    private val interrupter: FileDescriptor
+    private val interrupted: FileDescriptor
 
     val appFinder = AppFinder(vpnService)
 
@@ -53,7 +54,7 @@ class ComponentManager(
         subjectOU = "HeimdallCertUnit")
 
     // set up the man-in-the-middle manager
-    val mitmManager: CertificateSniffingMitmManager? = if(doMitM) CertificateSniffingMitmManager(authority) else null
+    val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
 
     // set up the NIO selector that is used to poll the outgoing sockets for incoming packets
     val selector: Selector = try {
@@ -83,23 +84,23 @@ class ComponentManager(
          * 2 - Inbound- & OutboundTrafficHandler (both with the DeviceWriteThread's handler)
          * 3 - DevicePollThread (with the OutboundTrafficHandler's handler)
          */
-        deviceWriteThread = de.tomcory.heimdall.scanner.traffic.components.DeviceWriteThread(
+        deviceWriteThread = DeviceWriteThread(
             "DeviceWriteThread",
             inboundStream
         ) { deviceWriter ->
             inboundTrafficHandler =
-                de.tomcory.heimdall.scanner.traffic.components.InboundTrafficHandler(
+                InboundTrafficHandler(
                     "InboundTrafficHandler",
                     this
                 )
             outboundTrafficHandler =
-                de.tomcory.heimdall.scanner.traffic.components.OutboundTrafficHandler(
+                OutboundTrafficHandler(
                     "OutboundTrafficHandler",
                     deviceWriter,
                     this
                 ) { outHandler ->
                     devicePollThread =
-                        de.tomcory.heimdall.scanner.traffic.components.DevicePollThread(
+                        DevicePollThread(
                             "DevicePollThread",
                             outboundStream,
                             interrupter,

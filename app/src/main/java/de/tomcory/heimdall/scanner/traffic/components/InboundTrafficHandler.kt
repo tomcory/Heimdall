@@ -7,29 +7,29 @@ import java.io.IOException
 
 class InboundTrafficHandler(
     name: String,
-    val manager: ComponentManager
+    private val componentManager: ComponentManager
 ) : Thread(name) {
 
     init {
         Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
-        Timber.d("Thread created")
+        Timber.d("InboundTrafficHandler created")
     }
 
     override fun run() {
-        Timber.d("Thread started")
+        Timber.d("InboundTrafficHandler started")
         var selectedChannels: Int
 
         while (!interrupted()) {
             selectedChannels = 0
             try {
-                selectedChannels = manager.selector.select()
+                selectedChannels = componentManager.selector.select()
             } catch (e: IOException) {
                 Timber.e(e, "Error during selection process")
             }
 
             synchronized(ComponentManager.selectorMonitor) {
                 if (selectedChannels > 0) {
-                    val iterator = manager.selector.selectedKeys().iterator()
+                    val iterator = componentManager.selector.selectedKeys().iterator()
                     while (iterator.hasNext()) {
                         val key = iterator.next()
                         val attachment = key.attachment()

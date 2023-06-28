@@ -10,13 +10,16 @@ import timber.log.Timber
 
 class OutboundTrafficHandler(
     name: String,
-    val deviceWriter: Handler,
-    val manager: ComponentManager,
-    val handlerReadyListener: (handler: Handler) -> Unit
-) : HandlerThread(name, Process.THREAD_PRIORITY_FOREGROUND) {
+    private val deviceWriter: Handler,
+    private val componentManager: ComponentManager,
+    private val handlerReadyListener: (handler: Handler) -> Unit
+) : HandlerThread(
+    name,
+    Process.THREAD_PRIORITY_FOREGROUND
+) {
 
     init {
-        Timber.d("Thread created")
+        Timber.d("OutboundTrafficHandler created")
     }
 
     lateinit var handler: Handler private set
@@ -27,7 +30,7 @@ class OutboundTrafficHandler(
                 handleMessageImpl(msg)
             }
         }
-        Timber.d("Looper prepared")
+        Timber.d("OutboundTrafficHandler started")
         // signal looper prepared
         handlerReadyListener.invoke(handler)
     }
