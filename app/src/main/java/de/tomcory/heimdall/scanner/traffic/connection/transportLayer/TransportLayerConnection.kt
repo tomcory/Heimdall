@@ -144,7 +144,7 @@ abstract class TransportLayerConnection protected constructor(
                 initialTimestamp = System.currentTimeMillis(),
                 initiator = appPackage ?: appId.toString(),
                 localPort = localPort.valueAsInt(),
-                remoteHost = ipPacketBuilder.remoteAddress.hostName,
+                remoteHost = remoteHost ?: "",
                 remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
                 remotePort = remotePort.valueAsInt()
             ))
