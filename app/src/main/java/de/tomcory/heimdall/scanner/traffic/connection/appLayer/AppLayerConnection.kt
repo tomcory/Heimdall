@@ -34,7 +34,7 @@ abstract class AppLayerConnection(
         fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection): AppLayerConnection {
             //TODO: add DnsConnection
             return try {
-                if(encryptionLayer.transportLayer.remotePort.valueAsInt() == 53) {
+                if(encryptionLayer.transportLayer.remotePort == 53) {
                     DnsConnection(id, encryptionLayer)
                 } else if(payload.size > 7 && HTTP_METHODS.contains(payload.sliceArray(1..10).toString().substringBefore(' '))) {
                     HttpConnection(id, encryptionLayer)

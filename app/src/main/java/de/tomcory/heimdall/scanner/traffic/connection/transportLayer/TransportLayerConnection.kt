@@ -13,7 +13,6 @@ import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
 import org.pcap4j.packet.UdpPacket
-import org.pcap4j.packet.namednumber.Port
 import timber.log.Timber
 import java.nio.ByteBuffer
 import java.nio.channels.SelectableChannel
@@ -26,8 +25,8 @@ import java.nio.channels.Selector
 abstract class TransportLayerConnection protected constructor(
     val deviceWriter: Handler,
     val componentManager: ComponentManager,
-    val localPort: Port,
-    val remotePort: Port,
+    val localPort: Int,
+    val remotePort: Int,
     val remoteHost: String?,
     val ipPacketBuilder: IpPacketBuilder
 ) {
@@ -102,25 +101,46 @@ abstract class TransportLayerConnection protected constructor(
      */
     private var encryptionLayer: EncryptionLayerConnection? = null
 
-    fun passOutboundToEncryptionLayer(payload: ByteArray) {
+    protected fun passOutboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
             encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, payload)
         }
         encryptionLayer?.unwrapOutbound(payload)
     }
 
-    fun passOutboundToEncryptionLayer(packet: Packet) {
+    protected fun passOutboundToEncryptionLayer(packet: Packet) {
         if(encryptionLayer == null) {
             encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, packet)
         }
         encryptionLayer?.unwrapOutbound(packet)
     }
 
-    fun passInboundToEncryptionLayer(payload: ByteArray) {
+    protected fun passInboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
             throw java.lang.IllegalStateException("Inbound data without an encryption layer instance!")
         } else {
             encryptionLayer?.unwrapInbound(payload)
+        }
+    }
+
+    protected fun createDatabaseEntity(): Long {
+        return if(remotePort == 53) {
+            0
+        } else {
+            runBlocking {
+                val ids = HeimdallDatabase.instance?.connectionDao?.insert(Connection(
+                    protocol = protocol,
+                    initialTimestamp = System.currentTimeMillis(),
+                    initiatorId = appId ?: -1,
+                    initiatorPkg = appPackage ?: appId.toString(),
+                    localPort = localPort,
+                    remoteHost = remoteHost ?: "",
+                    remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                    remotePort = remotePort
+                ))
+
+                return@runBlocking ids?.first() ?: -1
+            }
         }
     }
 
@@ -136,22 +156,6 @@ abstract class TransportLayerConnection protected constructor(
     abstract fun wrapOutbound(payload: ByteArray)
 
     abstract fun wrapInbound(payload: ByteArray)
-
-    protected fun createDatabaseEntity(): Long {
-        return runBlocking {
-            val ids = HeimdallDatabase.instance?.connectionDao?.insert(Connection(
-                protocol = protocol,
-                initialTimestamp = System.currentTimeMillis(),
-                initiator = appPackage ?: appId.toString(),
-                localPort = localPort.valueAsInt(),
-                remoteHost = remoteHost ?: "",
-                remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                remotePort = remotePort.valueAsInt()
-            ))
-
-            return@runBlocking ids?.first() ?: -1
-        }
-    }
 
     /**
      * Closes the connection's outward-facing [SelectableChannel] and removes the connection from the [ConnectionCache]

@@ -10,41 +10,41 @@ class ConnectionCache {
     private val connections = HashMap<Int, TransportLayerConnection>()
 
     companion object {
-        private val cache = de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache()
+        private val cache = ConnectionCache()
 
         fun findConnection(ipPacket: IpPacket): TransportLayerConnection? {
-            return de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections[de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.getKey(
+            return cache.connections[getKey(
                 ipPacket
             )]
         }
 
         fun findConnection(key: Int): TransportLayerConnection? {
-            return de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections[key]
+            return cache.connections[key]
         }
 
         fun addConnection(connection: TransportLayerConnection) {
-            val key = de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.getKey(
+            val key = getKey(
                 connection
             )
-            val oldConnection = de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections.put(key, connection)
+            val oldConnection = cache.connections.put(key, connection)
             if (oldConnection != null) {
                 Timber.e("Flow overwritten: $oldConnection $connection")
             }
         }
 
         fun removeConnection(connection: TransportLayerConnection) {
-            de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections.remove(
-                de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.getKey(
+            cache.connections.remove(
+                getKey(
                     connection
                 )
             )
         }
 
         fun closeAllAndClear() {
-            for (connection in de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections.values) {
+            for (connection in cache.connections.values) {
                 connection.closeSoft()
             }
-            de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.cache.connections.clear()
+            cache.connections.clear()
         }
 
         private fun getKey(ipPacket: IpPacket): Int {
@@ -53,7 +53,7 @@ class ConnectionCache {
             val localPort = transportPacket.header.srcPort.valueAsInt()
             val remotePort = transportPacket.header.dstPort.valueAsInt()
             val protocol = ipPacket.header.protocol.value()
-            return de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.getKey(
+            return getKey(
                 remoteAddress,
                 protocol.toInt(),
                 localPort,
@@ -63,10 +63,10 @@ class ConnectionCache {
 
         private fun getKey(connection: TransportLayerConnection): Int {
             val remoteAddress = connection.ipPacketBuilder.remoteAddress
-            val localPort = connection.localPort.valueAsInt()
-            val remotePort = connection.remotePort.valueAsInt()
+            val localPort = connection.localPort
+            val remotePort = connection.remotePort
             val protocol = connection.ipPacketBuilder.transportProtocol.value()
-            return de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache.Companion.getKey(
+            return getKey(
                 remoteAddress,
                 protocol.toInt(),
                 localPort,

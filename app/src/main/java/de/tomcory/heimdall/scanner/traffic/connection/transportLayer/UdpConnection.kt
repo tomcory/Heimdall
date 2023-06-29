@@ -37,17 +37,17 @@ class UdpConnection internal constructor(
 ) : TransportLayerConnection(
     deviceWriter = deviceWriter,
     componentManager = componentManager,
-    localPort = initialPacket.header.srcPort,
-    remotePort = initialPacket.header.dstPort,
+    localPort = initialPacket.header.srcPort.valueAsInt(),
+    remotePort = initialPacket.header.dstPort.valueAsInt(),
     remoteHost = remoteHost,
     ipPacketBuilder = ipPacketBuilder
 ) {
     override val protocol = "UDP"
-    override val id = createDatabaseEntity()
     override val selectableChannel: DatagramChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
     override val selectionKey = connectChannel(componentManager.selector)
-    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort.valueAsInt(), remotePort.valueAsInt(), OsConstants.IPPROTO_UDP)
+    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
     override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
+    override val id = createDatabaseEntity()
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): DatagramChannel {
         // open the channel now, but connect it asynchronously for better performance
@@ -57,7 +57,7 @@ class UdpConnection internal constructor(
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().soTimeout = 0
         selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
-        selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort.valueAsInt()))
+        selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
         state = TransportLayerState.CONNECTED
         return selectableChannel
     }
@@ -81,15 +81,15 @@ class UdpConnection internal constructor(
         return UdpPacket.Builder()
             .srcAddr(ipPacketBuilder.remoteAddress)
             .dstAddr(ipPacketBuilder.localAddress)
-            .srcPort(remotePort as UdpPort)
-            .dstPort(localPort as UdpPort)
+            .srcPort(UdpPort(remotePort.toShort(), ""))
+            .dstPort(UdpPort(localPort.toShort(), ""))
             .correctChecksumAtBuild(true)
             .correctLengthAtBuild(true)
             .payloadBuilder(UnknownPacket.newPacket(rawPayload, 0, rawPayload.size).builder)
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        Timber.d("%s Wrapping UDP out (%s bytes) to port %s", id, payload.size, remotePort.valueAsInt())
+        //Timber.d("%s Wrapping UDP out (%s bytes) to port %s", id, payload.size, remotePort)
 
         // if the application layer returned anything, write it to the connection's outward-facing channel
         if (payload.isNotEmpty()) {
@@ -113,13 +113,13 @@ class UdpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        Timber.d("%s Wrapping UDP in (%s bytes) from port %s", id, payload.size, remotePort.valueAsInt())
+        //Timber.d("%s Wrapping UDP in (%s bytes) from port %s", id, payload.size, remotePort)
         val forwardPacket = ipPacketBuilder.buildPacket(buildPayload(payload))
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_UDP, forwardPacket))
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
-        Timber.d("%s Unwrapping UDP out (%s bytes)", id, outgoingPacket.payload.length())
+        //Timber.d("%s Unwrapping UDP out (%s bytes)", id, outgoingPacket.payload.length())
         passOutboundToEncryptionLayer(outgoingPacket.payload)
     }
 
@@ -152,7 +152,7 @@ class UdpConnection internal constructor(
             } while (bytesRead > 0) //TODO: improve
 
             // no need to keep DNS connections open after the first and only packet
-            if (remotePort.valueAsInt() == 53) {
+            if (remotePort == 53) {
                 try {
                     selectableChannel.close()
                 } catch (e: IOException) {

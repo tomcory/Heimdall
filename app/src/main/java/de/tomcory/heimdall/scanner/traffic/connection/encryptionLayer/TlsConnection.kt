@@ -226,7 +226,7 @@ class TlsConnection(
         }
 
         // create a new SSLEngine to handle the TLS session facing the remote host
-        serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort.valueAsInt())
+        serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort)
         //serverSSLEngine = mitmManager?.createServerSSLEngine("www.google.de", 443)
 
         state = ConnectionState.SERVER_HANDSHAKE

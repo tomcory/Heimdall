@@ -40,8 +40,8 @@ class TcpConnection internal constructor(
 ) : TransportLayerConnection(
     deviceWriter = deviceWriter,
     componentManager = componentManager,
-    localPort = initialPacket.header.srcPort,
-    remotePort = initialPacket.header.dstPort,
+    localPort = initialPacket.header.srcPort.valueAsInt(),
+    remotePort = initialPacket.header.dstPort.valueAsInt(),
     remoteHost = remoteHost,
     ipPacketBuilder = ipPacketBuilder
 ) {
@@ -53,11 +53,11 @@ class TcpConnection internal constructor(
     private var ourSeqNum = ourInitSeqNum
 
     override val protocol = "TCP"
-    override val id = createDatabaseEntity()
     override val selectableChannel: SocketChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
     override val selectionKey = connectChannel(componentManager.selector)
-    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort.valueAsInt(), remotePort.valueAsInt(), OsConstants.IPPROTO_TCP)
+    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
     override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
+    override val id = createDatabaseEntity()
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
         state = TransportLayerState.CONNECTING
@@ -68,7 +68,7 @@ class TcpConnection internal constructor(
         selectableChannel.socket().tcpNoDelay = true
         selectableChannel.socket().soTimeout = 0
         selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
-        selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort.valueAsInt()))
+        selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
         //Timber.d("%s Connecting SocketChannel to %s:%s", id, remoteAddress, remotePort.valueAsInt())
         return selectableChannel
     }
@@ -133,7 +133,7 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        Timber.d("%s Wrapping TCP out (%s bytes)", id, payload.size)
+        //Timber.d("%s Wrapping TCP out (%s bytes)", id, payload.size)
         if (payload.isNotEmpty()) {
             if(payload.size <= outBuffer.limit()) {
                 outBuffer.clear()
@@ -181,7 +181,7 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        Timber.d("%s Wrapping TCP in (%s bytes)", id, payload.size)
+        //Timber.d("%s Wrapping TCP in (%s bytes)", id, payload.size)
         // if the application layer returned anything, write it to the device's VPN interface
         if (payload.isNotEmpty()) {
             if(payload.size <= componentManager.maxPacketSize) {
@@ -388,8 +388,8 @@ class TcpConnection internal constructor(
         val builder = TcpPacket.Builder()
             .srcAddr(ipPacketBuilder.remoteAddress)
             .dstAddr(ipPacketBuilder.localAddress)
-            .srcPort(remotePort as TcpPort)
-            .dstPort(localPort as TcpPort)
+            .srcPort(TcpPort(remotePort.toShort(), ""))
+            .dstPort(TcpPort(localPort.toShort(), ""))
             .sequenceNumber(ourSeqNum.toInt())
             .acknowledgmentNumber(theirSeqNum.toInt())
             .dataOffset(5.toByte())
