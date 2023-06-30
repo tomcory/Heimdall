@@ -3,7 +3,6 @@ package de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
-import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 import org.pcap4j.packet.Packet
 
 abstract class EncryptionLayerConnection(
@@ -19,14 +18,14 @@ abstract class EncryptionLayerConnection(
 
     fun passOutboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
-            appLayer = AppLayerConnection.getInstance(payload, id, this)
+            appLayer = AppLayerConnection.getInstance(payload, id, this, componentManager)
         }
         appLayer?.unwrapOutbound(payload)
     }
 
-    fun passOutboundToAppLayer(packet: Packet) {
+        fun passOutboundToAppLayer(packet: Packet) {
         if(appLayer == null) {
-            appLayer = AppLayerConnection.getInstance(packet, id, this)
+            appLayer = AppLayerConnection.getInstance(packet, id, this, componentManager)
         }
         appLayer?.unwrapOutbound(packet)
     }

@@ -1,7 +1,7 @@
 package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
-import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
 import org.pcap4j.packet.DnsPacket
 import org.pcap4j.packet.DnsRDataA
 import org.pcap4j.packet.DnsRDataAaaa
@@ -10,10 +10,12 @@ import timber.log.Timber
 
 class DnsConnection(
     id: Long,
-    encryptionLayer: EncryptionLayerConnection
+    encryptionLayer: EncryptionLayerConnection,
+    componentManager: ComponentManager
 ) : AppLayerConnection(
     id,
-    encryptionLayer
+    encryptionLayer,
+    componentManager
 ) {
 
     init {
@@ -53,7 +55,7 @@ class DnsConnection(
             }
 
             if(ip.isNotEmpty()) {
-                DnsCache.put(ip, hostname, it.ttlAsLong)
+                componentManager.dnsCache.put(ip, hostname, it.ttlAsLong)
             }
         }
 

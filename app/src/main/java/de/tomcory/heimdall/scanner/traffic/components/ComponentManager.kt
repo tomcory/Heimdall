@@ -41,6 +41,8 @@ class ComponentManager(
 
     val appFinder = AppFinder(vpnService)
 
+    val dnsCache = DnsCache()
+
     //TODO: get strings from config/secure
     val authority = Authority(
         File(vpnService?.getExternalFilesDir(null), "Heimdall"),

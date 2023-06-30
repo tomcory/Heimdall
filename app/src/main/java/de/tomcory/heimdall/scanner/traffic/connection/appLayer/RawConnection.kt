@@ -1,15 +1,18 @@
 package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class RawConnection(
     id: Long,
-    encryptionLayer: EncryptionLayerConnection
+    encryptionLayer: EncryptionLayerConnection,
+    componentManager: ComponentManager
 ) : AppLayerConnection(
     id,
-    encryptionLayer
+    encryptionLayer,
+    componentManager
 ) {
 
     init {

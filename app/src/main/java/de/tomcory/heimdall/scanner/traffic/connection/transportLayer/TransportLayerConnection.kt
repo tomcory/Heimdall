@@ -7,7 +7,6 @@ import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.inetLayer.IpPacketBuilder
-import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
 import kotlinx.coroutines.runBlocking
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
@@ -190,7 +189,7 @@ abstract class TransportLayerConnection protected constructor(
                 return it
             }
 
-            val hostname = initialPacket.header.dstAddr.hostAddress?.let { DnsCache.get(it) }
+            val hostname = initialPacket.header.dstAddr.hostAddress?.let { componentManager.dnsCache.get(it) }
 
             val connection =  when (initialPacket.payload) {
                 is TcpPacket -> {

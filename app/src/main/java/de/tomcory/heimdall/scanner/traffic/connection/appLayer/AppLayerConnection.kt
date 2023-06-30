@@ -1,12 +1,14 @@
 package de.tomcory.heimdall.scanner.traffic.connection.appLayer
 
+import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.encryptionLayer.EncryptionLayerConnection
 import org.pcap4j.packet.DnsPacket
 import org.pcap4j.packet.Packet
 
 abstract class AppLayerConnection(
     val id: Long,
-    val encryptionLayer: EncryptionLayerConnection
+    val encryptionLayer: EncryptionLayerConnection,
+    val componentManager: ComponentManager
 ) {
 
     /**
@@ -31,18 +33,18 @@ abstract class AppLayerConnection(
          * @param id
          * @param encryptionLayer
          */
-        fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection): AppLayerConnection {
+        fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
             //TODO: add DnsConnection
             return try {
                 if(encryptionLayer.transportLayer.remotePort == 53) {
-                    DnsConnection(id, encryptionLayer)
+                    DnsConnection(id, encryptionLayer, componentManager)
                 } else if(payload.size > 7 && HTTP_METHODS.contains(payload.sliceArray(1..10).toString().substringBefore(' '))) {
-                    HttpConnection(id, encryptionLayer)
+                    HttpConnection(id, encryptionLayer, componentManager)
                 } else {
-                    RawConnection(id, encryptionLayer)
+                    RawConnection(id, encryptionLayer, componentManager)
                 }
             } catch (e: Exception) {
-                RawConnection(id, encryptionLayer)
+                RawConnection(id, encryptionLayer, componentManager)
             }
         }
 
@@ -53,17 +55,17 @@ abstract class AppLayerConnection(
          * @param id
          * @param encryptionLayer
          */
-        fun getInstance(packet: Packet, id: Long, encryptionLayer: EncryptionLayerConnection): AppLayerConnection {
+        fun getInstance(packet: Packet, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
             return try {
                 if(packet is DnsPacket) {
-                    DnsConnection(id, encryptionLayer)
+                    DnsConnection(id, encryptionLayer, componentManager)
                 } else if(packet.rawData.size > 7 && HTTP_METHODS.contains(packet.rawData.sliceArray(1..10).toString().substringBefore(' '))) {
-                    HttpConnection(id, encryptionLayer)
+                    HttpConnection(id, encryptionLayer, componentManager)
                 } else {
-                    RawConnection(id, encryptionLayer)
+                    RawConnection(id, encryptionLayer, componentManager)
                 }
             } catch (e: Exception) {
-                RawConnection(id, encryptionLayer)
+                RawConnection(id, encryptionLayer, componentManager)
             }
         }
     }
