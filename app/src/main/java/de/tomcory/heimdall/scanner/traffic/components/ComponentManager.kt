@@ -1,13 +1,17 @@
 package de.tomcory.heimdall.scanner.traffic.components
 
+import android.content.Context
 import android.net.VpnService
 import android.system.ErrnoException
 import android.system.Os
+import de.tomcory.heimdall.R
 import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.metadata.AppFinder
+import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
 import de.tomcory.heimdall.scanner.traffic.mitm.Authority
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.scanner.traffic.mitm.VpnComponentLaunchException
+import de.tomcory.heimdall.util.Trie
 import org.pcap4j.packet.IllegalRawDataException
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.TcpPacket
@@ -28,7 +32,8 @@ class ComponentManager(
     private val inboundStream: FileOutputStream,
     val vpnService: VpnService?,
     val doMitm: Boolean = false,
-    val maxPacketSize: Int = Short.MAX_VALUE.toInt() / 2
+    val maxPacketSize: Int = Short.MAX_VALUE.toInt() / 2,
+    private val trackerTrie: Trie<String> = Trie { it.split(".").reversed() }
 ) {
 
     private var devicePollThread: DevicePollThread? = null
@@ -77,6 +82,12 @@ class ComponentManager(
 
         // initialise the pcap4j configuration now to improve performance during traffic handling
         initialisePcap4j()
+
+        // prepare the trie of tracking hosts used to label traffic
+        vpnService?.let {
+            Timber.d("Building tracking hosts trie")
+            populateTrieFromRawFile(it.applicationContext, R.raw.adhosts, trackerTrie)
+        }
 
         /*
          * Create and start the traffic handler threads. Since the threads rely on handlers to pass messages to each other
@@ -207,6 +218,27 @@ class ComponentManager(
 
         Timber.d("Completed pcap4j configuration")
     }
+
+    private fun populateTrieFromRawFile(context: Context, resId: Int, trie: Trie<String>) {
+        val startTime = System.currentTimeMillis()
+
+        val inputStream = context.resources.openRawResource(resId)
+        val reader = BufferedReader(InputStreamReader(inputStream))
+        var lineCounter = 0
+
+        reader.use { r ->
+            r.forEachLine { line ->
+                trie.insert(line, line)
+                lineCounter++
+            }
+        }
+
+        reader.close()
+
+        Timber.d("Inserted $lineCounter entries into trie in ${System.currentTimeMillis() - startTime}ms")
+    }
+
+    fun labelConnection(remoteHost: String) = trackerTrie.search(remoteHost) != null
 
     companion object {
         val selectorMonitor: Any = Any()

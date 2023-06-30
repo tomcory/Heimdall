@@ -100,6 +100,8 @@ abstract class TransportLayerConnection protected constructor(
      */
     private var encryptionLayer: EncryptionLayerConnection? = null
 
+    private val isTracker = remoteHost?.let { componentManager.labelConnection(it) } ?: false
+
     protected fun passOutboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
             encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, payload)
@@ -135,7 +137,8 @@ abstract class TransportLayerConnection protected constructor(
                     localPort = localPort,
                     remoteHost = remoteHost ?: "",
                     remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                    remotePort = remotePort
+                    remotePort = remotePort,
+                    isTracker = isTracker
                 ))
 
                 return@runBlocking ids?.first() ?: -1
