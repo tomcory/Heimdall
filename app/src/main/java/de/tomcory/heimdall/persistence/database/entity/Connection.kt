@@ -15,6 +15,7 @@ data class Connection(
     val remoteHost: String = "",
     val remoteIp: String,
     val remotePort: Int,
+    val isTracker: Boolean = false,
     val bytesOut: Long = 0,
     val bytesIn: Long = 0
 )
