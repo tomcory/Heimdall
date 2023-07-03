@@ -20,7 +20,7 @@ class TlsConnection(
 ) {
 
     init {
-        Timber.d("$id Creating TLS connection")
+        Timber.d("tls$id Creating TLS connection")
     }
 
     private var state: ConnectionState = ConnectionState.NEW
@@ -41,6 +41,16 @@ class TlsConnection(
     private var clientSSLEngine: SSLEngine? = null
 
     private var originalClientHello: ByteArray? = null
+
+    private var sni: String? = null
+
+    private lateinit var serverAppBuffer: ByteBuffer
+
+    private lateinit var serverNetBuffer: ByteBuffer
+
+    private lateinit var clientSourceBuffer: ByteBuffer
+
+    private lateinit var clientTargetBuffer: ByteBuffer
 
 
     ////////////////////////////////////
@@ -101,44 +111,61 @@ class TlsConnection(
     }
 
     private fun handleOutbound(record: ByteArray, recordType: RecordType) {
-        Timber.w("$id ----- Outbound $recordType -----")
+        Timber.w("tls$id ----- Outbound $recordType -----")
+
+        if(recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
+            sni = findSni(record)
+            hostname = sni ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress
+        }
+
+        // if we don't want to MITM, we can hand the unprocessed record straight to the application layer
+        if(!componentManager.doMitm) {
+            passOutboundToAppLayer(record)
+            return
+        }
 
         if(state == ConnectionState.NEW) {
             if(recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
                 handleClientHello(record)
             } else {
-                Timber.e("$id Invalid outbound record ($recordType in state $state)")
+                Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
                 //TODO: error handling
             }
         } else if(state == ConnectionState.CLIENT_HANDSHAKE) {
             //TODO: handleClientUnwrap(record)
         } else if(state == ConnectionState.CLIENT_ESTABLISHED) {
             if(recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
-                Timber.e("$id Invalid outbound record ($recordType in state $state)")
+                Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
                 //TODO: error handling
             } else {
                 //TODO: implement
             }
         } else {
-            Timber.e("$id Invalid outbound record ($recordType in state $state)")
+            Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
         }
     }
 
     private fun handleInbound(record: ByteArray, recordType: RecordType) {
-        Timber.w("$id ----- Inbound $recordType in state $state -----")
+        Timber.w("tls$id ----- Inbound $recordType in state $state -----")
 
-        Timber.d(ByteUtils.bytesToHex(record))
+        // if we don't want to MITM, we can hand the unprocessed record straight to the application layer
+        if(!componentManager.doMitm) {
+            passInboundToAppLayer(record)
+            return
+        }
+
+        //Timber.d(ByteUtils.bytesToHex(record))
 
         val res = handleServerUnwrap(record)
         if(res?.handshakeStatus == SSLEngineResult.HandshakeStatus.NEED_WRAP) {
             val output = handleServerWrap(null)
             if (output.isNotEmpty()) {
-                Timber.d("$id Output ${ByteUtils.bytesToHex(output)}")
+                Timber.d("tls$id Output ${ByteUtils.bytesToHex(output)}")
                 transportLayer.wrapOutbound(output)
             }
         }
 
-        Timber.w("$id Resulting state: $state")
+        Timber.w("tls$id Resulting connection state $state, result status ${res?.status} and server handshake status ${serverSSLEngine?.handshakeStatus}")
 
         if(state == ConnectionState.SERVER_ESTABLISHED) {
             setupClientSSLEngine()
@@ -149,61 +176,92 @@ class TlsConnection(
         clientSSLEngine = serverSSLEngine?.session?.let { componentManager.mitmManager.createClientSSLEngineFor(it) }
         state = ConnectionState.CLIENT_HANDSHAKE
         clientSSLEngine?.beginHandshake()
-        Timber.e("$id ClientSSLEngine HandshakeStatus: ${clientSSLEngine?.handshakeStatus}")
+        Timber.e("tls$id ClientSSLEngine HandshakeStatus: ${clientSSLEngine?.handshakeStatus}")
 
         handleClientUnwrap(byteArrayOf())
         //TODO: implement
     }
 
+    private fun setupServerSSLEngine() {
+
+    }
+
     private fun handleClientUnwrap(record: ByteArray):  SSLEngineResult? {
-        Timber.d("$id Unwrapping ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
+        Timber.d("tls$id handleClientUnwrap unwrapping ${record.size} bytes")
 
         val input = ByteBuffer.wrap(record)
         val output = ByteBuffer.allocate(clientSSLEngine!!.session.applicationBufferSize)
 
         val res = clientSSLEngine?.unwrap(input, output)
 
-        Timber.d("$id ClientSSLEngine Unwrap HandshakeResult: $res")
-        Timber.d("$id ClientSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
+        Timber.d("tls$id handleClientUnwrap ClientSSLEngine Unwrap HandshakeResult: $res")
+        Timber.d("tls$id handleClientUnwrap ClientSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
 
         return res
     }
 
+    private fun handleClientWrap(): SSLEngineResult? {
+        //TODO: implement
+        return null
+    }
+
     private fun handleServerUnwrap(record: ByteArray):  SSLEngineResult? {
-        Timber.d("$id Unwrapping ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
+        Timber.d("tls$id handleServerUnwrap unwrapping ${record.size} bytes")
 
         val input = ByteBuffer.wrap(record)
         val output = ByteBuffer.allocate(serverSSLEngine!!.session.applicationBufferSize)
 
-        val res = serverSSLEngine?.unwrap(input, output)
+        // place the outbound payload into the appBuffer of the serverSslEngine
+        serverNetBuffer.clear()
+        if(serverNetBuffer.capacity() < record.size) {
+            Timber.w("$id handleServerUnwrap Resizing serverNetBuffer: ${serverNetBuffer.capacity()} -> ${record.size}")
+            serverNetBuffer = ByteBuffer.allocate(record.size)
+        }
+        serverNetBuffer.put(record)
 
-        Timber.d("$id ServerSSLEngine Unwrap HandshakeResult: $res")
-        Timber.d("$id ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
+        val res = serverSSLEngine?.unwrap(serverNetBuffer, serverAppBuffer)
+
+        Timber.d("tls$id handleServerUnwrap ServerSSLEngine Unwrap HandshakeResult: $res")
+        Timber.d("tls$id handleServerUnwrap ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
 
         return res
     }
 
     private fun handleServerWrap(payload: ByteArray?): ByteArray {
-        Timber.d("$id Wrapping, ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
+        Timber.d("tls$id handleServerWrap wrapping ${payload?.size ?: 0} bytes, ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
 
         val inputSize = if(payload != null) payload.size + 50 else 0
 
         val input = ByteBuffer.allocate(inputSize)
         val output = ByteBuffer.allocate(serverSSLEngine!!.session.packetBufferSize)
 
-        val res = serverSSLEngine?.wrap(input, output)
+        // place the outbound payload into the appBuffer of the serverSslEngine
+        serverAppBuffer.clear()
+        payload?.let {
+            if(serverAppBuffer.capacity() < (it.size)) {
+                Timber.w("$id handleServerUnwrap Resizing serverNetBuffer: ${serverNetBuffer.capacity()} -> ${it.size}")
+                serverAppBuffer = ByteBuffer.allocate(it.size)
+            }
+
+            serverAppBuffer.put(it)
+        }
+
+        val res = serverSSLEngine?.wrap(serverAppBuffer, serverNetBuffer)
+
+        //TODO FOR MONDAY: THIS STEP PRODUCES A BUFFER_OVERFLOW STATUS: ServerSSLEngine Wrap HandshakeResult: Status = BUFFER_OVERFLOW, HandshakeStatus = NEED_WRAP, bytesConsumed = 0, bytesProduced = 0
+        //TODO: IMPLEMENT HANDLING OF BUFFER_OVERFLOW AND BUFFER_UNDERFLOW RESULT STATUS
 
         if(res?.handshakeStatus == SSLEngineResult.HandshakeStatus.FINISHED) {
             state = ConnectionState.SERVER_ESTABLISHED
         }
 
-        Timber.d("$id ServerSSLEngine Wrap HandshakeResult: $res")
-        Timber.d("$id ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
+        Timber.d("tls$id handleServerWrap ServerSSLEngine Wrap HandshakeResult: $res")
+        Timber.d("tls$id handleServerWrap ServerSSLEngine HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
 
         return if(res?.status == SSLEngineResult.Status.OK && res.bytesProduced() > 0) {
-            output.flip()
+            serverNetBuffer.flip()
             val out = ByteArray(res.bytesProduced())
-            output.get(out)
+            serverNetBuffer.get(out)
             out
         } else {
             byteArrayOf()
@@ -211,34 +269,28 @@ class TlsConnection(
     }
 
     private fun handleClientHello(record: ByteArray) {
-        // extract the SNI from the record (or use the host address if there's no SNI)
-        val sni = findSni(record)
-        hostname = sni ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress
+
+        Timber.d("tls$id handleClientHello Hostname: $hostname")
 
         // store the client hello for later
         originalClientHello = record
 
-        Timber.d("$id Hostname: $hostname")
-
-        // if we don't want to MITM, we can hand the unprocessed record straight back to the transport layer
-        if(!componentManager.doMitm) {
-            transportLayer.wrapOutbound(record)
-        }
-
         // create a new SSLEngine to handle the TLS session facing the remote host
         serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort)
+        serverAppBuffer = ByteBuffer.allocate(serverSSLEngine?.session?.packetBufferSize ?: 0)
+        serverNetBuffer = ByteBuffer.allocate(serverSSLEngine?.session?.applicationBufferSize ?: 0)
         //serverSSLEngine = mitmManager?.createServerSSLEngine("www.google.de", 443)
 
         state = ConnectionState.SERVER_HANDSHAKE
 
-        Timber.d("$id HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
+        Timber.d("tls$id handleClientHello HandshakeStatus: ${serverSSLEngine?.handshakeStatus}")
 
         serverSSLEngine?.beginHandshake()
 
         // get the generated CLIENT HELLO from the output buffer and pass it down to the transport layer
         val output = handleServerWrap(null)
         if(output.isNotEmpty()) {
-            Timber.d("$id Output ${ByteUtils.bytesToHex(output)}")
+            //Timber.d("tls$id handleClientHello Output ${ByteUtils.bytesToHex(output)}")
             transportLayer.wrapOutbound(output)
         }
     }
@@ -311,14 +363,14 @@ class TlsConnection(
         } else {
             // make sure that we have a valid TLS record...
             if(recordType !in 0x14..0x17) {
-                Timber.e("$id Invalid TLS record type: ${ByteUtils.bytesToHex(recordType.toByte())}")
-                Timber.e("$id ${ByteUtils.bytesToHex(payload)}")
+                Timber.e("tls$id Invalid TLS record type: ${ByteUtils.bytesToHex(recordType.toByte())}")
+                Timber.e("tls$id ${ByteUtils.bytesToHex(payload)}")
                 return
             }
 
             // ... which must at least comprise a TLS header with 5 bytes
             if(payload.size < 5) {
-                Timber.w("$id Got a tiny snippet of a TLS record (${payload.size} bytes), stashing it and awaiting the rest")
+                Timber.w("tls$id Got a tiny snippet of a TLS record (${payload.size} bytes), stashing it and awaiting the rest")
                 if(isOutbound) {
                     outboundSnippet = payload
                 } else {
@@ -384,7 +436,7 @@ class TlsConnection(
             }
             0x17 -> RecordType.APP_DATA
             else -> if(payload.size < 5) {
-                Timber.e("$id Invalid TLS record (too short)")
+                Timber.e("tls$id Invalid TLS record (too short)")
                 RecordType.INVALID
             } else {
                 RecordType.INDETERMINATE
@@ -413,7 +465,7 @@ class TlsConnection(
             val extensionLength = msg[i + j++] shl 8 or msg[i + j++]
             if(extensionValue == 0) {
                 val entryLength = msg[i + j] shl 8 or msg[i + j + 1]
-                return String(msg.copyOfRange(i + j + 3, i + j + entryLength).map { x -> x.toChar() }.toCharArray())
+                return String(msg.copyOfRange(i + j + 5, i + j + 2 + entryLength).map { x -> x.toChar() }.toCharArray())
             }
             j += extensionLength
         }
