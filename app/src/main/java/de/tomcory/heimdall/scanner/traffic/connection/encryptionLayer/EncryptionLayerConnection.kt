@@ -72,9 +72,7 @@ abstract class EncryptionLayerConnection(
          * @param rawPayload The connection's first raw transport-layer payload.
          */
         fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray): EncryptionLayerConnection {
-            return if(!componentManager.doMitm) {
-                return PlaintextConnection(id, transportLayer, componentManager)
-            } else if (detectTls(rawPayload)) {
+            return if (detectTls(rawPayload)) {
                 TlsConnection(id, transportLayer, componentManager)
             } else if(detectQuic(rawPayload)) {
                 QuicConnection(id, transportLayer, componentManager)
