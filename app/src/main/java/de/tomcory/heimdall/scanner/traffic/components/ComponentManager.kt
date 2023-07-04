@@ -8,6 +8,7 @@ import de.tomcory.heimdall.R
 import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.metadata.AppFinder
 import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
+import de.tomcory.heimdall.scanner.traffic.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.scanner.traffic.mitm.Authority
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.scanner.traffic.mitm.VpnComponentLaunchException
@@ -47,6 +48,8 @@ class ComponentManager(
     val appFinder = AppFinder(vpnService)
 
     val dnsCache = DnsCache()
+
+    val tlsPassthroughCache = TlsPassthroughCache()
 
     //TODO: get strings from config/secure
     val authority = Authority.getDefaultInstance(vpnService?.applicationContext)
