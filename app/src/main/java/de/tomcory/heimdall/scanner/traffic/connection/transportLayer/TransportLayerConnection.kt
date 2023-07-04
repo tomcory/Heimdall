@@ -82,7 +82,7 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * AID of the app holding the connection's local port.
      */
-    protected abstract val appId: Int?
+    abstract val appId: Int?
 
     /**
      * Package name of the app holding the connection's local port.

@@ -89,6 +89,7 @@ class TcpConnection internal constructor(
     }
 
     private fun writeToDevice(packet: IpPacket) {
+        //Timber.d("$id Writing ${packet.rawData.size} bytes to device")
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_TCP, packet))
     }
 
@@ -96,17 +97,20 @@ class TcpConnection internal constructor(
         val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
         if (tcpHeader.ack) {
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
-                //Timber.d("%s Unwrapping TCP out (%s bytes)", id, outgoingPacket.payload.length())
+                //Timber.d("%s Unwrapping TCP ACK DATA out (%s bytes)", id, outgoingPacket.payload?.length())
                 handleAckData(outgoingPacket) // data was sent and needs to be forwarded
             } else if (!tcpHeader.syn && !tcpHeader.fin) {
                 handleAckEmpty()
             }
             if (tcpHeader.syn) {
+                //Timber.d("%s Unwrapping TCP SYN ACK out (%s bytes)", id, outgoingPacket.payload?.length())
                 handleSynAck() // this should not happen, since we never initiate a handshake
             } else if (tcpHeader.fin) {
+                //Timber.d("%s Unwrapping TCP FIN ACK out (%s bytes)", id, outgoingPacket.payload?.length())
                 handleFinAck() // this is either the first or second packet of the closing handshake
             }
         } else if (tcpHeader.fin) {
+            //Timber.d("%s Unwrapping TCP FIN out (%s bytes)", id, outgoingPacket.payload?.length())
             handleFin() // closing handshake was initiated
         }
     }

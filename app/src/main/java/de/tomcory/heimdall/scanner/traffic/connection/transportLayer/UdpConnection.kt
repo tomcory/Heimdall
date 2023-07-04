@@ -124,7 +124,7 @@ class UdpConnection internal constructor(
     }
 
     override fun unwrapInbound() {
-        Timber.d("%s Unwrapping UDP in", id)
+        //Timber.d("%s Unwrapping UDP in", id)
         if(selectionKey == null) {
             Timber.e("%s SelectionKey is null", id)
             state = TransportLayerState.ABORTED
