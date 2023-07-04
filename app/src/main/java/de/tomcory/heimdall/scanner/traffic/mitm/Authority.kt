@@ -45,9 +45,9 @@ class Authority (
 
     companion object {
 
-        fun getDefaultInstance(context: Context) : Authority {
+        fun getDefaultInstance(context: Context?) : Authority {
             return Authority(
-                    File(context.filesDir, "keystore"),
+                    File(context?.filesDir, "keystore"),
                     alias = "heimdallmitm",
                     password = "changeit".toCharArray(),
                     issuerCN = "Heimdall",

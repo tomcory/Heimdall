@@ -49,16 +49,7 @@ class ComponentManager(
     val dnsCache = DnsCache()
 
     //TODO: get strings from config/secure
-    val authority = Authority(
-        File(vpnService?.getExternalFilesDir(null), "Heimdall"),
-        alias = "heimdall-proxy",
-        password = "changeit".toCharArray(),
-        issuerCN = "Heimdall",
-        issuerO = "HeimdallOrga",
-        issuerOU = "HeimdallOrgaUnit",
-        subjectCN = "Heimdall",
-        subjectO = "HeimdallCert",
-        subjectOU = "HeimdallCertUnit")
+    val authority = Authority.getDefaultInstance(vpnService?.applicationContext)
 
     // set up the man-in-the-middle manager
     val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
