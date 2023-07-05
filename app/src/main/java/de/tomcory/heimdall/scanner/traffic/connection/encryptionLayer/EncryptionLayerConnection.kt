@@ -16,6 +16,8 @@ abstract class EncryptionLayerConnection(
      */
     private var appLayer: AppLayerConnection? = null
 
+    var doMitm = componentManager.doMitm
+
     fun passOutboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
             appLayer = AppLayerConnection.getInstance(payload, id, this, componentManager)

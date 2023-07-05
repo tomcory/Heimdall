@@ -27,8 +27,6 @@ class TlsConnection(
         Timber.d("tls$id Creating TLS connection")
     }
 
-    private var doMitm = componentManager.doMitm
-
     private var state: ConnectionState = ConnectionState.NEW
     private var hostname: String = transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: ""
 
@@ -167,7 +165,7 @@ class TlsConnection(
                 } else {
                     Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
                     Timber.e(ByteUtils.bytesToHex(record))
-                    TODO("error handling")
+                    //TODO("error handling")
                 }
             }
 
