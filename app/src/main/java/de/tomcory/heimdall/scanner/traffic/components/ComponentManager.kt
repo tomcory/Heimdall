@@ -33,7 +33,7 @@ class ComponentManager(
     private val inboundStream: FileOutputStream,
     val vpnService: VpnService?,
     val doMitm: Boolean = false,
-    val maxPacketSize: Int = Short.MAX_VALUE.toInt() / 2,
+    val maxPacketSize: Int = 16413,
     private val trackerTrie: Trie<String> = Trie { it.split(".").reversed() }
 ) {
 
