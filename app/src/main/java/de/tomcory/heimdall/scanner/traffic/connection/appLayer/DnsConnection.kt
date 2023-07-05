@@ -19,7 +19,9 @@ class DnsConnection(
 ) {
 
     init {
-        Timber.d("%s Creating DNS connection", id)
+        if(id > 0) {
+            Timber.d("dns$id Creating DNS connection to ${encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${encryptionLayer.transportLayer.remotePort} (${encryptionLayer.transportLayer.remoteHost})")
+        }
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
@@ -27,15 +29,11 @@ class DnsConnection(
     }
 
     override fun unwrapOutbound(packet: Packet) {
-        Timber.d("%s Processing DNS out", id)
-
         val dnsPacket = packet as DnsPacket
         encryptionLayer.wrapOutbound(dnsPacket.rawData)
     }
 
     override fun unwrapInbound(payload: ByteArray) {
-        Timber.d("%s Processing DNS in", id)
-
         val dnsPacket = DnsPacket.newPacket(payload, 0, payload.size)
         val hostname = dnsPacket.header.questions.first().qName.name
 

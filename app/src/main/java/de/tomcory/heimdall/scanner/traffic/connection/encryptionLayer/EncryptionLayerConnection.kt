@@ -4,6 +4,7 @@ import de.tomcory.heimdall.scanner.traffic.components.ComponentManager
 import de.tomcory.heimdall.scanner.traffic.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.scanner.traffic.connection.transportLayer.TransportLayerConnection
 import org.pcap4j.packet.Packet
+import timber.log.Timber
 
 abstract class EncryptionLayerConnection(
     val id: Long,
@@ -34,6 +35,7 @@ abstract class EncryptionLayerConnection(
 
     fun passInboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
+            Timber.e("$id Inbound data without an application layer instance!")
             throw java.lang.IllegalStateException("Inbound data without an application layer instance!")
         } else {
             appLayer?.unwrapInbound(payload)

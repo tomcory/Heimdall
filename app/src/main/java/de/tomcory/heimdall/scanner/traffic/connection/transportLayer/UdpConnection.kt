@@ -49,6 +49,12 @@ class UdpConnection internal constructor(
     override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
     override val id = createDatabaseEntity()
 
+    init {
+        if(id > 0) {
+            Timber.d("udp$id Creating UDP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
+        }
+    }
+
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): DatagramChannel {
         // open the channel now, but connect it asynchronously for better performance
         state = TransportLayerState.CONNECTING
@@ -69,7 +75,7 @@ class UdpConnection internal constructor(
             val selectionKey = try {
                 selectableChannel.register(selector, SelectionKey.OP_READ)
             } catch (e: Exception) {
-                Timber.e(e, "%s Error registering SelectableChannel", id)
+                Timber.e(e, "udp$id Error registering SelectableChannel")
                 null
             }
             selectionKey?.attach(this)
@@ -89,8 +95,6 @@ class UdpConnection internal constructor(
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping UDP out (%s bytes) to port %s", id, payload.size, remotePort)
-
         // if the application layer returned anything, write it to the connection's outward-facing channel
         if (payload.isNotEmpty()) {
             outBuffer.clear()
@@ -100,11 +104,11 @@ class UdpConnection internal constructor(
                 try {
                     selectableChannel.write(outBuffer)
                 } catch (e: IOException) {
-                    Timber.e(e, "%s Error writing to DatagramChannel, closing connection", id)
+                    Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
                     closeHard()
                     break
                 } catch (e: BufferOverflowException) {
-                    Timber.e(e, "%s Error writing to DatagramChannel, closing connection", id)
+                    Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
                     closeHard()
                     break
                 }
@@ -113,20 +117,17 @@ class UdpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping UDP in (%s bytes) from port %s", id, payload.size, remotePort)
         val forwardPacket = ipPacketBuilder.buildPacket(buildPayload(payload))
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_UDP, forwardPacket))
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
-        //Timber.d("%s Unwrapping UDP out (%s bytes)", id, outgoingPacket.payload.length())
         passOutboundToEncryptionLayer(outgoingPacket.payload)
     }
 
     override fun unwrapInbound() {
-        //Timber.d("%s Unwrapping UDP in", id)
         if(selectionKey == null) {
-            Timber.e("%s SelectionKey is null", id)
+            Timber.e("udp$id SelectionKey is null")
             state = TransportLayerState.ABORTED
             return
         }
@@ -146,7 +147,7 @@ class UdpConnection internal constructor(
                         passInboundToEncryptionLayer(rawData)
                     }
                 } catch (e: IOException) {
-                    Timber.e(e, "%s Error reading data from DatagramChannel", id)
+                    Timber.e(e, "udp$id Error reading data from DatagramChannel")
                     bytesRead = -1
                 }
             } while (bytesRead > 0) //TODO: improve
@@ -156,7 +157,7 @@ class UdpConnection internal constructor(
                 try {
                     selectableChannel.close()
                 } catch (e: IOException) {
-                    Timber.e(e, "%s Error closing DatagramChannel", id)
+                    Timber.e(e, "udp$id Error closing DatagramChannel")
                 }
                 bytesRead = -1
             }
@@ -167,7 +168,7 @@ class UdpConnection internal constructor(
                 closeHard()
             }
         } else {
-            Timber.e("%s UDP connection's channel triggered an event that isn't OP_READ", id)
+            Timber.e("udp$id UDP connection's channel triggered an event that isn't OP_READ")
         }
     }
 }

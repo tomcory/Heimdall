@@ -16,34 +16,34 @@ class QuicConnection(
 ) {
 
     init {
-        Timber.d("%s Creating QUIC connection", id)
+        if(id > 0) {
+            Timber.d("quic$id Creating QUIC connection to ${transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${transportLayer.remotePort} (${transportLayer.remoteHost})")
+        }
+        doMitm = false
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
-        Timber.d("%s Unwrapping QUIC out", id)
         passOutboundToAppLayer(payload)
     }
 
     override fun unwrapOutbound(packet: Packet) {
+        //TODO: implement
         passOutboundToAppLayer(packet)
     }
 
     override fun unwrapInbound(payload: ByteArray) {
         //TODO: implement
-        Timber.d("%s Unwrapping QUIC in", id)
         passInboundToAppLayer(payload)
     }
 
     override fun wrapOutbound(payload: ByteArray) {
         //TODO: implement
-        Timber.d("%s Wrapping QUIC out", id)
         transportLayer.wrapOutbound(payload)
     }
 
     override fun wrapInbound(payload: ByteArray) {
         //TODO: implement
-        Timber.d("%s Wrapping QUIC in", id)
         transportLayer.wrapInbound(payload)
     }
 }

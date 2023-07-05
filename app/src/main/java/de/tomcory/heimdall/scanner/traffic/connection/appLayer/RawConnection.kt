@@ -16,12 +16,16 @@ class RawConnection(
 ) {
 
     init {
-        Timber.d("%s Creating raw connection", id)
+        if(id > 0) {
+            Timber.e("raw$id Creating raw connection to ${encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${encryptionLayer.transportLayer.remotePort} (${encryptionLayer.transportLayer.remoteHost})")
+        }
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Processing raw out", id)
+        if(encryptionLayer.doMitm) {
+            Timber.e("raw$id Processing raw out: ${String(payload, Charsets.UTF_8)}")
+        }
         encryptionLayer.wrapOutbound(payload)
     }
 
@@ -32,7 +36,9 @@ class RawConnection(
 
     override fun unwrapInbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Processing raw in", id)
+        if(encryptionLayer.doMitm) {
+            Timber.e("raw$id Processing raw in: ${String(payload, Charsets.UTF_8)}")
+        }
         encryptionLayer.wrapInbound(payload)
     }
 }

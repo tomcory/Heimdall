@@ -16,18 +16,18 @@ class PlaintextConnection(
 ) {
 
     init {
-        Timber.d("%s Creating plaintext connection", id)
+        if(id > 0) {
+            Timber.d("plain$id Creating plaintext connection to ${transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${transportLayer.remotePort} (${transportLayer.remoteHost})")
+        }
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Unwrapping plaintext out", id)
         passOutboundToAppLayer(payload)
     }
 
     override fun unwrapInbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Unwrapping plaintext in", id)
         passInboundToAppLayer(payload)
     }
 
@@ -38,13 +38,11 @@ class PlaintextConnection(
 
     override fun wrapOutbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Wrapping plaintext out", id)
         transportLayer.wrapOutbound(payload)
     }
 
     override fun wrapInbound(payload: ByteArray) {
         //TODO: implement
-        //Timber.d("%s Wrapping plaintext in", id)
         transportLayer.wrapInbound(payload)
     }
 
