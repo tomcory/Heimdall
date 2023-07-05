@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.scanner.traffic.mitm
 
-import timber.log.Timber
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLPeerUnverifiedException
@@ -56,7 +55,6 @@ class CertificateSniffingMitmManager(authority: Authority?) {
             val commonName = getCommonName(upstreamCert)
             val san = SubjectAlternativeNameHolder()
             san.addAll(upstreamCert.subjectAlternativeNames)
-            Timber.d("Subject Alternative Names: %s", san)
             sslEngineSource!!.createCertForHost(commonName, san)
         } catch (e: Exception) {
             throw FakeCertificateException("Creation dynamic certificate failed", e)
@@ -78,12 +76,9 @@ class CertificateSniffingMitmManager(authority: Authority?) {
     }
 
     fun getCommonName(c: X509Certificate): String {
-        Timber.d("Subject DN principal name: %s", c.subjectDN.name)
         for (each in c.subjectDN.name.split(",\\s*").toTypedArray()) {
             if (each.startsWith("CN=")) {
-                val result = each.substring(3)
-                Timber.d("Common Name: %s", result)
-                return result
+                return each.substring(3)
             }
         }
         throw IllegalStateException("Missed CN in Subject DN: " + c.subjectDN)
