@@ -6,14 +6,13 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
-import de.tomcory.heimdall.persistence.database.entity.Request
 import de.tomcory.heimdall.persistence.database.entity.Response
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ResponseDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(vararg responses: Response)
+    suspend fun insert(vararg responses: Response): List<Long>
 
     @Update
     suspend fun update(vararg responses: Response)
