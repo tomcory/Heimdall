@@ -87,7 +87,7 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * Package name of the app holding the connection's local port.
      */
-    protected abstract val appPackage: String?
+    abstract val appPackage: String?
 
     /**
      * Indicates the connection's state.

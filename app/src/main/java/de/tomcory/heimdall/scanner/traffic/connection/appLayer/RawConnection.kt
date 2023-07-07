@@ -17,14 +17,14 @@ class RawConnection(
 
     init {
         if(id > 0) {
-            Timber.e("raw$id Creating raw connection to ${encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${encryptionLayer.transportLayer.remotePort} (${encryptionLayer.transportLayer.remoteHost})")
+            Timber.d("raw$id Creating raw connection to ${encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${encryptionLayer.transportLayer.remotePort} (${encryptionLayer.transportLayer.remoteHost})")
         }
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
         if(encryptionLayer.doMitm) {
-            Timber.e("raw$id Processing raw out: ${String(payload, Charsets.UTF_8)}")
+            Timber.d("raw$id Processing raw out: ${payload.size} bytes")
         }
         encryptionLayer.wrapOutbound(payload)
     }
@@ -37,7 +37,7 @@ class RawConnection(
     override fun unwrapInbound(payload: ByteArray) {
         //TODO: implement
         if(encryptionLayer.doMitm) {
-            Timber.e("raw$id Processing raw in: ${String(payload, Charsets.UTF_8)}")
+            Timber.d("raw$id Processing raw in: ${payload.size} bytes")
         }
         encryptionLayer.wrapInbound(payload)
     }

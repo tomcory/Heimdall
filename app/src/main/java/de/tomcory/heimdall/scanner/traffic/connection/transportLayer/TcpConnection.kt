@@ -205,7 +205,7 @@ class TcpConnection internal constructor(
     private fun handleAckData(outgoingPacket: Packet) {
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
-            Timber.e("tcp$id Got ACK (data, invalid state $state)")
+            Timber.w("tcp$id Got ACK (data, invalid state $state)")
             abortAndRst()
         } else {
             increaseTheirSeqNum(outgoingPacket.payload.length())
