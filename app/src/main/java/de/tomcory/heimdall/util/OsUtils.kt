@@ -4,15 +4,9 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
-import android.net.Uri
 import android.system.OsConstants
 import androidx.annotation.RequiresApi
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.io.File
-import java.io.IOException
-import java.io.OutputStream
 import java.net.InetSocketAddress
 
 object OsUtils {
@@ -30,6 +24,15 @@ object OsUtils {
             app.flags and ApplicationInfo.FLAG_SYSTEM != 0
         }.map { app ->
             app.packageName
+        }
+    }
+
+    fun largeLog(tag: String?, content: String) {
+        if (content.length > 4000) {
+            Timber.d("${tag ?: ""} ${content.substring(0, 3000)}")
+            largeLog(tag, content.substring(3000))
+        } else {
+            Timber.d(content)
         }
     }
 }

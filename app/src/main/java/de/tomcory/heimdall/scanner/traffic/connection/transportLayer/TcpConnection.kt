@@ -59,6 +59,12 @@ class TcpConnection internal constructor(
     override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
     override val id = createDatabaseEntity()
 
+    init {
+        if(id > 0) {
+            Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
+        }
+    }
+
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
         state = TransportLayerState.CONNECTING
         val selectableChannel = SocketChannel.open()
@@ -69,7 +75,6 @@ class TcpConnection internal constructor(
         selectableChannel.socket().soTimeout = 0
         selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
-        //Timber.d("%s Connecting SocketChannel to %s:%s", id, remoteAddress, remotePort.valueAsInt())
         return selectableChannel
     }
 
@@ -80,7 +85,6 @@ class TcpConnection internal constructor(
             val selectionKey = try {
                 selectableChannel.register(selector, SelectionKey.OP_CONNECT)
             } catch (e: Exception) {
-                //Timber.e(e, "%s Error registering SelectableChannel", id)
                 null
             }
             selectionKey?.attach(this)
@@ -96,7 +100,6 @@ class TcpConnection internal constructor(
         val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
         if (tcpHeader.ack) {
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
-                //Timber.d("%s Unwrapping TCP out (%s bytes)", id, outgoingPacket.payload.length())
                 handleAckData(outgoingPacket) // data was sent and needs to be forwarded
             } else if (!tcpHeader.syn && !tcpHeader.fin) {
                 handleAckEmpty()
@@ -113,27 +116,24 @@ class TcpConnection internal constructor(
 
     override fun unwrapInbound() {
         if(selectionKey == null) {
-            Timber.e("%s SelectionKey is null", id)
+            Timber.e("tcp$id SelectionKey is null")
             state = TransportLayerState.ABORTED
             return
         }
 
         if (!selectionKey.isValid) {
-            Timber.e("Invalid Selection key")
+            Timber.e("tcp$id Invalid Selection key")
             abortAndRst()
             return
         }
         if (selectionKey.isConnectable) {
-            //Timber.d("%s Unwrapping TCP in connectable", id)
             unwrapInboundConnectable()
         } else if (selectionKey.isReadable) {
-            //Timber.d("%s Unwrapping TCP in readable", id)
             unwrapInboundReadable()
         }
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping TCP out (%s bytes)", id, payload.size)
         if (payload.isNotEmpty()) {
             if(payload.size <= outBuffer.limit()) {
                 outBuffer.clear()
@@ -144,13 +144,12 @@ class TcpConnection internal constructor(
                     try {
                         selectableChannel.write(outBuffer)
                     } catch (e: IOException) {
-                        Timber.e("SocketChannel registered: %s", selectableChannel.isRegistered)
-                        Timber.e("SocketChannel connected: %s", selectableChannel.isConnected)
-                        Timber.e(e, "Error writing to SocketChannel, closing connection")
+                        Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
+                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
                         closeHard()
                         break
                     } catch (e: BufferOverflowException) {
-                        Timber.e(e, "Error writing to SocketChannel, closing connection")
+                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
                         closeHard()
                         break
                     }
@@ -164,14 +163,12 @@ class TcpConnection internal constructor(
                     try {
                         selectableChannel.write(largeBuffer)
                     } catch (e: IOException) {
-                        Timber.e("SocketChannel registered: %s", selectableChannel.isRegistered)
-                        Timber.e("SocketChannel connected: %s", selectableChannel.isConnected)
-                        Timber.e("SocketChannel open: %s", selectableChannel.isOpen)
-                        Timber.e(e, "Error writing to SocketChannel, closing connection")
+                        Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
+                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
                         abortAndRst()
                         break
                     } catch (e: BufferOverflowException) {
-                        Timber.e(e, "Error writing to SocketChannel, closing connection")
+                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
                         abortAndRst()
                         break
                     }
@@ -181,7 +178,6 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        //Timber.d("%s Wrapping TCP in (%s bytes)", id, payload.size)
         // if the application layer returned anything, write it to the device's VPN interface
         if (payload.isNotEmpty()) {
             if(payload.size <= componentManager.maxPacketSize) {
@@ -192,12 +188,12 @@ class TcpConnection internal constructor(
             } else {
                 // if the payload exceeds the max. TCP payload size, split it into multiple segments
                 //TODO: there has to be a better way...
-                Timber.d("%s Splitting large payload (%s bytes)", id, payload.size)
+                Timber.d("tcp$id Splitting large payload (${payload.size} bytes), because maxPacketSize is ${componentManager.maxPacketSize}")
                 val largeBuffer = ByteBuffer.wrap(payload)
                 while(largeBuffer.hasRemaining()) {
-                    val temp = ByteArray(maxOf(largeBuffer.limit() - largeBuffer.position(), componentManager.maxPacketSize))
+                    val temp = ByteArray(minOf(largeBuffer.limit() - largeBuffer.position(), componentManager.maxPacketSize))
                     largeBuffer.get(temp)
-                    Timber.d("%s Writing split payload (%s bytes, %s remaining)", id, temp.size, largeBuffer.limit() - largeBuffer.position())
+                    Timber.d("tcp$id Writing split payload (${temp.size} bytes, ${largeBuffer.limit() - largeBuffer.position()} remaining)")
                     val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(temp))
                     increaseOurSeqNum(payload.size)
                     writeToDevice(ackDataPacket)
@@ -209,10 +205,9 @@ class TcpConnection internal constructor(
     private fun handleAckData(outgoingPacket: Packet) {
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
-            Timber.e("%s Got ACK (data, invalid state %s)", id, state)
+            Timber.w("tcp$id Got ACK (data, invalid state $state)")
             abortAndRst()
         } else {
-            //Timber.i("%s Got ACK data (%s bytes)", id, outgoingPacket.payload.length())
             increaseTheirSeqNum(outgoingPacket.payload.length())
 
             // acknowledge packet to the client by sending an empty ACK
@@ -226,23 +221,20 @@ class TcpConnection internal constructor(
     private fun handleAckEmpty() {
         when (state) {
             TransportLayerState.CONNECTING -> {
-                //Timber.i("%s Got ACK (connecting -> connected)", id)
                 // establishing handshake complete, set status to CONNECTED
                 state = TransportLayerState.CONNECTED
             }
             TransportLayerState.CONNECTED -> {
-                //Timber.i("%s Got ACK", id)
                 // ignore empty ACK packets, there is no packet loss that would make acknowledgements useful
             }
             TransportLayerState.CLOSING -> {
-                //Timber.i("%s Got ACK (closing -> closed)", id)
                 // closing handshake complete, set status to CLOSED
                 state = TransportLayerState.CLOSED
                 ConnectionCache.removeConnection(this)
             }
             else -> {
                 // there is no good reason for an acknowledgement in any other flow state, abort
-                Timber.e("%s Got ACK (empty, invalid state %s)", id, state)
+                Timber.e("tcp$id Got ACK (empty, invalid state $state)")
                 abortAndRst()
             }
         }
@@ -250,13 +242,12 @@ class TcpConnection internal constructor(
 
     private fun handleSynAck() {
         // SYN ACK packets should not be sent by the client, abort
-        Timber.e("%s Got SYN ACK (invalid)", id)
+        Timber.e("tcp$id Got SYN ACK (invalid)")
         abortAndRst()
     }
 
     private fun handleFinAck() {
         if (state == TransportLayerState.CLOSING) {
-            //Timber.i("%s Got FIN ACK", id)
             // connection is closing, so this must be an actual FIN ACK - acknowledge it and close the connection for good
             increaseTheirSeqNum(1)
             val ackResponse = ipPacketBuilder.buildPacket(buildEmptyAck())
@@ -268,7 +259,6 @@ class TcpConnection internal constructor(
     }
 
     private fun handleFin() {
-        //Timber.i("%s Got FIN", id)
         if (state == TransportLayerState.CLOSED) {
             // the connection is already closed, abort
             abortAndRst()
@@ -286,7 +276,6 @@ class TcpConnection internal constructor(
      * Handles the OP_READ event on a connection's [SocketChannel], which means that inbound data is available on the channel.
      */
     private fun unwrapInboundReadable() {
-
         // OP_READ event triggered
         var bytesRead: Int
         do {
@@ -315,7 +304,7 @@ class TcpConnection internal constructor(
                 ConnectionCache.removeConnection(this)
             } else {
                 // connection closed by server, move to CLOSING state and send a FIN to initiate the local closing handshake
-                Timber.d("%s SocketChannel closed, state transition %s -> CLOSING", id, state)
+                Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
                 state = TransportLayerState.CLOSING
                 val finPacket = ipPacketBuilder.buildPacket(buildFin())
                 increaseOurSeqNum(1)
@@ -332,7 +321,7 @@ class TcpConnection internal constructor(
         try {
             selectableChannel.finishConnect()
         } catch (e: IOException) {
-            Timber.e(e, "%s Error connecting SocketChannel to %s:%s", id, ipPacketBuilder.remoteAddress, remotePort)
+            Timber.e(e, "tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
             abortAndRst()
             return
         }
@@ -349,13 +338,12 @@ class TcpConnection internal constructor(
             //Timber.d("%s SocketChannel connected", id)
             writeToDevice(synAckPacket)
         } else {
-            Timber.e("%s Error connecting SocketChannel to %s:%s", id, ipPacketBuilder.remoteAddress, remotePort)
+            Timber.e("tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
             abortAndRst()
         }
     }
 
     private fun abortAndRst() {
-        //Timber.i("%s Abort and reset", id)
         selectionKey?.cancel()
         val rstResponse = ipPacketBuilder.buildPacket(buildRst())
         state = TransportLayerState.ABORTED

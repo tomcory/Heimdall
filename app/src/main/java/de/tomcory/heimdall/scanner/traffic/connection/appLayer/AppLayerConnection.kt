@@ -24,7 +24,7 @@ abstract class AppLayerConnection(
     abstract fun unwrapInbound(payload: ByteArray)
 
     companion object {
-        private val HTTP_METHODS = arrayOf("GET", "POST", "CONNECT", "PUT", "DELETE", "HEAD", "OPTIONS", "TRACE", "PATCH")
+        private val HTTP_KEYWORDS = arrayOf("HTTP", "GET", "POST", "CONNECT", "PUT", "DELETE", "HEAD", "OPTIONS", "TRACE", "PATCH")
 
         /**
          * Creates an [AppLayerConnection] instance based on the application protocol of the supplied payload (must be the very first application-layer payload of the connection).
@@ -34,11 +34,10 @@ abstract class AppLayerConnection(
          * @param encryptionLayer
          */
         fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
-            //TODO: add DnsConnection
             return try {
                 if(encryptionLayer.transportLayer.remotePort == 53) {
                     DnsConnection(id, encryptionLayer, componentManager)
-                } else if(payload.size > 7 && HTTP_METHODS.contains(payload.sliceArray(1..10).toString().substringBefore(' '))) {
+                } else if(payload.size > 7 && HTTP_KEYWORDS.any { String(payload.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)
                 } else {
                     RawConnection(id, encryptionLayer, componentManager)
@@ -59,7 +58,7 @@ abstract class AppLayerConnection(
             return try {
                 if(packet is DnsPacket) {
                     DnsConnection(id, encryptionLayer, componentManager)
-                } else if(packet.rawData.size > 7 && HTTP_METHODS.contains(packet.rawData.sliceArray(1..10).toString().substringBefore(' '))) {
+                } else if(packet.rawData.size > 7 && HTTP_KEYWORDS.any { String(packet.rawData.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)
                 } else {
                     RawConnection(id, encryptionLayer, componentManager)

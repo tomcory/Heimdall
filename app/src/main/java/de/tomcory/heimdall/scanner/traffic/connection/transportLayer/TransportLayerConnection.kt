@@ -82,12 +82,12 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * AID of the app holding the connection's local port.
      */
-    protected abstract val appId: Int?
+    abstract val appId: Int?
 
     /**
      * Package name of the app holding the connection's local port.
      */
-    protected abstract val appPackage: String?
+    abstract val appPackage: String?
 
     /**
      * Indicates the connection's state.
@@ -207,7 +207,6 @@ abstract class TransportLayerConnection protected constructor(
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {
-                        Timber.d("Creating new TcpConnection to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         TcpConnection(
                             componentManager = componentManager,
                             deviceWriter = deviceWriter,
@@ -220,7 +219,6 @@ abstract class TransportLayerConnection protected constructor(
 
                 is UdpPacket -> {
                     val udpPacket = initialPacket.payload as UdpPacket
-                    Timber.d("Creating new UdpConnection to ${initialPacket.header.dstAddr.hostAddress}:${udpPacket.header.dstPort.valueAsInt()} ($hostname)")
                     UdpConnection(
                         componentManager = componentManager,
                         deviceWriter = deviceWriter,

@@ -8,6 +8,7 @@ import de.tomcory.heimdall.R
 import de.tomcory.heimdall.scanner.traffic.cache.ConnectionCache
 import de.tomcory.heimdall.scanner.traffic.metadata.AppFinder
 import de.tomcory.heimdall.scanner.traffic.metadata.DnsCache
+import de.tomcory.heimdall.scanner.traffic.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.scanner.traffic.mitm.Authority
 import de.tomcory.heimdall.scanner.traffic.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.scanner.traffic.mitm.VpnComponentLaunchException
@@ -32,7 +33,7 @@ class ComponentManager(
     private val inboundStream: FileOutputStream,
     val vpnService: VpnService?,
     val doMitm: Boolean = false,
-    val maxPacketSize: Int = Short.MAX_VALUE.toInt() / 2,
+    val maxPacketSize: Int = 16413,
     private val trackerTrie: Trie<String> = Trie { it.split(".").reversed() }
 ) {
 
@@ -48,17 +49,10 @@ class ComponentManager(
 
     val dnsCache = DnsCache()
 
+    val tlsPassthroughCache = TlsPassthroughCache()
+
     //TODO: get strings from config/secure
-    val authority = Authority(
-        File(vpnService?.getExternalFilesDir(null), "Heimdall"),
-        alias = "heimdall-proxy",
-        password = "changeit".toCharArray(),
-        issuerCN = "Heimdall",
-        issuerO = "HeimdallOrga",
-        issuerOU = "HeimdallOrgaUnit",
-        subjectCN = "Heimdall",
-        subjectO = "HeimdallCert",
-        subjectOU = "HeimdallCertUnit")
+    val authority = Authority.getDefaultInstance(vpnService?.applicationContext)
 
     // set up the man-in-the-middle manager
     val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
