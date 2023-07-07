@@ -58,13 +58,12 @@ class TlsConnection(
 
     private lateinit var clientNetBuffer: ByteBuffer
 
-
     ////////////////////////////////////////////////////////////////////////
     ///// Inherited methods ///////////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////
 
     override fun unwrapOutbound(payload: ByteArray) {
-       prepareRecords(payload, true)
+        prepareRecords(payload, true)
     }
 
     override fun unwrapOutbound(packet: Packet) {
@@ -110,11 +109,11 @@ class TlsConnection(
                 }
             } else {
                 Timber.e("tls$id handleOutboundPayload invalid result status ${res?.status} in state $state")
-                TODO("error handling")
+                //TODO("tls$id error handling")
             }
         } else {
             Timber.e("tls$id handleOutboundPayload invalid state $state")
-            TODO("error handling")
+            //TODO("tls$id error handling")
         }
     }
 
@@ -124,20 +123,29 @@ class TlsConnection(
         if(state == ConnectionState.CLIENT_ESTABLISHED) {
             val res = handleClientWrap(payload)
 
-            if(res?.status == SSLEngineResult.Status.OK) {
-                if(clientNetBuffer.position() > 0) {
-                    clientNetBuffer.flip()
-                    val out = ByteArray(clientNetBuffer.limit())
-                    clientNetBuffer.get(out)
-                    transportLayer.wrapInbound(out)
+            when(res?.status) {
+                SSLEngineResult.Status.OK -> {
+                    if(clientNetBuffer.position() > 0) {
+                        clientNetBuffer.flip()
+                        val out = ByteArray(clientNetBuffer.limit())
+                        clientNetBuffer.get(out)
+                        transportLayer.wrapInbound(out)
+                    }
                 }
-            } else {
-                Timber.e("tls$id handleInboundPayload invalid result status ${res?.status} in state $state")
-                TODO("error handling")
+
+                SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO("tls$id")
+                SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO("tls$id")
+                SSLEngineResult.Status.CLOSED -> {
+                    if(state != ConnectionState.CLOSED) {
+                        //closeServerSession()
+                        //closeClientSession()
+                    }
+                }
+                null -> TODO()
             }
         } else {
             Timber.e("tls$id handleInboundPayload invalid state $state")
-            TODO("error handling")
+            //TODO("tls$id error handling")
         }
     }
 
@@ -160,7 +168,7 @@ class TlsConnection(
         }
 
         if(recordType == RecordType.ALERT) {
-            Timber.e(ByteUtils.bytesToHex(record))
+            Timber.w("tls$id outbound alert in state $state ${ByteUtils.bytesToHex(record)}")
         }
 
         when (state) {
@@ -170,16 +178,16 @@ class TlsConnection(
                     initiateServerHandshake(record)
                 } else {
                     Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
-                    Timber.e(ByteUtils.bytesToHex(record))
-                    //TODO("error handling")
+                    Timber.e("tls$id ${ByteUtils.bytesToHex(record)}")
+                    //TODO("tls$id error handling")
                 }
             }
 
             // server-facing handshake ongoing, any messages from the client are unexpected
             ConnectionState.SERVER_HANDSHAKE, ConnectionState.SERVER_ESTABLISHED -> {
                 Timber.e("tls$id handleOutboundRecord Invalid outbound record ($recordType in state $state)")
-                Timber.e(ByteUtils.bytesToHex(record))
-                TODO("error handling")
+                Timber.e("tls$id ${ByteUtils.bytesToHex(record)}")
+                //TODO("tls$id error handling")
             }
 
             // client-facing handshake ongoing, use the record to advance it
@@ -200,20 +208,31 @@ class TlsConnection(
                             passOutboundToAppLayer(out)
                         }
                     }
+
                     SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
                         Timber.e("tls$id handleOutboundRecord BUFFER_UNDERFLOW: record size ${record.size}, clientNetBuffer size ${clientNetBuffer.capacity()}")
-                        TODO("handle buffer underflow")
+                        TODO("tls$id handle buffer underflow")
                     }
+
                     SSLEngineResult.Status.BUFFER_OVERFLOW -> {
                         Timber.e("tls$id handleOutboundRecord BUFFER_OVERFLOW: record size ${record.size}, clientAppBuffer size ${clientAppBuffer.capacity()}")
-                        TODO("handle buffer overflow")
+                        TODO("tls$id handle buffer overflow")
                     }
-                    SSLEngineResult.Status.CLOSED -> closeServerSession()
-                    null -> Timber.e("tls$id handleOutboundRecord failure, result is null")
+
+                    SSLEngineResult.Status.CLOSED -> {
+                        //closeServerSession()
+                    }
+
+                    null -> {
+                        Timber.e("tls$id handleOutboundRecord failure, result is null")
+                        //closeServerSession()
+                    }
                 }
             }
 
-            ConnectionState.CLOSED -> handleClientUnwrap(record)
+            ConnectionState.CLOSED -> {
+                TODO("tls$id")
+            }
         }
     }
 
@@ -227,7 +246,7 @@ class TlsConnection(
         }
 
         if(recordType == RecordType.ALERT) {
-            Timber.e(ByteUtils.bytesToHex(record))
+            Timber.w("tls$id inbound alert in state $state ${ByteUtils.bytesToHex(record)}")
         }
 
         when(state) {
@@ -242,13 +261,29 @@ class TlsConnection(
             }
 
             // client-facing handshake ongoing, not ready to MitM yet
-            ConnectionState.SERVER_ESTABLISHED -> {
-                TODO()
-            }
+            ConnectionState.SERVER_ESTABLISHED, ConnectionState.CLIENT_HANDSHAKE -> {
+                Timber.w("tls$id premature APP DATA in state $state")
+                val res = handleServerUnwrap(record)
 
-            // client-facing handshake ongoing, not ready to MitM yet
-            ConnectionState.CLIENT_HANDSHAKE -> {
-                TODO("handle inbound data? but then again, maybe rethink the state model")
+                when(res?.status) {
+                    SSLEngineResult.Status.OK -> {
+                        if(serverAppBuffer.position() > 0) {
+                            serverAppBuffer.flip()
+                            val out = ByteArray(serverAppBuffer.limit())
+                            serverAppBuffer.get(out)
+                        }
+                    }
+                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
+                        Timber.e("tls$id handleInboundRecord BUFFER_UNDERFLOW: record size ${record.size}, serverNetBuffer size ${serverNetBuffer.capacity()}")
+                        TODO("tls$id handle buffer underflow")
+                    }
+                    SSLEngineResult.Status.BUFFER_OVERFLOW -> {
+                        Timber.e("tls$id handleInboundRecord BUFFER_OVERFLOW: record size ${record.size}, serverAppBuffer size ${serverAppBuffer.capacity()}")
+                        TODO("tls$id handle buffer overflow")
+                    }
+                    SSLEngineResult.Status.CLOSED -> {}//closeClientSession()
+                    null -> Timber.e("tls$id handleInboundRecord failure, result is null")
+                }
             }
 
             // both TLS sessions established, ready to MitM - unwrap the data and pass it to the app layer
@@ -266,18 +301,20 @@ class TlsConnection(
                     }
                     SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
                         Timber.e("tls$id handleInboundRecord BUFFER_UNDERFLOW: record size ${record.size}, serverNetBuffer size ${serverNetBuffer.capacity()}")
-                        TODO("handle buffer underflow")
+                        TODO("tls$id handle buffer underflow")
                     }
                     SSLEngineResult.Status.BUFFER_OVERFLOW -> {
                         Timber.e("tls$id handleInboundRecord BUFFER_OVERFLOW: record size ${record.size}, serverAppBuffer size ${serverAppBuffer.capacity()}")
-                        TODO("handle buffer overflow")
+                        TODO("tls$id handle buffer overflow")
                     }
-                    SSLEngineResult.Status.CLOSED -> closeClientSession()
+                    SSLEngineResult.Status.CLOSED -> {}//closeClientSession()
                     null -> Timber.e("tls$id handleInboundRecord failure, result is null")
                 }
             }
 
-            ConnectionState.CLOSED -> handleServerUnwrap(record)
+            ConnectionState.CLOSED -> {
+                handleServerUnwrap(record)
+            }
         }
     }
 
@@ -288,7 +325,7 @@ class TlsConnection(
     private fun closeClientSession() {
         //Timber.d("tls$id closeClientSession in state $state")
 
-        state = ConnectionState.CLOSED
+        switchState(ConnectionState.CLOSED)
         clientSSLEngine?.closeOutbound()
         val res = handleClientWrap()
         //TODO: handle res.status?
@@ -303,7 +340,7 @@ class TlsConnection(
     private fun closeServerSession() {
         //Timber.d("tls$id closeServerSession in state $state")
 
-        state = ConnectionState.CLOSED
+        switchState(ConnectionState.CLOSED)
         serverSSLEngine?.closeOutbound()
         val res = handleServerWrap()
         //TODO: handle res.status?
@@ -365,9 +402,9 @@ class TlsConnection(
                         }
                     }
 
-                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO()
-                    SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO()
-                    SSLEngineResult.Status.CLOSED -> TODO()
+                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO("tls$id")
+                    SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO("tls$id")
+                    SSLEngineResult.Status.CLOSED -> TODO("tls$id")
                     null -> Timber.e("tls$id continueServerHandshake NEED_UNWRAP unexpected res.status: NULL")
                 }
             }
@@ -387,9 +424,9 @@ class TlsConnection(
                             continueServerHandshake(handshakeStatus = res.handshakeStatus)
                         }
 
-                        SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO()
-                        SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO()
-                        SSLEngineResult.Status.CLOSED -> TODO()
+                        SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO("tls$id")
+                        SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO("tls$id")
+                        SSLEngineResult.Status.CLOSED -> TODO("tls$id")
                         null -> Timber.e("tls$id continueServerHandshake NEED_UNWRAP unexpected res.status: NULL")
                     }
                 }
@@ -400,13 +437,13 @@ class TlsConnection(
             }
 
             SSLEngineResult.HandshakeStatus.FINISHED -> {
-                state = ConnectionState.SERVER_ESTABLISHED
+                switchState(ConnectionState.SERVER_ESTABLISHED)
 
                 // server-facing TLS session established, start the client-facing handshake
                 initiateClientHandshake()
             }
 
-            SSLEngineResult.HandshakeStatus.NEED_TASK -> TODO()
+            SSLEngineResult.HandshakeStatus.NEED_TASK -> TODO("tls$id")
         }
     }
 
@@ -437,9 +474,9 @@ class TlsConnection(
                         }
                     }
 
-                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO()
-                    SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO()
-                    SSLEngineResult.Status.CLOSED -> TODO()
+                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO("tls$id")
+                    SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO("tls$id")
+                    SSLEngineResult.Status.CLOSED -> TODO("tls$id")
                     null -> Timber.e("tls$id continueClientHandshake NEED_UNWRAP unexpected res.status: NULL")
                 }
             }
@@ -460,9 +497,9 @@ class TlsConnection(
                             continueClientHandshake(handshakeStatus = res.handshakeStatus)
                         }
 
-                        SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO()
-                        SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO()
-                        SSLEngineResult.Status.CLOSED -> TODO()
+                        SSLEngineResult.Status.BUFFER_UNDERFLOW -> TODO("tls$id")
+                        SSLEngineResult.Status.BUFFER_OVERFLOW -> TODO("tls$id")
+                        SSLEngineResult.Status.CLOSED -> TODO("tls$id")
                         null -> Timber.e("tls$id continueClientHandshake NEED_UNWRAP unexpected res.status: NULL")
                     }
                 }
@@ -473,10 +510,10 @@ class TlsConnection(
             }
 
             SSLEngineResult.HandshakeStatus.FINISHED -> {
-                state = ConnectionState.CLIENT_ESTABLISHED
+                switchState(ConnectionState.CLIENT_ESTABLISHED)
             }
 
-            SSLEngineResult.HandshakeStatus.NEED_TASK -> TODO()
+            SSLEngineResult.HandshakeStatus.NEED_TASK -> TODO("tls$id")
         }
     }
 
@@ -495,7 +532,7 @@ class TlsConnection(
         serverNetBuffer = ByteBuffer.allocate(serverSSLEngine?.session?.packetBufferSize ?: 0)
 
         // initiate the TLS handshake for the serverSSLEngine
-        state = ConnectionState.SERVER_HANDSHAKE
+        switchState(ConnectionState.SERVER_HANDSHAKE)
         serverSSLEngine?.beginHandshake()
     }
 
@@ -510,7 +547,7 @@ class TlsConnection(
         clientNetBuffer = ByteBuffer.allocate(clientSSLEngine?.session?.packetBufferSize ?: 0)
 
         // initiate the TLS handshake for the clientSSLEngine
-        state = ConnectionState.CLIENT_HANDSHAKE
+        switchState(ConnectionState.CLIENT_HANDSHAKE)
         clientSSLEngine?.beginHandshake()
     }
 
@@ -519,7 +556,7 @@ class TlsConnection(
     //////////////////////////////////////////////////////////////////////
 
     private fun handleClientUnwrap(record: ByteArray): SSLEngineResult? {
-        //Timber.d("tls$id handleClientUnwrap unwrapping ${record.size} bytes, clientSSLEngine handshakeStatus: ${clientSSLEngine?.handshakeStatus}")
+        //Timber.d("tls$id handleClientUnwrap unwrapping ${record.size} bytes in state $state, clientSSLEngine handshakeStatus: ${clientSSLEngine?.handshakeStatus}")
 
         // prepare the clientNetBuffer by switching it to write mode
         clientNetBuffer.clear()
@@ -541,9 +578,10 @@ class TlsConnection(
         val res = try {
             clientSSLEngine?.unwrap(clientNetBuffer, clientAppBuffer)
         } catch (sslException: SSLException) {
-            Timber.e("tls$id handleClientUnwrap SSLException ${sslException.message}")
+            Timber.e("tls$id handleClientUnwrap SSLException in state $state ${sslException.message}")
             transportLayer.appId?.let { componentManager.tlsPassthroughCache.put(it, hostname) }
-            closeServerSession()
+
+            //closeServerSession()
             null
         }
 
@@ -561,8 +599,8 @@ class TlsConnection(
         payload?.let {
             // if necessary, increase the capacity of the clientAppBuffer to fit the payload
             if(clientAppBuffer.capacity() < (it.size)) {
-                Timber.w("tls$id handleClientWrap Resizing serverNetBuffer: ${clientNetBuffer.capacity()} -> ${it.size}")
-                serverAppBuffer = ByteBuffer.allocate(it.size)
+                Timber.w("tls$id handleClientWrap Resizing clientAppBuffer: ${clientAppBuffer.capacity()} -> ${it.size}")
+                clientAppBuffer = ByteBuffer.allocate(it.size)
             }
 
             // write the payload to the clientAppBuffer
@@ -574,7 +612,15 @@ class TlsConnection(
         clientNetBuffer.clear()
 
         // use the clientSSLEngine to wrap the payload, producing an encrypted record in the clientNetBuffer
-        val res = clientSSLEngine?.wrap(clientAppBuffer, clientNetBuffer)
+        val res = try {
+            clientSSLEngine?.wrap(clientAppBuffer, clientNetBuffer)
+        } catch (sslException: SSLException) {
+            Timber.e("tls$id handleClientWrap SSLException in state $state ${sslException.message}")
+            transportLayer.appId?.let { componentManager.tlsPassthroughCache.put(it, hostname) }
+
+            //closeServerSession()
+            null
+        }
 
         //Timber.d("tls$id handleClientWrap clientSSLEngine wrap handshakeResult: $res")
 
@@ -825,6 +871,10 @@ class TlsConnection(
         }
 
         return null
+    }
+
+    private fun switchState(newState: ConnectionState) {
+        state = newState
     }
 
     ////////////////////////////////////////////////////////////////////////
