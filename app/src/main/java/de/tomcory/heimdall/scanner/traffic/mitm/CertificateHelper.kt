@@ -82,7 +82,7 @@ object CertificateHelper {
      * talk to TLS 1.1 or TLS 1.2 clients. For interoperability, SunJSSE does
      * not enable TLS 1.1 or TLS 1.2 by default for client connections.
      */
-    private const val SSL_CONTEXT_PROTOCOL = "TLSv1.2"
+    private const val SSL_CONTEXT_PROTOCOL = "TLSv1.3"
 
     @JvmStatic
     @Throws(
