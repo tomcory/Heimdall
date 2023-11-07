@@ -10,22 +10,29 @@ buildscript {
     }
 
     ext {
-        gradle_version = "8.0.1"
-        navigation_version = "2.5.3"
-        data_binding_compiler_version = gradle_version // Always need to be the same.
+        gradle_version = "8.1.2"
+        nav_version = "2.7.5"
+
+        // ksp must match Kotlin version
+        kotlin_version = "1.9.10"
+        ksp_version = "1.9.10-1.0.13"
+
+        // compose compiler must also match Kotlin version
+        // see https://developer.android.com/jetpack/androidx/releases/compose-kotlin
+        compose_compiler_version = "1.5.3"
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.0.2'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.0"
-        classpath "androidx.navigation:navigation-safe-args-gradle-plugin:$navigation_version"
+        classpath "com.android.tools.build:gradle:$gradle_version"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "androidx.navigation:navigation-safe-args-gradle-plugin:$nav_version"
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
     }
 }
 
 plugins {
-    id "com.google.devtools.ksp" version "1.8.10-1.0.9" apply false
+    id "com.google.devtools.ksp" version "$ksp_version" apply false
 }
 
 allprojects {

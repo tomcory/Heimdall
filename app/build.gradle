@@ -16,21 +16,25 @@ android {
 
     defaultConfig {
         applicationId "de.tomcory.heimdall"
+
         minSdk 28
-        compileSdk 33
-        targetSdk 33
+        compileSdk 34
+        targetSdk 34
+
         versionCode 1
         versionName "0.1"
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        def secureProps = new Properties()
         vectorDrawables {
             useSupportLibrary true
         }
+
+        /*def secureProps = new Properties()
         if (file("../secure.properties").exists()) {
             file("../secure.properties")?.withInputStream { secureProps.load(it) }
         }
-        //resValue "string", "maps_api_key", (secureProps.getProperty("EXAMPLE") ?: "")
+        resValue "string", "maps_api_key", (secureProps.getProperty("EXAMPLE") ?: "")*/
     }
 
     buildTypes {
@@ -49,11 +53,13 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        def javaVersion = JavaVersion.VERSION_11
+        sourceCompatibility = javaVersion
+        targetCompatibility = javaVersion
     }
 
     kotlinOptions {
+        // make sure that this matches the Java version used for compilation!
         jvmTarget = "11"
     }
 
@@ -66,42 +72,41 @@ android {
         includeInBundle false
     }
 
-    // netty stuff below
-    ndkVersion = "21.0.6113669"
-
-    packagingOptions {
-        resources {
-            excludes += ["META-INF/INDEX.LIST", "META-INF/io.netty.versions.properties"]
-        }
-    }
-
     composeOptions {
-        kotlinCompilerExtensionVersion "1.4.4"
+        kotlinCompilerExtensionVersion "$compose_compiler_version"
     }
 
-    configurations.configureEach {
-        resolutionStrategy {
-            force "io.netty:netty-all:4.1.58.Final"
-        }
-    }
-
+    // configure protobuf for the datastore
     sourceSets {
         main {
             proto {
                 srcDir "src/main/proto/proto" // default value
             }
         }
-
         main.java.srcDirs += "src/main/proto"
+    }
+
+    // netty stuff below
+    ndkVersion = "21.0.6113669"
+    packagingOptions {
+        resources {
+            excludes += ["META-INF/INDEX.LIST", "META-INF/io.netty.versions.properties"]
+        }
+    }
+    compileSdk 34
+    configurations.configureEach {
+        resolutionStrategy {
+            force "io.netty:netty-all:4.1.58.Final"
+        }
     }
 }
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.21.12"
+        artifact = "com.google.protobuf:protoc:3.25.0"
     }
 
-    // Generates the java Protobuf-lite code for the Protobufs in this project. See
+    // Generates the java protobuf-lite code for the Protobuffers in this project. See
     // https://github.com/google/protobuf-gradle-plugin#customizing-protobuf-compilation
     // for more information.
     generateProtoTasks {
@@ -116,12 +121,16 @@ protobuf {
 }
 
 ext {
-    bouncycastle_version = "1.69"
-    room_version = "2.5.1"
-    lifecycle_version = "2.5.1"
+    lifecycle_version = "2.6.2"
     test_version = "1.5.0"
-    data_binding_compiler_version = gradle_version // Always need to be the same.
-    compose_version = "1.4.3"
+    room_version = "2.6.0"
+    compose_version = "1.5.4"
+    compose_m3_version = "1.2.0-alpha10"
+    compose_accompanist_version = "0.29.0-alpha"
+    vico_version = "1.12.0"
+    pcap4j_version = "1.7.6"
+    retrofit_version = "2.9.0"
+    bouncycastle_version = "1.69"
 }
 
 dependencies {
@@ -131,39 +140,43 @@ dependencies {
     implementation "androidx.legacy:legacy-support-v4:1.0.0"
     implementation "androidx.appcompat:appcompat:1.6.1"
     implementation "androidx.constraintlayout:constraintlayout:2.1.4"
-    implementation "androidx.preference:preference-ktx:1.2.0"
+    implementation "androidx.preference:preference-ktx:1.2.1"
     implementation "androidx.palette:palette-ktx:1.0.0"
 
     // AndroidX Lifecycle Components
-    implementation "androidx.lifecycle:lifecycle-livedata-ktx:2.6.1"
+    implementation "androidx.lifecycle:lifecycle-livedata-ktx:$lifecycle_version"
     implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:$lifecycle_version"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:$lifecycle_version"
     implementation "androidx.lifecycle:lifecycle-common-java8:$lifecycle_version"
+    implementation "androidx.lifecycle:lifecycle-runtime-compose:$lifecycle_version"
 
-    // Jetpack Compose
-    implementation "androidx.activity:activity-compose:1.7.1"
+    // Jetpack Compose Base
+    implementation "androidx.activity:activity-compose:1.8.0"
     implementation "androidx.compose.ui:ui:$compose_version"
-    implementation "androidx.lifecycle:lifecycle-runtime-compose:2.6.1"
     implementation "androidx.compose.ui:ui-tooling-preview:$compose_version"
-    implementation "androidx.compose.material3:material3:1.2.0-alpha01"
-    implementation "androidx.compose.material3:material3-window-size-class:1.2.0-alpha01"
-    implementation "com.google.accompanist:accompanist-drawablepainter:0.29.0-alpha"
-    androidTestImplementation "androidx.compose.ui:ui-test-junit4:$compose_version"
     debugImplementation "androidx.compose.ui:ui-tooling:$compose_version"
     debugImplementation "androidx.compose.ui:ui-test-manifest:$compose_version"
-    implementation "com.google.accompanist:accompanist-systemuicontroller:0.29.0-alpha"
+    androidTestImplementation "androidx.compose.ui:ui-test-junit4:$compose_version"
+
+    // Jetpack Compose Material 3
+    implementation "androidx.compose.material3:material3:$compose_m3_version"
+    implementation "androidx.compose.material3:material3-window-size-class:$compose_m3_version"
+
+    // Jetpack Compose Addons
+    implementation "com.google.accompanist:accompanist-drawablepainter:$compose_accompanist_version"
+    implementation "com.google.accompanist:accompanist-systemuicontroller:$compose_accompanist_version"
 
     // Jetpack DataStore
     implementation "androidx.datastore:datastore:1.0.0"
     implementation "com.google.protobuf:protobuf-javalite:3.21.12"
 
+    // Vico Charts for Jetpack Compose https://github.com/patrykandpatrick/vico
+    implementation("com.patrykandpatrick.vico:compose:$vico_version")
+    implementation("com.patrykandpatrick.vico:compose-m3:$vico_version")
+    implementation("com.patrykandpatrick.vico:core:$vico_version")
+
     // Kotlin serialisation
     implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.0"
-
-    // Provides the utilities needed to use Vico in Jetpack Compose.
-    implementation "com.patrykandpatrick.vico:compose:1.6.2"
-    // An optional addition for `vico.compose` that creates a `ChartStyle` based on an M3 Material Theme.
-    implementation "com.patrykandpatrick.vico:compose-m3:1.6.2"
 
     // Room dependencies
     implementation "androidx.room:room-runtime:$room_version"
@@ -171,20 +184,20 @@ dependencies {
     ksp "androidx.room:room-compiler:$room_version"
 
     // Navigation
-    implementation "androidx.navigation:navigation-fragment-ktx:$navigation_version"
-    implementation "androidx.navigation:navigation-ui-ktx:$navigation_version"
-    implementation "androidx.navigation:navigation-compose:$navigation_version"
+    implementation "androidx.navigation:navigation-fragment-ktx:$nav_version"
+    implementation "androidx.navigation:navigation-ui-ktx:$nav_version"
+    implementation "androidx.navigation:navigation-compose:$nav_version"
 
     // Retrofit
-    implementation "com.squareup.retrofit2:retrofit:2.9.0"
-    implementation "com.squareup.retrofit2:converter-moshi:2.9.0"
+    implementation "com.squareup.retrofit2:retrofit:$retrofit_version"
+    implementation "com.squareup.retrofit2:converter-moshi:$retrofit_version"
 
     // OpenCSV library
     implementation "com.opencsv:opencsv:5.6"
 
     // pcap4j
-    implementation "org.pcap4j:pcap4j-core:1.7.6"
-    implementation "org.pcap4j:pcap4j-packetfactory-static:1.7.6"
+    implementation "org.pcap4j:pcap4j-core:$pcap4j_version"
+    implementation "org.pcap4j:pcap4j-packetfactory-static:$pcap4j_version"
 
     // Dex analyser used to detect tracker libraries in apps
     implementation "com.github.lanchon.dexpatcher:multidexlib2:2.3.4.r2"
@@ -205,7 +218,6 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:5.0.0-alpha.2"
     implementation ("net.lightbody.bmp:mitm:2.1.5") { exclude group: "org.slf4j"}
     implementation group: "com.jcraft", name: "jzlib", version: "1.1.3"
-    implementation "commons-io:commons-io:2.6"
     implementation "com.google.guava:guava:24.1-jre"
 
     // test stuff
