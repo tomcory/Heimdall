@@ -15,6 +15,7 @@ import androidx.datastore.dataStore
 import androidx.navigation.compose.rememberNavController
 import de.tomcory.heimdall.Preferences
 import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
+import de.tomcory.heimdall.ui.nav.BottomNavigationBar
 import de.tomcory.heimdall.ui.nav.Navigation
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
 
