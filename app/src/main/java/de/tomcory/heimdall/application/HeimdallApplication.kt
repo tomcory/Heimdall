@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.persistence.database.HeimdallDatabase
 import kotlinx.coroutines.CoroutineScope
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
+@HiltAndroidApp
 class HeimdallApplication : Application() {
 
     override fun onCreate() {

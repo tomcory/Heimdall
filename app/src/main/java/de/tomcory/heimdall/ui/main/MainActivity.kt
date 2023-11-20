@@ -13,6 +13,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.datastore.core.DataStore
 import androidx.datastore.dataStore
 import androidx.navigation.compose.rememberNavController
+import dagger.hilt.android.AndroidEntryPoint
 import de.tomcory.heimdall.Preferences
 import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
 import de.tomcory.heimdall.ui.nav.BottomNavigationBar
@@ -24,7 +25,7 @@ val Context.preferencesStore: DataStore<Preferences> by dataStore(
     serializer = PreferencesSerializer
 )
 
-//@AndroidEntryPoint
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,14 +38,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen() {
     val navController = rememberNavController()
 
     HeimdallTheme {
         Scaffold(
-            //topBar = { TopBar() },
             bottomBar = { BottomNavigationBar(navController) },
             content = { padding -> // We have to pass the scaffold inner padding to our content. That's why we use Box.
                 Box(modifier = Modifier.padding(padding)) {

@@ -5,6 +5,7 @@ plugins {
     id "androidx.navigation.safeargs"
     id "com.google.protobuf" version "0.9.0"
     id "org.jetbrains.kotlin.plugin.serialization" version "1.8.21"
+    id "com.google.dagger.hilt.android"
 }
 
 kotlin {
@@ -149,6 +150,11 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:$lifecycle_version"
     implementation "androidx.lifecycle:lifecycle-common-java8:$lifecycle_version"
     implementation "androidx.lifecycle:lifecycle-runtime-compose:$lifecycle_version"
+
+    // Hilt dependency injection
+    implementation "com.google.dagger:hilt-android:$hilt_version"
+    ksp "com.google.dagger:dagger-compiler:$hilt_version"
+    ksp "com.google.dagger:hilt-compiler:$hilt_version"
 
     // Jetpack Compose Base
     implementation "androidx.activity:activity-compose:1.8.0"
