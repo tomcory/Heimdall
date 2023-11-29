@@ -25,11 +25,11 @@ dependencyResolutionManagement {
 rootProject.name = "Heimdall"
 
 include (":app")
+include(":core:export")
+include(":core:scanner")
+include(":core:vpn")
+include(":core:proxy")
+include(":core:util")
 include(":core:database")
 include (":core:datastore")
 include (":core:datastore-proto")
-include(":core:export")
-include(":core:vpn")
-include(":core:util")
-include(":core:proxy")
-include(":core:scanner")

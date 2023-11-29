@@ -163,9 +163,3 @@ dependencies {
     implementation (project(":core:util"))
     implementation (project(":core:vpn"))
 }
-
-afterEvaluate {
-    tasks.named("kspDebugKotlin") {
-        mustRunAfter(":app:generateDebugProto")
-    }
-}
