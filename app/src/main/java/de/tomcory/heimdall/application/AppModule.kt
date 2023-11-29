@@ -12,7 +12,6 @@ import dagger.hilt.components.SingletonComponent
 import de.tomcory.heimdall.Preferences
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.datastore.PreferencesSerializer
-import de.tomcory.heimdall.ui.scanner.traffic.TrafficScannerRepository
 import javax.inject.Singleton
 
 val Context.preferencesStore: DataStore<Preferences> by dataStore(
@@ -31,11 +30,5 @@ object AppModule {
             context,
             HeimdallDatabase::class.java, "heimdall"
         ).fallbackToDestructiveMigration().build()
-    }
-
-    @Singleton
-    @Provides
-    fun provideTrafficScannerRepository(datastore: DataStore<Preferences>, database: HeimdallDatabase): TrafficScannerRepository {
-        return TrafficScannerRepository(datastore, database)
     }
 }
