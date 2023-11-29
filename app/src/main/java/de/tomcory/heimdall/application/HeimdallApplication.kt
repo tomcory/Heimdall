@@ -6,7 +6,7 @@ import android.app.NotificationManager
 import android.os.Build
 import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
-import de.tomcory.heimdall.persistence.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.HeimdallDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

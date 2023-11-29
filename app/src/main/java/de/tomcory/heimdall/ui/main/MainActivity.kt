@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.ui.main
 
-import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,20 +9,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.datastore.core.DataStore
-import androidx.datastore.dataStore
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
-import de.tomcory.heimdall.Preferences
-import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
 import de.tomcory.heimdall.ui.nav.BottomNavigationBar
 import de.tomcory.heimdall.ui.nav.Navigation
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
-
-val Context.preferencesStore: DataStore<Preferences> by dataStore(
-    fileName = "proto/preferences.proto",
-    serializer = PreferencesSerializer
-)
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {

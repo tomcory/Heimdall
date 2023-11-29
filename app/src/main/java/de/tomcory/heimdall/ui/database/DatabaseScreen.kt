@@ -17,7 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.compose.viewModel
-import de.tomcory.heimdall.persistence.database.entity.Request
+import de.tomcory.heimdall.R
+import de.tomcory.heimdall.core.database.entity.Request
 
 @Composable
 fun DatabaseScreen(

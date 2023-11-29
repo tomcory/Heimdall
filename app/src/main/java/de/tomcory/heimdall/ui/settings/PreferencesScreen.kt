@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.ui.settings
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,9 +14,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
-import de.tomcory.heimdall.scanner.code.ScanManager
-import de.tomcory.heimdall.ui.main.preferencesStore
+import de.tomcory.heimdall.application.preferencesStore
+import de.tomcory.heimdall.core.datastore.PreferencesSerializer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,7 +122,7 @@ fun ScannerPreferences() {
     val preferences =
         dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
 
-    Column {
+    /*Column {
         CategoryHeadline(text = "Scanner preferences")
 
         BooleanPreference(
@@ -197,7 +195,7 @@ fun ScannerPreferences() {
                 }
             }
         )
-    }
+    }*/
 }
 
 @Composable
@@ -206,7 +204,7 @@ fun VpnPreferences() {
     val preferences =
         dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
 
-    Column {
+    /*Column {
 
         CategoryHeadline(text = "VPN preferences")
 
@@ -289,7 +287,7 @@ fun VpnPreferences() {
                 }
             }
         )
-    }
+    }*/
 }
 
 @Composable
@@ -297,7 +295,7 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
     val dataStore = LocalContext.current.preferencesStore
     val preferences = dataStore.data.collectAsState(initial = PreferencesSerializer.defaultValue)
 
-    Column {
+    /*Column {
 
         CategoryHeadline(text = "MitM-VPN preferences")
 
@@ -339,7 +337,7 @@ fun MitmPreferences(snackBarHostState: SnackbarHostState) {
                 }
             }
         )
-    }
+    }*/
 }
 
 @Preview

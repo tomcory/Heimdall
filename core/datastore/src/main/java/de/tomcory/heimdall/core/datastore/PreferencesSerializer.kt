@@ -1,0 +1,70 @@
+package de.tomcory.heimdall.core.datastore
+
+import android.content.Context
+import androidx.datastore.core.CorruptionException
+import androidx.datastore.core.DataStore
+import androidx.datastore.core.Serializer
+import androidx.datastore.dataStore
+import com.google.protobuf.InvalidProtocolBufferException
+import de.tomcory.heimdall.MonitoringScopeApps
+import de.tomcory.heimdall.MonitoringScopeHosts
+import de.tomcory.heimdall.Preferences
+import timber.log.Timber
+import java.io.InputStream
+import java.io.OutputStream
+
+object PreferencesSerializer : Serializer<Preferences> {
+    override val defaultValue: Preferences = Preferences.newBuilder()
+        .setVpnActive(true)
+        .setVpnLastUpdated(1L)
+        .setVpnPersistTransportLayer(true)
+        .setVpnDnsServer("1.1.1.1")
+        .setVpnBaseAddress("10.120.0.1/32")
+        .setVpnRoute("0.0.0.0/0")
+        .setVpnUseProxy(true)
+        .setVpnProxyAddress("127.0.0.1:9090")
+        .setVpnMonitoringScope(MonitoringScopeApps.APPS_ALL)
+        .addAllVpnWhitelistApps(listOf<String>())
+        .addAllVpnBlacklistApps(listOf("de.tomcory.heimdall"))
+
+        .setMitmEnable(true)
+        .setMitmAppLayerPassthrough(true)
+        .setMitmCaCertPath("")
+        .setMitmMonitoringScopeApps(MonitoringScopeApps.APPS_ALL)
+        .setMitmMonitoringScopeHosts(MonitoringScopeHosts.HOSTS_ALL)
+        .addAllMitmWhitelistApps(listOf<String>())
+        .addAllMitmBlacklistApps(listOf<String>())
+        .addAllMitmWhitelistHosts(listOf<String>())
+        .addAllMitmBlacklistHosts(listOf<String>())
+
+        .setLibraryActive(true)
+        .setLibraryOnInstall(true)
+        .setLibraryLastUpdated(1L)
+        .setLibraryMonitoringScope(MonitoringScopeApps.APPS_ALL)
+        .addAllLibraryWhitelist(listOf<String>())
+        .addAllLibraryBlacklist(listOf<String>())
+        .setLibraryPrepopulate(true)
+
+        .setPermissionActive(true)
+        .setPermissionOnInstall(true)
+        .setPermissionLastUpdated(1L)
+        .setPermissionMonitoringScope(MonitoringScopeApps.APPS_ALL)
+        .addAllPermissionWhitelist(listOf<String>())
+        .addAllPermissionBlacklist(listOf<String>())
+        .build()
+
+    override suspend fun readFrom(input: InputStream): Preferences {
+        try {
+            val t = Preferences.parseFrom(input)
+            Timber.w("Reading from DataStore:\n%s", t.toString())
+            return t
+        } catch (exception: InvalidProtocolBufferException) {
+            throw CorruptionException("Cannot read proto.", exception)
+        }
+    }
+
+    override suspend fun writeTo(t: Preferences, output: OutputStream) {
+        Timber.w("Writing to DataStore:\n%s", t.toString())
+        t.writeTo(output)
+    }
+}

@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+option java_package = "de.tomcory.heimdall";
+option java_multiple_files = true;
+
+enum MonitoringScopeApps {
+  APPS_ALL = 0;
+  APPS_NON_SYSTEM = 1;
+  APPS_NON_SYSTEM_BLACKLIST = 2;
+  APPS_WHITELIST = 3;
+  APPS_BLACKLIST = 4;
+}
+
+enum MonitoringScopeHosts {
+  HOSTS_ALL = 0;
+  HOSTS_WHITELIST = 1;
+  HOSTS_BLACKLIST = 2;
+}
+
+message Preferences {
+
+  // ---- VPN PREFERENCES
+  bool vpn_active = 1;
+  int64 vpn_lastUpdated = 2;
+  bool vpn_persist_transport_layer = 3;
+  string vpn_dns_server = 4;
+  string vpn_base_address = 5;
+  string vpn_route = 6;
+  bool vpn_use_proxy = 7;
+  string vpn_proxy_address = 8;
+  MonitoringScopeApps vpn_monitoringScope = 9;
+  repeated string vpn_whitelist_apps = 10;
+  repeated string vpn_blacklist_apps = 11;
+
+  // ---- MITM PREFERENCES
+  bool mitm_enable = 12;
+  bool mitm_appLayer_passthrough = 13;
+  string mitm_caCert_path = 14;
+  MonitoringScopeApps mitm_monitoringScope_apps = 15;
+  MonitoringScopeHosts mitm_monitoringScope_hosts = 16;
+  repeated string mitm_whitelist_apps = 17;
+  repeated string mitm_blacklist_apps = 18;
+  repeated string mitm_whitelist_hosts = 19;
+  repeated string mitm_blacklist_hosts = 20;
+
+  // ---- LIBRARY SCANNER PREFERENCES
+  bool library_active = 21;
+  bool library_onInstall = 22;
+  int64 library_lastUpdated = 23;
+  MonitoringScopeApps library_monitoringScope = 24;
+  repeated string library_whitelist = 25;
+  repeated string library_blacklist = 26;
+  bool library_prepopulate = 27;
+
+  // ---- PERMISSION SCANNER PREFERENCES
+  bool permission_active = 28;
+  bool permission_onInstall = 29;
+  int64 permission_lastUpdated = 30;
+  MonitoringScopeApps permission_monitoringScope = 31;
+  repeated string permission_whitelist = 32;
+  repeated string permission_blacklist = 33;
+
+}

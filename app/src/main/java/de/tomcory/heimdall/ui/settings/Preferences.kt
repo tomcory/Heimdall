@@ -96,7 +96,9 @@ fun ActionPreference(text: String, hasProgress: Boolean = false, onClick: suspen
         trailingContent = {
             AnimatedVisibility(visible = showProgress, enter = fadeIn(), exit = fadeOut()) {
                 if(rememberHasProgress) {
-                    CircularProgressIndicator(progressState)
+                    CircularProgressIndicator(
+                        progress = { progressState },
+                    )
                 } else {
                     CircularProgressIndicator()
                 }
@@ -259,6 +261,7 @@ fun MonitoringScopePreference(text: String, dialogText: String, value: Monitorin
                     when (rememberedValue) {
                         MonitoringScopeApps.APPS_ALL -> "All apps"
                         MonitoringScopeApps.APPS_NON_SYSTEM -> "Non-system apps"
+                        MonitoringScopeApps.APPS_NON_SYSTEM_BLACKLIST -> "Non-system + blacklist"
                         MonitoringScopeApps.APPS_WHITELIST -> "Whitelist"
                         MonitoringScopeApps.APPS_BLACKLIST -> "Blacklist"
                         MonitoringScopeApps.UNRECOGNIZED -> "ERROR: UNRECOGNIZED"
@@ -288,6 +291,7 @@ fun MonitoringScopePreference(text: String, dialogText: String, value: Monitorin
                                     when (it) {
                                         MonitoringScopeApps.APPS_ALL -> "All apps"
                                         MonitoringScopeApps.APPS_NON_SYSTEM -> "Non-system apps"
+                                        MonitoringScopeApps.APPS_NON_SYSTEM_BLACKLIST -> "Non-system + blacklist"
                                         MonitoringScopeApps.APPS_WHITELIST -> "Whitelist"
                                         MonitoringScopeApps.APPS_BLACKLIST -> "Blacklist"
                                         MonitoringScopeApps.UNRECOGNIZED -> "ERROR: UNRECOGNIZED"

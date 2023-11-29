@@ -40,17 +40,15 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import de.tomcory.heimdall.persistence.datastore.PreferencesSerializer
-import de.tomcory.heimdall.ui.main.preferencesStore
+import de.tomcory.heimdall.core.datastore.PreferencesSerializer
+import de.tomcory.heimdall.application.preferencesStore
+import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
 import de.tomcory.heimdall.ui.settings.PreferencesScreen
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
-import de.tomcory.heimdall.scanner.traffic.components.HeimdallVpnService
+import de.tomcory.heimdall.service.HeimdallVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.littleshoot.proxy.mitm.Authority
-import org.littleshoot.proxy.mitm.CertificateSniffingMitmManager
-import proxy.HeimdallHttpProxyServer
 import timber.log.Timber
 import java.net.InetSocketAddress
 
@@ -203,9 +201,23 @@ fun launchVpn(context: Context, useProxy: Boolean) : ComponentName? {
 
 suspend fun launchProxy(context: Context) : HeimdallHttpProxyServer {
     return withContext(Dispatchers.IO) {
-        val newAuth = de.tomcory.heimdall.scanner.traffic.mitm.Authority.getDefaultInstance(context)
-        val oldAuth = Authority(newAuth.keyStoreDir, newAuth.alias, newAuth.password, newAuth.issuerCN, newAuth.issuerO, newAuth.issuerOU, newAuth.subjectO, newAuth.subjectOU)
-        val proxyServer = HeimdallHttpProxyServer(InetSocketAddress("127.0.0.1", 9090), CertificateSniffingMitmManager(oldAuth), context)
+        val newAuth = de.tomcory.heimdall.core.vpn.mitm.Authority.getDefaultInstance(context)
+        val oldAuth = de.tomcory.heimdall.core.proxy.littleshoot.mitm.Authority(
+            newAuth.keyStoreDir,
+            newAuth.alias,
+            newAuth.password,
+            newAuth.issuerCN,
+            newAuth.issuerO,
+            newAuth.issuerOU,
+            newAuth.subjectO,
+            newAuth.subjectOU
+        )
+        val proxyServer = HeimdallHttpProxyServer(
+            InetSocketAddress(
+                "127.0.0.1",
+                9090
+            ), de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager(oldAuth), context
+        )
         proxyServer.start()
         proxyServer
     }

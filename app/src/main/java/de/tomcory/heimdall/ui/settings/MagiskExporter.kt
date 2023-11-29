@@ -19,7 +19,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import de.tomcory.heimdall.util.FileUtils
+import de.tomcory.heimdall.core.util.FileUtils
+import de.tomcory.heimdall.core.vpn.mitm.Authority
+import de.tomcory.heimdall.core.vpn.mitm.KeyStoreHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -64,7 +66,7 @@ fun MagiskExportPreference(snackbarHostState: SnackbarHostState) {
             isGenerating = true
             coroutineScope.launch {
                 withContext(Dispatchers.IO) {
-                    filename = FileUtils.generateMagiskModule(context)
+                    filename = generateMagiskModule(context)
                     if (filename.isEmpty()) {
                         Timber.e("Module creation failed")
                         snackbarHostState.showSnackbar(message = "Could not create Magisk module", actionLabel = null, withDismissAction = false, duration = SnackbarDuration.Short)
@@ -81,4 +83,16 @@ fun MagiskExportPreference(snackbarHostState: SnackbarHostState) {
     if (isGenerating) {
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
     }
+}
+
+/**
+ * Generates a Magisk module based on the default Authority credentials and writes it to the app's internal cache directory.
+ */
+private suspend fun generateMagiskModule(context: Context): String {
+    Timber.d("Generating authority...")
+    val authority = Authority.getDefaultInstance(context)
+    Timber.d("Loading KeyStore...")
+    val keyStore = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+    Timber.d("Building Magisk module...")
+    return KeyStoreHelper.createMagiskModuleWithCertificate(context, keyStore, authority) ?: ""
 }

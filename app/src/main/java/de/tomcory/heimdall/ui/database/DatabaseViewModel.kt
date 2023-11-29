@@ -1,9 +1,10 @@
 package de.tomcory.heimdall.ui.database
 
 import androidx.lifecycle.ViewModel
-import de.tomcory.heimdall.persistence.database.HeimdallDatabase
-import de.tomcory.heimdall.persistence.database.entity.Request
-import de.tomcory.heimdall.persistence.database.entity.Response
+import androidx.lifecycle.viewModelScope
+import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.entity.Request
+import de.tomcory.heimdall.core.database.entity.Response
 import kotlinx.coroutines.flow.Flow
 
 class DatabaseViewModel : ViewModel() {

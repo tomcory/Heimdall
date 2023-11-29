@@ -41,7 +41,7 @@
         </activity>
 
         <service
-            android:name=".scanner.traffic.components.HeimdallVpnService"
+            android:name=".service.HeimdallVpnService"
             android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter>
@@ -50,13 +50,13 @@
         </service>
 
         <service
-            android:name=".scanner.code.ScanService"
+            android:name=".service.ScanService"
             android:exported="false"
             android:foregroundServiceType="dataSync">
         </service>
 
         <service
-            android:name=".scanner.traffic.components.NotificationIntentService"
+            android:name=".service.NotificationIntentService"
             android:exported="false">
         </service>
 

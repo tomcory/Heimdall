@@ -12,10 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat.startActivity
-import de.tomcory.heimdall.persistence.database.HeimdallDatabase
-import de.tomcory.heimdall.persistence.database.entity.Tracker
+import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.entity.Tracker
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryCard(pkgInfo: PackageInfo) {
 

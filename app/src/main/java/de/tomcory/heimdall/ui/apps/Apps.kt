@@ -7,6 +7,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.platform.LocalContext
@@ -35,22 +37,24 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavHostController
 import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import de.tomcory.heimdall.R
-import de.tomcory.heimdall.persistence.database.HeimdallDatabase
-import de.tomcory.heimdall.persistence.database.entity.App
-import de.tomcory.heimdall.scanner.code.ScanManager
+import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.entity.App
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
-fun AppInfoList(paddingValues: PaddingValues, apps: List<App>) {
-    LazyColumn(modifier = Modifier.padding(paddingValues)) {
+fun AppInfoList(apps: List<App>) {
+    LazyColumn(modifier = Modifier
+        .background(Color.Transparent)) {
         items(apps) {
             var showAppDetailDialog by remember { mutableStateOf(false) }
             AppListItem(
                 app = it,
-                modifier = Modifier.clickable {
-                    showAppDetailDialog = true
-                }
+                modifier = Modifier
+                    .clickable {
+                        showAppDetailDialog = true
+                    }
+                    .background(Color.Transparent)
             )
 
             if(showAppDetailDialog) {
@@ -68,6 +72,7 @@ fun AppInfoList(paddingValues: PaddingValues, apps: List<App>) {
 @Composable
 fun AppListItem(app: App, modifier: Modifier) {
     ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         headlineContent = {
             if(!app.isInstalled) {
                 StrikethroughText(text = app.label)
@@ -127,21 +132,17 @@ fun AppsScreen(navController: NavHostController?) {
         loadingApps = false
     })
 
-    Scaffold(
-        topBar = {
-            AppsTopBar()
+    AnimatedVisibility(visible = loadingApps, enter = fadeIn(), exit = fadeOut()) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Transparent)) {
+            CircularProgressIndicator(color = Color(0xff8fdaff))
+            Text(text = "Loading apps...", color = Color.White)
         }
-    ) {
-        AnimatedVisibility(visible = loadingApps, enter = fadeIn(), exit = fadeOut()) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.fillMaxSize()) {
-                CircularProgressIndicator()
-                Text(text = "Loading apps...")
-            }
-        }
+    }
 
-        AnimatedVisibility(visible = !loadingApps, enter = fadeIn(), exit = fadeOut()) {
-            AppInfoList(it, apps = apps)
-        }
+    AnimatedVisibility(visible = !loadingApps, enter = fadeIn(), exit = fadeOut()) {
+        AppInfoList(apps = apps)
     }
 }
 
@@ -248,7 +249,7 @@ suspend fun getApps(context: Context): List<App> = withContext(Dispatchers.IO) {
     val apps = HeimdallDatabase.instance?.appDao?.getAll() ?: listOf()
     apps.forEach {
         if(it.icon == null && it.isInstalled) {
-            it.icon = ScanManager.getAppIcon(context, it.packageName)
+            it.icon = de.tomcory.heimdall.core.scanner.ScanManager.getAppIcon(context, it.packageName)
         }
     }
     return@withContext apps

@@ -1,0 +1,132 @@
+[versions]
+accompanist = "0.30.1"
+activity-compose = "1.8.1"
+android-gradle = "8.1.4"
+androidx-junit = "1.1.5"
+apk-parser = "2.6.10"
+appcompat = "1.6.1"
+bouncycastle = "1.69"
+commonsIo = "2.6"
+compose = "1.5.4"
+compose-compiler = "1.5.3" # must match kotlin, see https://developer.android.com/jetpack/androidx/releases/compose-kotlin
+compose-material3 = "1.2.0-alpha11"
+constraintlayout = "2.1.4"
+datastore = "1.0.0"
+dnssec4j = "0.1.6"
+espresso = "3.5.1"
+guava = "24.1-jre"
+hilt-navigation-compose = "1.1.0"
+hilt = "2.48.1"
+junit = "4.13.2"
+jzlib = "1.1.3"
+kotlin = "1.9.10"
+kotlin-serialization-plugin = "1.8.21"
+kotlinx-serialization-json = "1.6.0"
+ksp = "1.9.10-1.0.13" # must match kotlin
+legacy-support-v4 = "1.0.0"
+lifecycle = "2.6.2"
+lightbody-mitm = "2.1.5"
+mpAndroidChart = "v3.1.0"
+multidexlib2 = "2.3.4.r2"
+navigation = "2.7.5"
+netty= "4.1.58.Final"
+okhttp = "5.0.0-alpha.2"
+opencsv = "5.6"
+palette-ktx = "1.0.0"
+pcap4j = "1.7.6"
+preference-ktx = "1.2.1"
+protobuf-plugin = "0.9.0"
+protobuf-base = "3.25.1"
+retrofit = "2.9.0"
+robolectric = "4.10.3"
+room = "2.6.0"
+runner = "1.5.2"
+test = "1.5.0"
+test-runner = "1.5.2"
+timber = "4.7.1"
+toolchain = "0.4.0"
+vico = "1.12.0"
+material = "1.8.0"
+
+[libraries]
+accompanist-drawablepainter = { module = "com.google.accompanist:accompanist-drawablepainter", version.ref = "accompanist" }
+accompanist-systemuicontroller = { module = "com.google.accompanist:accompanist-systemuicontroller", version.ref = "accompanist" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintlayout" }
+androidx-datastore = { module = "androidx.datastore:datastore", version.ref = "datastore" }
+androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+androidx-hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
+androidx-legacy-support-v4 = { module = "androidx.legacy:legacy-support-v4", version.ref = "legacy-support-v4" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3", version.ref = "compose-material3" }
+androidx-compose-material3-windowsizeclass = { module = "androidx.compose.material3:material3-window-size-class", version.ref = "compose-material3" }
+androidx-kotlin = { group = "androidx.core", name = "core-ktx", version.ref = "kotlin" }
+androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
+androidx-navigation-fragment-ktx = { module = "androidx.navigation:navigation-fragment-ktx", version.ref = "navigation" }
+androidx-navigation-ui-ktx = { module = "androidx.navigation:navigation-ui-ktx", version.ref = "navigation" }
+androidx-palette-ktx = { module = "androidx.palette:palette-ktx", version.ref = "palette-ktx" }
+androidx-preference-ktx = { module = "androidx.preference:preference-ktx", version.ref = "preference-ktx" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "test" }
+androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "test-runner" }
+androidx-test-rules = { module = "androidx.test:rules", version.ref = "test" }
+androidx-ui = { module = "androidx.compose.ui:ui", version.ref = "compose" }
+androidx-ui-tooling = { module = "androidx.compose.ui:ui-tooling", version.ref = "compose" }
+androidx-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview", version.ref = "compose" }
+apk-parser = { module = "net.dongliu:apk-parser", version.ref = "apk-parser" }
+bouncycastle-bcpkix-jdk15on = { module = "org.bouncycastle:bcpkix-jdk15on", version.ref = "bouncycastle" }
+bouncycastle-bcprov-jdk15on = { module = "org.bouncycastle:bcprov-jdk15on", version.ref = "bouncycastle" }
+commons-io = { module = "commons-io:commons-io", version.ref = "commonsIo" }
+dagger-compiler = { module = "com.google.dagger:dagger-compiler", version.ref = "hilt" }
+dnssec4j = { module = "org.littleshoot:dnssec4j", version.ref = "dnssec4j" }
+gradle = { module = "com.android.tools.build:gradle", version.ref = "android-gradle" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
+hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
+junit = { module = "junit:junit", version.ref = "junit" }
+jzlib = { module = "com.jcraft:jzlib", version.ref = "jzlib" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+hilt-android-gradle-plugin = { module = "com.google.dagger:hilt-android-gradle-plugin", version.ref = "hilt" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization-json" }
+lifecycle-common-java8 = { module = "androidx.lifecycle:lifecycle-common-java8", version.ref = "lifecycle" }
+lifecycle-livedata-ktx = { module = "androidx.lifecycle:lifecycle-livedata-ktx", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
+lightbody-mitm = { module = "net.lightbody.bmp:mitm", version.ref = "lightbody-mitm" }
+mpAndroidChart = { module = "com.github.PhilJay:MPAndroidChart", version.ref = "mpAndroidChart" }
+multidexlib2 = { module = "com.github.lanchon.dexpatcher:multidexlib2", version.ref = "multidexlib2" }
+navigation-safe-args-gradle-plugin = { module = "androidx.navigation:navigation-safe-args-gradle-plugin", version.ref = "navigation" }
+netty-all = { module = "io.netty:netty-all", version.ref = "netty" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+opencsv = { module = "com.opencsv:opencsv", version.ref = "opencsv" }
+pcap4j-core = { module = "org.pcap4j:pcap4j-core", version.ref = "pcap4j" }
+pcap4j-packetfactory-static = { module = "org.pcap4j:pcap4j-packetfactory-static", version.ref = "pcap4j" }
+protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf-base" }
+protobuf-kotlin-lite = { group = "com.google.protobuf", name = "protobuf-kotlin-lite", version.ref = "protobuf-base" }
+protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf-base" }
+retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
+retrofit-converter-moshi = { module = "com.squareup.retrofit2:converter-moshi", version.ref = "retrofit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
+ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "compose" }
+ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "compose" }
+vico-compose = { module = "com.patrykandpatrick.vico:compose", version.ref = "vico" }
+vico-composem3 = { module = "com.patrykandpatrick.vico:compose-m3", version.ref = "vico" }
+vico-core = { module = "com.patrykandpatrick.vico:core", version.ref = "vico" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "android-gradle" }
+android-library = { id = "com.android.library", version.ref = "android-gradle" }
+androidx-navigation-safeargs = { id = "androidx.navigation.safeargs", version.ref = "protobuf-plugin" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin-serialization-plugin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf-plugin" }
+toolchain = { id = "org.gradle.toolchains.foojay-resolver-convention", version.ref = "toolchain" }
