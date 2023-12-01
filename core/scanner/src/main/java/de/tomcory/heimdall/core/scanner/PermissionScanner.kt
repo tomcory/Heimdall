@@ -5,8 +5,11 @@ import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.AppXPermission
 import de.tomcory.heimdall.core.database.entity.Permission
 import timber.log.Timber
+import javax.inject.Inject
 
-class PermissionScanner {
+class PermissionScanner @Inject constructor(
+    private val database: HeimdallDatabase
+) {
 
     /**
      * List of all dangerous permissions as of Android 13
@@ -66,11 +69,11 @@ class PermissionScanner {
         // insert permissions into database
         permissions
             ?.map { permission -> Permission(permission, dangerousPermissions.contains(permission)) }
-            ?.let { HeimdallDatabase.instance?.permissionDao?.insert(*it.toTypedArray()) }
+            ?.let { database.permissionDao().insert(*it.toTypedArray()) }
 
         // insert app-permission cross-reference into database
         permissions
             ?.map { permission -> AppXPermission(packageInfo.packageName, permission) }
-            ?.let { HeimdallDatabase.instance?.appXPermissionDao?.insert(*it.toTypedArray()) }
+            ?.let { database.appXPermissionDao().insert(*it.toTypedArray()) }
     }
 }

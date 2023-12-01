@@ -1,15 +1,11 @@
 package de.tomcory.heimdall.core.datastore
 
-import android.content.Context
 import androidx.datastore.core.CorruptionException
-import androidx.datastore.core.DataStore
 import androidx.datastore.core.Serializer
-import androidx.datastore.dataStore
 import com.google.protobuf.InvalidProtocolBufferException
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeHosts
 import de.tomcory.heimdall.Preferences
-import timber.log.Timber
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -55,16 +51,13 @@ object PreferencesSerializer : Serializer<Preferences> {
 
     override suspend fun readFrom(input: InputStream): Preferences {
         try {
-            val t = Preferences.parseFrom(input)
-            Timber.w("Reading from DataStore:\n%s", t.toString())
-            return t
+            return Preferences.parseFrom(input)
         } catch (exception: InvalidProtocolBufferException) {
             throw CorruptionException("Cannot read proto.", exception)
         }
     }
 
     override suspend fun writeTo(t: Preferences, output: OutputStream) {
-        Timber.w("Writing to DataStore:\n%s", t.toString())
         t.writeTo(output)
     }
 }

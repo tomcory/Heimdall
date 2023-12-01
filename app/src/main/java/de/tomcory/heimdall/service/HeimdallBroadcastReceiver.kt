@@ -9,10 +9,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import javax.inject.Inject
 
-class HeimdallBroadcastReceiver(
-    private val scanManager: ScanManager
+class HeimdallBroadcastReceiver (
+    private val scanManager: ScanManager,
 ) : BroadcastReceiver() {
+
+    @Inject lateinit var database: HeimdallDatabase
 
     init {
         Timber.d("HeimdallBroadcastReceiver created")
@@ -35,7 +38,7 @@ class HeimdallBroadcastReceiver(
     private fun actionPackageRemoved(context: Context, packageName: String) {
         Timber.d("App removed: $packageName")
         CoroutineScope(Dispatchers.IO).launch {
-            HeimdallDatabase.instance?.appDao?.updateIsInstalled(packageName)
+            database.appDao().updateIsInstalled(packageName)
         }
     }
 }

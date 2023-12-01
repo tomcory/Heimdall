@@ -2,6 +2,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias (libs.plugins.ksp)
+    alias (libs.plugins.hilt)
 }
 
 kotlin {
@@ -35,6 +37,10 @@ dependencies {
 
     implementation (libs.androidx.datastore)
     implementation (libs.protobuf.javalite)
+
+    implementation (libs.hilt.android)
+    ksp (libs.dagger.compiler)
+    ksp (libs.hilt.compiler)
 
     implementation (project(":core:database"))
     implementation (project(":core:datastore"))

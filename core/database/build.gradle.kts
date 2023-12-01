@@ -21,5 +21,8 @@ dependencies {
     // Room dependencies
     implementation (libs.androidx.room.runtime)
     implementation (libs.androidx.room.ktx)
+    implementation (libs.hilt.android)
     ksp (libs.androidx.room.compiler)
+    ksp (libs.dagger.compiler)
+    ksp (libs.hilt.compiler)
 }

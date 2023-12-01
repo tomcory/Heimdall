@@ -38,7 +38,7 @@ class ScanService : Service() {
         CoroutineScope(Dispatchers.IO).launch {
 
             broadcastReceiver = HeimdallBroadcastReceiver(
-                scanManager = de.tomcory.heimdall.core.scanner.ScanManager.create(context = this@ScanService)
+                scanManager = ScanManager.create(context = this@ScanService)
             )
 
             val filter = IntentFilter()

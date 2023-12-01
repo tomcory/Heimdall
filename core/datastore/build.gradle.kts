@@ -21,7 +21,6 @@ dependencies {
     api (project(":core:datastore-proto"))
     implementation (libs.androidx.datastore)
     implementation (libs.protobuf.kotlin.lite)
-    implementation (libs.timber)
     implementation (libs.hilt.android)
     ksp (libs.dagger.compiler)
     ksp (libs.hilt.compiler)

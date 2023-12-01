@@ -13,9 +13,9 @@ import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceManager
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
-import de.tomcory.heimdall.application.preferencesStore
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Session
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.ui.main.MainActivity
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
@@ -30,8 +30,12 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.InetAddress
 import java.net.UnknownHostException
+import javax.inject.Inject
 
-class HeimdallVpnService : VpnService() {
+class HeimdallVpnService @Inject constructor(
+    private val preferencesDataSource: PreferencesDataSource,
+    private val database: HeimdallDatabase
+    ) : VpnService() {
     var isVpnActive = false
         private set
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -59,7 +63,7 @@ class HeimdallVpnService : VpnService() {
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
 
                 CoroutineScope(Dispatchers.IO).launch {
-                    val insertedIds = HeimdallDatabase.instance?.sessionDao?.insert(Session())
+                    val insertedIds = database.sessionDao().insert(Session())
                     sessionId = if(!insertedIds.isNullOrEmpty()) {
                         insertedIds.first()
                     } else {
@@ -117,8 +121,7 @@ class HeimdallVpnService : VpnService() {
 
     private suspend fun launchServiceComponents(useProxy: Boolean) {
 
-        val dataStore = applicationContext.preferencesStore
-        val doMitm = dataStore.data.first().mitmEnable
+        val doMitm = preferencesDataSource.mitmEnable.first()
 
         // establish the VPN interface
         if (!establishInterface(useProxy)) {
@@ -288,7 +291,7 @@ class HeimdallVpnService : VpnService() {
                 Timber.e(e, "Error closing FileDescriptor")
             }
 
-            HeimdallDatabase.instance?.sessionDao?.updateEndTime(sessionId, System.currentTimeMillis())
+            database.sessionDao().updateEndTime(sessionId, System.currentTimeMillis())
 
             // set the flag to signal that the VPN components are no longer active
             componentsActive = false

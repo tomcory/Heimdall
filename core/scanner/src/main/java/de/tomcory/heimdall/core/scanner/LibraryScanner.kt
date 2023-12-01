@@ -8,8 +8,11 @@ import de.tomcory.heimdall.core.util.Trie
 import net.dongliu.apk.parser.ApkFile
 import timber.log.Timber
 import java.io.File
+import javax.inject.Inject
 
-class LibraryScanner private constructor(val trackers: List<Tracker>) {
+class LibraryScanner private constructor(trackers: List<Tracker>) {
+
+    @Inject lateinit var database: HeimdallDatabase
 
     private val trackerSignatures = mapSignatures(trackers)
     private val shortestSignatureLength = trackerSignatures.keys.reduce { acc, s -> if(s.length < acc.length) s else acc }.length
@@ -44,7 +47,7 @@ class LibraryScanner private constructor(val trackers: List<Tracker>) {
 
         Timber.d("Identified %s trackers", containedTrackers.size)
 
-        HeimdallDatabase.instance?.appXTrackerDao?.insert(*containedTrackers.toTypedArray())
+        database.appXTrackerDao().insert(*containedTrackers.toTypedArray())
     }
 
     private fun mapSignatures(trackers: List<Tracker>): Map<String, Tracker> {
@@ -65,21 +68,21 @@ class LibraryScanner private constructor(val trackers: List<Tracker>) {
     }
 
     companion object {
-        suspend fun create(autoPopulate: Boolean = false): LibraryScanner? {
-            var trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
-
-            if(autoPopulate && trackers.isNullOrEmpty()) {
-                Timber.d("No trackers found. Auto-populating database.")
-                ExodusUpdater.updateAll()
-            }
-
-            trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
-
-            return if(trackers.isNullOrEmpty()) {
-                 null
-            } else {
-                LibraryScanner(trackers)
-            }
-        }
+//        suspend fun create(autoPopulate: Boolean = false): LibraryScanner? {
+//            var trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
+//
+//            if(autoPopulate && trackers.isNullOrEmpty()) {
+//                Timber.d("No trackers found. Auto-populating database.")
+//                ExodusUpdater.updateAll()
+//            }
+//
+//            trackers = HeimdallDatabase.instance?.trackerDao?.getAll()
+//
+//            return if(trackers.isNullOrEmpty()) {
+//                 null
+//            } else {
+//                LibraryScanner(trackers)
+//            }
+//        }
     }
 }

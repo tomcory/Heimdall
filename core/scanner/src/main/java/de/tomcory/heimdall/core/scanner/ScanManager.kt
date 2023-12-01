@@ -10,20 +10,21 @@ import android.os.Build
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.core.database.HeimdallDatabase
-import de.tomcory.heimdall.core.datastore.preferencesStore
 import de.tomcory.heimdall.core.database.entity.App
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
+import javax.inject.Inject
 
 class ScanManager private constructor(
     private val permissionScanner: PermissionScanner,
     private val libraryScanner: LibraryScanner?
 ) {
+    @Inject
+    lateinit var preferences: PreferencesDataSource
     suspend fun scanApp(context: Context, packageName: String) {
         Timber.d("Collecting app info of $packageName")
-
-        val data = context.preferencesStore.data.first()
 
         val pm: PackageManager = context.packageManager
 
@@ -44,8 +45,7 @@ class ScanManager private constructor(
             return
         }
 
-        val dataStore = context.preferencesStore.data.first()
-        val scope = dataStore.permissionMonitoringScope
+        val scope = preferences.permissionMonitoringScope.first()
 
         if(!getScanPredicate(scope)(packageInfo)) {
             Timber.w("App $packageName is not in scan scope $scope")
@@ -62,10 +62,10 @@ class ScanManager private constructor(
 
         HeimdallDatabase.instance?.appDao?.insertApps(app)
 
-        if(data.permissionOnInstall) {
+        if(preferences.permissionOnInstall.first()) {
             permissionScanner.scanApp(packageInfo)
         }
-        if(data.libraryOnInstall) {
+        if(preferences.libraryOnInstall.first()) {
             libraryScanner?.scanApp(packageInfo)
         }
     }
@@ -73,8 +73,6 @@ class ScanManager private constructor(
     suspend fun scanAllApps(context: Context, progress: MutableStateFlow<Float>? = null) {
 
         progress?.emit(0.01f)
-
-        val data = context.preferencesStore.data.first()
 
         val pm: PackageManager = context.packageManager
         val packages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -85,7 +83,7 @@ class ScanManager private constructor(
 
         progress?.emit(0.05f)
 
-        val scope = data.permissionMonitoringScope
+        val scope = preferences.permissionMonitoringScope.first()
 
         Timber.d("Scanning apps in scope $scope...")
 
@@ -111,7 +109,7 @@ class ScanManager private constructor(
         var progressValue = 0.1f
 
         filtered.forEach {
-            if(data.permissionOnInstall) {
+            if(preferences.permissionOnInstall.first()) {
                 try {
                     permissionScanner.scanApp(it)
                 } catch (e: Exception) {
@@ -119,7 +117,7 @@ class ScanManager private constructor(
                 }
 
             }
-            if(data.libraryOnInstall) {
+            if(preferences.libraryOnInstall.first()) {
                 try {
                     libraryScanner?.scanApp(it)
                 } catch (e: Exception) {

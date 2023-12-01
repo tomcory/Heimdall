@@ -14,7 +14,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.tomcory.heimdall.application.preferencesStore
 import de.tomcory.heimdall.core.datastore.PreferencesSerializer
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,10 +116,10 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
 
 @Composable
 fun ScannerPreferences() {
-    val dataStore = LocalContext.current.preferencesStore
-    val context = LocalContext.current
-    val preferences =
-        dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
+//    val dataStore = LocalContext.current.preferencesStore
+//    val context = LocalContext.current
+//    val preferences =
+//        dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
 
     /*Column {
         CategoryHeadline(text = "Scanner preferences")
@@ -200,9 +199,9 @@ fun ScannerPreferences() {
 
 @Composable
 fun VpnPreferences() {
-    val dataStore = LocalContext.current.preferencesStore
-    val preferences =
-        dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
+//    val dataStore = LocalContext.current.preferencesStore
+//    val preferences =
+//        dataStore.data.collectAsStateWithLifecycle(initialValue = PreferencesSerializer.defaultValue)
 
     /*Column {
 
@@ -292,8 +291,8 @@ fun VpnPreferences() {
 
 @Composable
 fun MitmPreferences(snackBarHostState: SnackbarHostState) {
-    val dataStore = LocalContext.current.preferencesStore
-    val preferences = dataStore.data.collectAsState(initial = PreferencesSerializer.defaultValue)
+//    val dataStore = LocalContext.current.preferencesStore
+//    val preferences = dataStore.data.collectAsState(initial = PreferencesSerializer.defaultValue)
 
     /*Column {
 

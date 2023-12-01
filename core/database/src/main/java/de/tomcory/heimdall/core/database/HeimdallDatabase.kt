@@ -38,24 +38,50 @@ import de.tomcory.heimdall.core.database.entity.Tracker
     exportSchema = false
 )
 abstract class HeimdallDatabase : RoomDatabase() {
-    abstract val appDao: AppDao?
-    abstract val appXPermissionDao: AppXPermissionDao?
-    abstract val appXTrackerDao: AppXTrackerDao?
-    abstract val connectionDao: ConnectionDao?
-    abstract val permissionDao: PermissionDao?
-    abstract val requestDao: RequestDao?
-    abstract val responseDao: ResponseDao?
-    abstract val sessionDao: SessionDao?
-    abstract val trackerDao: TrackerDao?
+    abstract fun appDao(): AppDao
+    abstract fun appXPermissionDao(): AppXPermissionDao
+    abstract fun appXTrackerDao(): AppXTrackerDao
+    abstract fun connectionDao(): ConnectionDao
+    abstract fun permissionDao(): PermissionDao
+    abstract fun requestDao(): RequestDao
+    abstract fun responseDao(): ResponseDao
+    abstract fun sessionDao(): SessionDao
+    abstract fun trackerDao(): TrackerDao
+
+    @Deprecated("Use function call instead.")
+    val appDao = appDao()
+    @Deprecated("Use function call instead.")
+    val appXPermissionDao = appXPermissionDao()
+    @Deprecated("Use function call instead.")
+    val appXTrackerDao = appXTrackerDao()
+    @Deprecated("Use function call instead.")
+    val connectionDao = connectionDao()
+    @Deprecated("Use function call instead.")
+    val permissionDao = permissionDao()
+    @Deprecated("Use function call instead.")
+    val requestDao = requestDao()
+    @Deprecated("Use function call instead.")
+    val responseDao = responseDao()
+    @Deprecated("Use function call instead.")
+    val sessionDao = sessionDao()
+    @Deprecated("Use function call instead.")
+    val trackerDao = trackerDao()
 
     companion object {
+        @Deprecated("Use Hilt dependency injection instead.")
         var instance: HeimdallDatabase? = null
             private set
 
         @JvmStatic
+        @Deprecated("Use Hilt dependency injection instead.")
         fun init(context: Context?): Boolean {
             return if (instance == null) {
-                instance = context?.let { databaseBuilder(it, HeimdallDatabase::class.java, "heimdall").fallbackToDestructiveMigration().build() }
+                instance = context?.let {
+                    databaseBuilder(
+                        it,
+                        HeimdallDatabase::class.java,
+                        "heimdall"
+                    ).fallbackToDestructiveMigration().build() }
                 true
             } else {
                 false
