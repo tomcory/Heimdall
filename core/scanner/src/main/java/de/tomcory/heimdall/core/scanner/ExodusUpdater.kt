@@ -7,9 +7,12 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
 import timber.log.Timber
+import javax.inject.Inject
 
 
-object ExodusUpdater {
+class ExodusUpdater @Inject constructor(
+    private val database: HeimdallDatabase
+) {
 
     suspend fun updateAll() {
         Timber.d("Querying Exodus API...")
@@ -44,8 +47,8 @@ object ExodusUpdater {
             }
 
             if(trackerList.isNotEmpty()) {
-                HeimdallDatabase.instance?.trackerDao?.deleteAllTrackers()
-                HeimdallDatabase.instance?.trackerDao?.insertTrackers(*trackerList.toTypedArray())
+                database.trackerDao().deleteAllTrackers()
+                database.trackerDao().insertTrackers(*trackerList.toTypedArray())
                 Timber.d("Database updated, ${trackerList.size} trackers added.")
             } else {
                 Timber.w("Database not updated, no trackers found.")
