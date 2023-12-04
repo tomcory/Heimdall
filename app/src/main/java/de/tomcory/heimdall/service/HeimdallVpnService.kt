@@ -32,10 +32,10 @@ import java.net.InetAddress
 import java.net.UnknownHostException
 import javax.inject.Inject
 
-class HeimdallVpnService @Inject constructor(
-    private val preferencesDataSource: PreferencesDataSource,
-    private val database: HeimdallDatabase
-    ) : VpnService() {
+class HeimdallVpnService : VpnService() {
+
+    @Inject lateinit var preferencesDataSource: PreferencesDataSource
+    @Inject lateinit var database: HeimdallDatabase
     var isVpnActive = false
         private set
     private var vpnInterface: ParcelFileDescriptor? = null
