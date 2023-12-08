@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import androidx.preference.PreferenceManager
+import dagger.hilt.android.AndroidEntryPoint
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
@@ -32,6 +33,7 @@ import java.net.InetAddress
 import java.net.UnknownHostException
 import javax.inject.Inject
 
+@AndroidEntryPoint
 class HeimdallVpnService : VpnService() {
 
     @Inject lateinit var preferencesDataSource: PreferencesDataSource
@@ -64,7 +66,7 @@ class HeimdallVpnService : VpnService() {
 
                 CoroutineScope(Dispatchers.IO).launch {
                     val insertedIds = database.sessionDao().insert(Session())
-                    sessionId = if(!insertedIds.isNullOrEmpty()) {
+                    sessionId = if(insertedIds.isNotEmpty()) {
                         insertedIds.first()
                     } else {
                         0
