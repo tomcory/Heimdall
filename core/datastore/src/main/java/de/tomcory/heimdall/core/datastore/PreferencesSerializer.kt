@@ -11,13 +11,13 @@ import java.io.OutputStream
 
 object PreferencesSerializer : Serializer<Preferences> {
     override val defaultValue: Preferences = Preferences.newBuilder()
-        .setVpnActive(true)
+        .setVpnActive(false)
         .setVpnLastUpdated(1L)
         .setVpnPersistTransportLayer(true)
         .setVpnDnsServer("1.1.1.1")
         .setVpnBaseAddress("10.120.0.1/32")
         .setVpnRoute("0.0.0.0/0")
-        .setVpnUseProxy(true)
+        .setVpnUseProxy(false)
         .setVpnProxyAddress("127.0.0.1:9090")
         .setVpnMonitoringScope(MonitoringScopeApps.APPS_ALL)
         .addAllVpnWhitelistApps(listOf<String>())
@@ -47,6 +47,18 @@ object PreferencesSerializer : Serializer<Preferences> {
         .setPermissionMonitoringScope(MonitoringScopeApps.APPS_ALL)
         .addAllPermissionWhitelist(listOf<String>())
         .addAllPermissionBlacklist(listOf<String>())
+
+        .setCertAlias("heimdallmitm")
+        .setCertPassword("changeit")
+        .setCertIssuerCn("Heimdall")
+        .setCertIssuerO("TU Berlin")
+        .setCertIssuerOu("SNET")
+        .setCertSubjectCn("Heimdall")
+        .setCertSubjectO("HeimdallCert")
+        .setCertSubjectOu("HeimdallCertUnit")
+
+        .setProxyActive(false)
+
         .build()
 
     override suspend fun readFrom(input: InputStream): Preferences {

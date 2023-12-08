@@ -52,6 +52,17 @@ class PreferencesDataSource @Inject constructor(
     val permissionWhitelist: Flow<List<String>> = datastore.data.map { it.permissionWhitelistList }
     val permissionBlacklist: Flow<List<String>> = datastore.data.map { it.permissionBlacklistList }
 
+    val certAlias: Flow<String> = datastore.data.map { it.certAlias }
+    val certPassword: Flow<String> = datastore.data.map { it.certPassword }
+    val certIssuerCn: Flow<String> = datastore.data.map { it.certIssuerCn }
+    val certIssuerO: Flow<String> = datastore.data.map { it.certIssuerO }
+    val certIssuerOu: Flow<String> = datastore.data.map { it.certIssuerOu }
+    val certSubjectCn: Flow<String> = datastore.data.map { it.certSubjectCn }
+    val certSubjectO: Flow<String> = datastore.data.map { it.certSubjectO }
+    val certSubjectOu: Flow<String> = datastore.data.map { it.certSubjectOu }
+
+    val proxyActive: Flow<Boolean> = datastore.data.map { it.proxyActive }
+
     /*
      * Setters for every field of Preferences
      */
@@ -251,6 +262,60 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setPermissionBlacklist(permissionBlacklist: List<String>) {
         datastore.updateData { preferences ->
             preferences.toBuilder().clearPermissionBlacklist().addAllPermissionBlacklist(permissionBlacklist).build()
+        }
+    }
+
+    suspend fun setCertAlias(certAlias: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertAlias(certAlias).build()
+        }
+    }
+
+    suspend fun setCertPassword(certPassword: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertPassword(certPassword).build()
+        }
+    }
+
+    suspend fun setCertIssuerCn(certIssuerCn: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertIssuerCn(certIssuerCn).build()
+        }
+    }
+
+    suspend fun setCertIssuerO(certIssuerO: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertIssuerO(certIssuerO).build()
+        }
+    }
+
+    suspend fun setCertIssuerOu(certIssuerOu: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertIssuerOu(certIssuerOu).build()
+        }
+    }
+
+    suspend fun setCertSubjectCn(certSubjectCn: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertSubjectCn(certSubjectCn).build()
+        }
+    }
+
+    suspend fun setCertSubjectO(certSubjectO: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertSubjectO(certSubjectO).build()
+        }
+    }
+
+    suspend fun setCertSubjectOu(certSubjectOu: String) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setCertSubjectOu(certSubjectOu).build()
+        }
+    }
+
+    suspend fun setProxyActive(proxyActive: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setProxyActive(proxyActive).build()
         }
     }
 }

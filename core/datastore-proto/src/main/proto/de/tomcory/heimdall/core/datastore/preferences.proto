@@ -60,4 +60,16 @@ message Preferences {
   repeated string permission_whitelist = 32;
   repeated string permission_blacklist = 33;
 
+  // ---- CERTIFICATE PREFERENCES
+  string cert_alias = 34;
+  string cert_password = 35;
+  string cert_issuer_cn = 36;
+  string cert_issuer_o = 37;
+  string cert_issuer_ou = 38;
+  string cert_subject_cn = 39;
+  string cert_subject_o = 40;
+  string cert_subject_ou = 41;
+
+  // ---- PROXY PREFERENCES
+  bool proxy_active = 42;
 }
