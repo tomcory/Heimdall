@@ -14,6 +14,10 @@
         <item name="android:buttonStyle">@style/RobotoButtonStyle</item>
         <item name="toolbarNavigationButtonStyle">@style/TintedNavigation</item>
         <item name="android:windowContentTransitions">true</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
     </style>
 
     <style name="TintedNavigation" parent="Widget.AppCompat.Toolbar.Button.Navigation">
