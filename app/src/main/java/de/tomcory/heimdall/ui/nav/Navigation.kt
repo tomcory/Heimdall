@@ -8,6 +8,7 @@ import de.tomcory.heimdall.R
 import de.tomcory.heimdall.ui.apps.AppsScreen
 import de.tomcory.heimdall.ui.apps.PermissionsScreen
 import de.tomcory.heimdall.ui.database.DatabaseScreen
+import de.tomcory.heimdall.ui.scanner.ScannerScreen
 import de.tomcory.heimdall.ui.traffic.TrafficScreen
 
 /**
@@ -18,7 +19,7 @@ import de.tomcory.heimdall.ui.traffic.TrafficScreen
  * 3) add a new composable to the Navigation NavHost below that maps your defined route to your screen.
  */
 sealed class NavigationItem(var route: String, var unselectedIcon: Int, var selectedIcon: Int, var title: String) {
-    data object Traffic : NavigationItem("traffic", R.drawable.ic_m3_traffic_24px, R.drawable.ic_m3_traffic_filled_24px, "Traffic")
+    data object Traffic : NavigationItem("traffic", R.drawable.ic_m3_scan_24px, R.drawable.ic_m3_scan_24px, "Scanners")
     data object Apps : NavigationItem("apps", R.drawable.ic_m3_apps_24px, R.drawable.ic_m3_apps_24px, "Apps")
     data object Database : NavigationItem("database", R.drawable.ic_m3_database_24px, R.drawable.ic_m3_database_24px, "Database")
 }
@@ -40,7 +41,7 @@ fun Navigation(navController: NavHostController) {
          * Map navigation items for the BottomNavigationBar to their destination screen here.
          */
         composable(NavigationItem.Traffic.route) {
-            TrafficScreen()
+            ScannerScreen()
         }
         composable(NavigationItem.Apps.route) {
             AppsScreen(navController)
