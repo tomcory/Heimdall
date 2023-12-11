@@ -29,10 +29,12 @@ fun TrafficScannerCard(
         viewModel.onVpnPermissionResult(result.resultCode, onShowSnackbar)
     }
 
+    // Handles getting the user's permission to start the VPN service
     LaunchedEffect(Unit) {
         viewModel.vpnPermissionRequestEvent.collect {
             val vpnIntent = VpnService.prepare(context)
             if (vpnIntent != null) {
+                // Launch VPN permission request dialog
                 startForResult.launch(vpnIntent)
             } else {
                 // Handle already granted permission
@@ -43,6 +45,7 @@ fun TrafficScannerCard(
 
     ScannerCard(
         title = "Network traffic",
+        modifier = modifier,
         lastUpdated = lastUpdated,
         scanStartLabel = "Enable",
         scanStopLabel = "Disable",
