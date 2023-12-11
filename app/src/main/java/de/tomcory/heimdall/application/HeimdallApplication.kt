@@ -43,10 +43,6 @@ class HeimdallApplication : Application() {
 
         CoroutineScope(Dispatchers.IO).launch {
             Timber.plant(Timber.DebugTree())
-
-            if (HeimdallDatabase.init(this@HeimdallApplication)) {
-                Timber.d("Database instance created")
-            }
         }
     }
 
