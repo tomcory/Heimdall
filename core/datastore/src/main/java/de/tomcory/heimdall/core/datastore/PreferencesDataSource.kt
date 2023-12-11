@@ -11,10 +11,12 @@ import javax.inject.Inject
 class PreferencesDataSource @Inject constructor(
     private val datastore: DataStore<Preferences>
 ) {
+    // provides the initial values for all fields of Preferences
+    val initialValues = PreferencesInitialValues()
+
     /*
      * Getters for every field of Preferences, returning Flows
      */
-
     val vpnActive: Flow<Boolean> = datastore.data.map { it.vpnActive }
     val vpnLastUpdated: Flow<Long> = datastore.data.map { it.vpnLastUpdated }
     val vpnPersistTransportLayer: Flow<Boolean> = datastore.data.map { it.vpnPersistTransportLayer }
