@@ -220,7 +220,7 @@ private fun ScannerCardHeader(
                 enabled = !scanActive
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_settings_new),
+                    painter = painterResource(id = R.drawable.ic_settings),
                     contentDescription = "Settings icon"
                 )
             }

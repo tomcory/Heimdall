@@ -25,7 +25,7 @@ class ScanService : Service() {
         val notification = NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
             .setContentTitle("ScanService")
             .setContentText("Ready to scan freshly installed apps...")
-            .setSmallIcon(R.drawable.ic_earth)
+            .setSmallIcon(R.drawable.ic_scan_active)
             .build()
 
         // Start the service in foreground

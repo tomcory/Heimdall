@@ -9,7 +9,6 @@ import de.tomcory.heimdall.ui.apps.AppsScreen
 import de.tomcory.heimdall.ui.apps.PermissionsScreen
 import de.tomcory.heimdall.ui.database.DatabaseScreen
 import de.tomcory.heimdall.ui.scanner.ScannerScreen
-import de.tomcory.heimdall.ui.traffic.TrafficScreen
 
 /**
  * How to add a new screen to the bottom navigation bar:
@@ -19,9 +18,9 @@ import de.tomcory.heimdall.ui.traffic.TrafficScreen
  * 3) add a new composable to the Navigation NavHost below that maps your defined route to your screen.
  */
 sealed class NavigationItem(var route: String, var unselectedIcon: Int, var selectedIcon: Int, var title: String) {
-    data object Traffic : NavigationItem("traffic", R.drawable.ic_m3_scan_24px, R.drawable.ic_m3_scan_24px, "Scanners")
-    data object Apps : NavigationItem("apps", R.drawable.ic_m3_apps_24px, R.drawable.ic_m3_apps_24px, "Apps")
-    data object Database : NavigationItem("database", R.drawable.ic_m3_database_24px, R.drawable.ic_m3_database_24px, "Database")
+    data object Traffic : NavigationItem("traffic", R.drawable.ic_scanner, R.drawable.ic_scanner_filled, "Scanners")
+    data object Apps : NavigationItem("apps", R.drawable.ic_score, R.drawable.ic_score_filled, "Score")
+    data object Database : NavigationItem("database", R.drawable.ic_insights, R.drawable.ic_insights_filled, "Insights")
 }
 
 /**

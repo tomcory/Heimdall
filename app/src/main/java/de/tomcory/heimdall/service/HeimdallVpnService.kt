@@ -113,10 +113,10 @@ class HeimdallVpnService : VpnService() {
         val stopVpnPendingIntent = PendingIntent.getService(this, 0, stopVpnIntent, PendingIntent.FLAG_IMMUTABLE)
 
         return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_eye_check_outline)
+            .setSmallIcon(R.drawable.ic_scan_active)
             .setContentTitle(getString(R.string.notification_title))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .addAction(R.drawable.ic_launcher_foreground, getString(R.string.notification_stop_vpn), stopVpnPendingIntent)
+            .addAction(R.drawable.ic_cancel, getString(R.string.notification_stop_vpn), stopVpnPendingIntent)
             .setContentIntent(activityPendingIntent)
             .build()
     }
