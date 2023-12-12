@@ -12,7 +12,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
 import de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager
-import de.tomcory.heimdall.core.util.StringUtils
+import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.service.HeimdallVpnService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,7 +38,13 @@ class TrafficScannerViewModel @Inject constructor(
 
     private var proxyServer: HeimdallHttpProxyServer? = null
 
+    val preferences = repository.preferences
+    val prefInit = repository.preferences.initialValues
+
+    ///////////////////////////////
     // State variables
+    ///////////////////////////////
+
     private val _scanActive = MutableStateFlow(scanActiveInitial)
     val scanActive = _scanActive.asStateFlow()
 
@@ -50,11 +56,10 @@ class TrafficScannerViewModel @Inject constructor(
     private val _vpnPermissionRequestEvent = MutableSharedFlow<Unit>()
     val vpnPermissionRequestEvent = _vpnPermissionRequestEvent.asSharedFlow()
 
-    val preferences = repository.preferences
-    val prefInit = repository.preferences.initialValues
+    ///////////////////////////////
+    // Event handlers
+    ///////////////////////////////
 
-
-    // Action functions
     fun onScan(onShowSnackbar: (String) -> Unit) {
         Timber.d("TrafficScannerViewModel.onScan()")
         viewModelScope.launch {
@@ -106,66 +111,12 @@ class TrafficScannerViewModel @Inject constructor(
         }
     }
 
-    fun onShowSettings() {
-        Timber.d("TrafficScannerViewModel.onShowSettings()")
-        // TODO: Implement show settings logic
-    }
-
     fun onShowDetails() {
-        Timber.d("TrafficScannerViewModel.onShowDetails()")
-        // TODO: Implement show details logic
+        TODO("Not yet implemented")
     }
 
-    private fun launchVpn(context: Context, useProxy: Boolean) : ComponentName? {
-        Timber.d("TrafficScannerViewModel.launchVpn()")
-        return context.startService(
-            Intent(context, HeimdallVpnService::class.java)
-                .putExtra(
-                    HeimdallVpnService.VPN_ACTION,
-                    if(useProxy) HeimdallVpnService.START_SERVICE_PROXY else HeimdallVpnService.START_SERVICE
-                )
-        )
-    }
-
-    private suspend fun launchProxy(context: Context) : HeimdallHttpProxyServer {
-        Timber.d("TrafficScannerViewModel.launchProxy()")
-        return withContext(Dispatchers.IO) {
-            val oldAuth = de.tomcory.heimdall.core.proxy.littleshoot.mitm.Authority(
-                File(context.filesDir, "keystore"),
-                repository.preferences.certAlias.first(),
-                repository.preferences.certPassword.first().toCharArray(),
-                repository.preferences.certIssuerCn.first(),
-                repository.preferences.certIssuerO.first(),
-                repository.preferences.certIssuerOu.first(),
-                repository.preferences.certSubjectO.first(),
-                repository.preferences.certSubjectOu.first()
-            )
-            val proxyServer = HeimdallHttpProxyServer(
-                StringUtils.stringToInetSocketAddress(repository.preferences.vpnProxyAddress.first()),
-                CertificateSniffingMitmManager(oldAuth), context
-            )
-            proxyServer.start()
-            proxyServer
-        }
-    }
-
-    private suspend fun stopProxyAndVpn(context: Context, proxyServer: HeimdallHttpProxyServer?) {
-        Timber.d("TrafficScannerViewModel.stopProxyAndVpn()")
-        _scanSetup.emit(true)
-        context.startService(
-            Intent(context, HeimdallVpnService::class.java).putExtra(
-                HeimdallVpnService.VPN_ACTION, HeimdallVpnService.STOP_SERVICE))
-        withContext(Dispatchers.IO) {
-            Timber.d("Stopping proxy")
-            proxyServer?.stop()
-        }
-
-        repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
-
-        repository.preferences.setProxyActive(false)
-        repository.preferences.setVpnActive(false)
-        _scanSetup.emit(false)
-        _scanActive.emit(false)
+    fun onShowHelp() {
+        TODO("Not yet implemented")
     }
 
     fun onVpnPermissionResult(resultCode: Int, onShowSnackbar: (String) -> Unit) {
@@ -204,5 +155,61 @@ class TrafficScannerViewModel @Inject constructor(
 
             _scanSetup.emit(false)
         }
+    }
+
+    ///////////////////////////////
+    // Private methods
+    ///////////////////////////////
+
+    private fun launchVpn(context: Context, useProxy: Boolean) : ComponentName? {
+        Timber.d("TrafficScannerViewModel.launchVpn()")
+        return context.startService(
+            Intent(context, HeimdallVpnService::class.java)
+                .putExtra(
+                    HeimdallVpnService.VPN_ACTION,
+                    if(useProxy) HeimdallVpnService.START_SERVICE_PROXY else HeimdallVpnService.START_SERVICE
+                )
+        )
+    }
+
+    private suspend fun launchProxy(context: Context) : HeimdallHttpProxyServer {
+        Timber.d("TrafficScannerViewModel.launchProxy()")
+        return withContext(Dispatchers.IO) {
+            val oldAuth = de.tomcory.heimdall.core.proxy.littleshoot.mitm.Authority(
+                File(context.filesDir, "keystore"),
+                repository.preferences.certAlias.first(),
+                repository.preferences.certPassword.first().toCharArray(),
+                repository.preferences.certIssuerCn.first(),
+                repository.preferences.certIssuerO.first(),
+                repository.preferences.certIssuerOu.first(),
+                repository.preferences.certSubjectO.first(),
+                repository.preferences.certSubjectOu.first()
+            )
+            val proxyServer = HeimdallHttpProxyServer(
+                InetAddressUtils.stringToInetSocketAddress(repository.preferences.vpnProxyAddress.first()),
+                CertificateSniffingMitmManager(oldAuth), context
+            )
+            proxyServer.start()
+            proxyServer
+        }
+    }
+
+    private suspend fun stopProxyAndVpn(context: Context, proxyServer: HeimdallHttpProxyServer?) {
+        Timber.d("TrafficScannerViewModel.stopProxyAndVpn()")
+        _scanSetup.emit(true)
+        context.startService(
+            Intent(context, HeimdallVpnService::class.java).putExtra(
+                HeimdallVpnService.VPN_ACTION, HeimdallVpnService.STOP_SERVICE))
+        withContext(Dispatchers.IO) {
+            Timber.d("Stopping proxy")
+            proxyServer?.stop()
+        }
+
+        repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
+
+        repository.preferences.setProxyActive(false)
+        repository.preferences.setVpnActive(false)
+        _scanSetup.emit(false)
+        _scanActive.emit(false)
     }
 }

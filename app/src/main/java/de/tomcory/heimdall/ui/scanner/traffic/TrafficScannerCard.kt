@@ -4,6 +4,7 @@ import android.app.Activity
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -53,8 +54,10 @@ fun TrafficScannerCard(
         scanSetup = scanSetup,
         onScan = { viewModel.onScan(onShowSnackbar) },
         onScanCancel = { viewModel.onScanCancel() },
-        onShowSettings = { viewModel.onShowSettings() },
         onShowDetails = { viewModel.onShowDetails() },
+        infoDialogContent = {
+            Text(text = "This scanner monitors all network traffic on your device.")
+        },
         onShowSnackbar = onShowSnackbar
     ) {
         /*TODO*/

@@ -13,7 +13,10 @@ class PermissionScannerViewModel : ViewModel() {
     val scanProgressInitial = 0f
     val lastUpdatedInitial = 0L
 
+    ///////////////////////////////
     // State variables
+    ///////////////////////////////
+
     private val _scanActive = MutableStateFlow(scanActiveInitial)
     val scanActive = _scanActive.asStateFlow()
 
@@ -23,7 +26,10 @@ class PermissionScannerViewModel : ViewModel() {
     private val _lastUpdated = MutableStateFlow(lastUpdatedInitial)
     val lastUpdated = _lastUpdated.asStateFlow()
 
-    // Action functions
+    ///////////////////////////////
+    // Event handlers
+    ///////////////////////////////
+
     fun onScan(onShowSnackbar: (String) -> Unit) {
         viewModelScope.launch {
             var scanCancelled = false
@@ -50,11 +56,15 @@ class PermissionScannerViewModel : ViewModel() {
         }
     }
 
-    fun onShowSettings() {
-        // TODO: Implement show settings logic
+    fun onShowDetails() {
+        TODO("Not yet implemented")
     }
 
-    fun onShowDetails() {
-        // TODO: Implement show details logic
+    fun onShowHelp() {
+        TODO("Not yet implemented")
     }
+
+    ///////////////////////////////
+    // Private methods
+    ///////////////////////////////
 }

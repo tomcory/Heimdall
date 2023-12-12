@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.ui.scanner.permission
 
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,8 +25,10 @@ fun PermissionScannerCard(
         scanProgress = { scanProgress },
         onScan = { viewModel.onScan(onShowSnackbar) },
         onScanCancel = { viewModel.onScanCancel() },
-        onShowSettings = { viewModel.onShowSettings() },
         onShowDetails = { viewModel.onShowDetails() },
+        infoDialogContent = {
+            Text(text = "This scanner monitors all app permissions on your device.")
+        },
         onShowSnackbar = onShowSnackbar
     ) {
         // TODO: Implement UI
