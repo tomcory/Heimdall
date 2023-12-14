@@ -34,7 +34,7 @@ class ComponentManager(
     val vpnService: VpnService?,
     val doMitm: Boolean = false,
     val maxPacketSize: Int = 16413,
-    private val trackerTrie: de.tomcory.heimdall.core.util.Trie<String> = de.tomcory.heimdall.core.util.Trie {
+    private val trackerTrie: Trie<String> = Trie {
         it.split(
             "."
         ).reversed()
@@ -217,7 +217,7 @@ class ComponentManager(
         Timber.d("Completed pcap4j configuration")
     }
 
-    private fun populateTrieFromRawFile(context: Context, resId: Int, trie: de.tomcory.heimdall.core.util.Trie<String>) {
+    private fun populateTrieFromRawFile(context: Context, resId: Int, trie: Trie<String>) {
         val startTime = System.currentTimeMillis()
 
         val inputStream = context.resources.openRawResource(resId)

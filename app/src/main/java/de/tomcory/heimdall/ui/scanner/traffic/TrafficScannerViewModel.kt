@@ -167,7 +167,7 @@ class TrafficScannerViewModel @Inject constructor(
             Intent(context, HeimdallVpnService::class.java)
                 .putExtra(
                     HeimdallVpnService.VPN_ACTION,
-                    if(useProxy) HeimdallVpnService.START_SERVICE_PROXY else HeimdallVpnService.START_SERVICE
+                    HeimdallVpnService.START_SERVICE
                 )
         )
     }
@@ -204,8 +204,6 @@ class TrafficScannerViewModel @Inject constructor(
             Timber.d("Stopping proxy")
             proxyServer?.stop()
         }
-
-        repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
 
         repository.preferences.setProxyActive(false)
         repository.preferences.setVpnActive(false)

@@ -10,16 +10,17 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
-import androidx.preference.PreferenceManager
 import dagger.hilt.android.AndroidEntryPoint
+import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Session
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
-import de.tomcory.heimdall.ui.main.MainActivity
+import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
+import de.tomcory.heimdall.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -36,35 +37,50 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class HeimdallVpnService : VpnService() {
 
-    @Inject lateinit var preferencesDataSource: PreferencesDataSource
+    @Inject lateinit var preferences: PreferencesDataSource
     @Inject lateinit var database: HeimdallDatabase
-    var isVpnActive = false
-        private set
-    private var vpnInterface: ParcelFileDescriptor? = null
-    var sessionId: Long = 0
-        private set
-    private var componentsActive = false
-    private var componentManager: ComponentManager? = null
 
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
+    private var componentManager: ComponentManager? = null
+    private var vpnInterface: ParcelFileDescriptor? = null
 
+    private var sessionId: Long = 0
+    private var componentsActive = false
+
+    /**
+     * This function is called when the service is first created. It is responsible for initialising
+     * the service.
+     * @see [onStartCommand]
+     */
     override fun onCreate() {
         super.onCreate()
         Timber.d("VpnService created")
     }
 
+    /**
+     * This function is called when the service is started. It is responsible for launching the
+     * VPN components and establishing the VPN interface.
+     * @param intent The intent that was used to start the service.
+     * @param flags Flags indicating how the service was started.
+     * @param startId A unique integer representing this specific request to start.
+     * @return The return value indicates what semantics the system should use for the service's
+     * current started state. Is either [android.app.Service.START_STICKY] if the received intent is valid
+     * or [android.app.Service.START_NOT_STICKY] if the intent's extra is invalid.
+     * @see [START_SERVICE]
+     * @see [STOP_SERVICE]
+     */
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        return when(val intentExtra = intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
+        return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
-            START_SERVICE, START_SERVICE_PROXY -> {
-                val useProxy = intentExtra == START_SERVICE_PROXY
-
-                Timber.d("Received %s", if(useProxy) "START_SERVICE_PROXY" else "START_SERVICE")
+            START_SERVICE -> {
 
                 // promote this service to the foreground to prevent it from being put to sleep
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
 
+                // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
+
+                    // insert a new session into the database and keep track of the ID
                     val insertedIds = database.sessionDao().insert(Session())
                     sessionId = if(insertedIds.isNotEmpty()) {
                         insertedIds.first()
@@ -72,11 +88,13 @@ class HeimdallVpnService : VpnService() {
                         0
                     }
 
+                    // launch the VPN components or shut down if the session ID is invalid
                     if(sessionId > 0) {
                         Timber.d("VpnService startup: got session, launching service components")
-                        launchServiceComponents(useProxy)
+                        launchServiceComponents()
                         Timber.d("VpnService started")
-                        isVpnActive = true
+                        preferences.setVpnActive(true)
+                        preferences.setVpnLastUpdated(System.currentTimeMillis())
                     } else {
                         Timber.e("VpnService startup: invalid session, service components not launched")
                         shutDown()
@@ -89,9 +107,9 @@ class HeimdallVpnService : VpnService() {
             STOP_SERVICE -> {
                 Timber.d("Received STOP_SERVICE")
 
+                // shut down the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     shutDown()
-                    isVpnActive = false
                 }
 
                 START_NOT_STICKY
@@ -104,6 +122,11 @@ class HeimdallVpnService : VpnService() {
         }
     }
 
+    /**
+     * Creates a notification that is displayed while the service is running.
+     * @return The notification to be displayed.
+     * @see [startForeground]
+     */
     @SuppressLint("ObsoleteSdkInt")
     private fun createForegroundNotification(): Notification {
 
@@ -121,13 +144,28 @@ class HeimdallVpnService : VpnService() {
             .build()
     }
 
-    private suspend fun launchServiceComponents(useProxy: Boolean) {
+    /**
+     * Launches the VPN components. This function is responsible for establishing the VPN interface
+     * and launching the traffic-handling threads via the [ComponentManager].
+     * @return Whether the VPN interface was established successfully.
+     * @see [onStartCommand]
+     */
+    private suspend fun launchServiceComponents() {
 
-        val doMitm = preferencesDataSource.mitmEnable.first()
+        // determine whether to launch in MitM mode
+        val doMitm = preferences.mitmEnable.first()
+
+        // determine whether to use the proxy - this is only possible if MitM mode is disabled
+        val useProxy = if(doMitm && preferences.vpnUseProxy.first()) {
+            Timber.w("Proxy cannot be used in MitM mode, disabling proxy")
+            false
+        } else {
+            true
+        }
 
         // establish the VPN interface
         if (!establishInterface(useProxy)) {
-            Timber.e("Unable to establish interface")
+            // shut down the VPN components if the interface could not be established
             stopSelf()
             return
         }
@@ -135,13 +173,14 @@ class HeimdallVpnService : VpnService() {
         // launch the traffic-handling components through the ComponentManager
         try {
             componentManager = ComponentManager(
-                FileInputStream(vpnInterface?.fileDescriptor),
-                FileOutputStream(vpnInterface?.fileDescriptor),
-                this,
-                doMitm
+                outboundStream = FileInputStream(vpnInterface?.fileDescriptor),
+                inboundStream = FileOutputStream(vpnInterface?.fileDescriptor),
+                vpnService = this,
+                doMitm = doMitm
             )
         } catch (e: VpnComponentLaunchException) {
-            Timber.e("Failed to initialise traffic handlers")
+            // shut down the VPN components if the ComponentManager could launch the components
+            Timber.e("Failed to initialise VPN components")
             stopVpnComponents()
             return
         }
@@ -150,79 +189,126 @@ class HeimdallVpnService : VpnService() {
         componentsActive = true
     }
 
-    private fun establishInterface(useProxy: Boolean): Boolean {
-        //TODO: replace SharedPreferences with DataStore
-        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this)
+    /**
+     * Configures the [VpnService.Builder] based on the configuration stored in the datastore
+     * and establishes the VPN interface.
+     * @param useProxy Whether to use the proxy or not.
+     * @return Whether the VPN interface was established successfully.
+     * @see [launchServiceComponents]
+     */
+    private suspend fun establishInterface(useProxy: Boolean): Boolean {
 
+        // only establish the VPN interface if it is not already established
         if (vpnInterface != null) {
             Timber.i("VPN interface already established")
             return false
         } else {
             Timber.d("Beginning interface establishment")
         }
-        val dnsServer = sharedPreferences.getString("dns_server", "1.1.1.1")
 
-        val subnet = sharedPreferences.getString("vpn_subnet", "")!!.split("/").toTypedArray()
-        val baseAddressString = if (subnet.size == 2 && isValidInet4Address(subnet[0])) subnet[0] else getString(R.string.default_subnet).split("/").toTypedArray()[0]
-        val prefixLength = try {
-            if (subnet.size == 2) subnet[1].toInt() else getString(R.string.default_subnet).split("/").toTypedArray()[1].toInt()
-        } catch (e: NumberFormatException) {
-            32
-        }
-
-        //TODO: I hate this, find a better way of parsing the addresses
+        // prepare to parse the DNS server address, route address and subnet base address to InetAddress objects
+        val dnsServer = preferences.vpnDnsServer.first()
+        val subnet = preferences.vpnBaseAddress.first().split("/").toTypedArray()
+        val route = preferences.vpnRoute.first().split("/").toTypedArray()
         val dnsServerAddress: InetAddress
-        val baseAddress: InetAddress
-        val routeAddress: InetAddress
-        try {
+        val subnetBaseAddress: InetAddress
+        val routeBaseAddress: InetAddress
+
+        // InetAddress.getByName() is a blocking call, so we run the address validations on the IO dispatcher
+        withContext(Dispatchers.IO) {
+
+            // validate and parse the DNS server address
             dnsServerAddress = try {
-                InetAddress.getByName(dnsServer)
-            } catch (e: Exception) {
-                Timber.d("Invalid DNS, using default")
-                InetAddress.getByName("1.1.1.1")
+                InetAddressUtils.stringToInetAddress(dnsServer)
+            } catch (e: UnknownHostException) {
+                Timber.w("Invalid subnet base address, using default")
+                InetAddressUtils.stringToInetAddress(
+                    preferences.initialValues.vpnDnsServerInitial
+                )
             }
-            baseAddress = InetAddress.getByName(baseAddressString)
-            routeAddress = InetAddress.getByName("0.0.0.0")
-        } catch (e: UnknownHostException) {
-            Timber.e("Error: invalid DNS server address")
-            return false
+
+            // validate and parse the subnet base address
+            subnetBaseAddress = try {
+                InetAddress.getByName(subnet[0])
+            } catch (e: UnknownHostException) {
+                Timber.w("Invalid subnet base address, using default")
+                InetAddressUtils.stringToInetSocketAddress(
+                    preferences.initialValues.vpnDnsServerInitial.split("/").toTypedArray()[0]
+                )!!.address
+            }
+
+            // validate and parse the route base address
+            routeBaseAddress = try {
+                InetAddress.getByName(route[0])
+            } catch (e: UnknownHostException) {
+                Timber.w("Invalid route address, using default")
+                InetAddressUtils.stringToInetSocketAddress(
+                    preferences.initialValues.vpnDnsServerInitial.split("/").toTypedArray()[0]
+                )!!.address
+            }
         }
 
-        Timber.d(dnsServerAddress.hostAddress)
+        // parse the subnet prefix length
+        val subnetPrefix = try {
+            if (subnet.size == 2) {
+                subnet[1].toInt()
+            } else {
+                Timber.e("Invalid subnet prefix length, using default")
+                preferences.initialValues.vpnBaseAddressInitial.split("/").toTypedArray()[1].toInt()
+            }
+        } catch (e: NumberFormatException) {
+            Timber.e("Invalid subnet prefix length, using default")
+            preferences.initialValues.vpnBaseAddressInitial.split("/").toTypedArray()[1].toInt()
+        }
 
+        // parse the route prefix length
+        val routePrefix = try {
+            if (route.size == 2) {
+                route[1].toInt()
+            } else {
+                Timber.e("Invalid route prefix length, using default")
+                preferences.initialValues.vpnRouteInitial.split("/").toTypedArray()[1].toInt()
+            }
+        } catch (e: NumberFormatException) {
+            Timber.e("Invalid route prefix length, using default")
+            preferences.initialValues.vpnRouteInitial.split("/").toTypedArray()[1].toInt()
+        }
+
+        // configure the VPN interface builder
         val builder: Builder = Builder()
             .setSession("Heimdall")
             .addDnsServer(dnsServerAddress)
-            .addAddress(baseAddress, prefixLength)
-            .addRoute(routeAddress, 0)
+            .addAddress(subnetBaseAddress, subnetPrefix)
+            .addRoute(routeBaseAddress, routePrefix)
 
+        // if a proxy is to be used, set it for the VPN interface
         if(useProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            Timber.d("VPN attached to Proxy")
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1",9090))
+            // validate and parse the proxy address
+            val proxyAddress = InetAddressUtils.stringToInetSocketAddress(preferences.vpnProxyAddress.first()).let {
+                if(it != null) {
+                    it
+                } else {
+                    Timber.w("Invalid proxy address, using default")
+                    InetAddressUtils.stringToInetSocketAddress(preferences.initialValues.vpnProxyAddressInitial)!!
+                }
+            }
+            // set the proxy for the VPN interface
+            builder.setHttpProxy(ProxyInfo.buildDirectProxy(proxyAddress.address.hostAddress,proxyAddress.port))
+            Timber.d("VPN attached to Proxy at ${proxyAddress.address.hostAddress}:${proxyAddress.port}")
         } else {
             Timber.d("VPN in standalone mode")
         }
 
-        val monitoringScope = sharedPreferences.getString("monitoring_scope", "all")
-        when (monitoringScope) {
-            "all" -> Timber.d("Monitoring scope: all")
-            "whitelist" -> Timber.d("Monitoring scope: whitelist")
-            "blacklist" -> Timber.d("Monitoring scope: blacklist")
-        }
+        // get the VPN monitoring scope from the preferences
+        val monitoringScope = preferences.vpnMonitoringScope.first()
+        Timber.d("VPN monitoring scope: $monitoringScope")
 
-        //TODO: replace with proper implementation
-        try {
-            builder.addDisallowedApplication("de.tomcory.heimdall")
-            //TODO: add toggle for this
-//            OsUtils.getSystemApps(context = this).forEach {
-//                builder.addDisallowedApplication(it)
-//            }
-        } catch (e: Exception) {
-            Timber.e("Couldn't add Heimdall package as disallowed app")
-        }
+        val blacklist = mutableListOf<String>()
+        val whitelist = mutableListOf<String>()
 
-        if (monitoringScope != "whitelist" && sharedPreferences.getBoolean("exclude_system", false)) {
-
+        // if the monitoring scope excludes system apps, add them to the builder's blacklist
+        if(monitoringScope == APPS_NON_SYSTEM || monitoringScope == APPS_NON_SYSTEM_BLACKLIST) {
+            // get a list of all system apps...
             val systemApps = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 packageManager.getInstalledApplications(
                     PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong() or PackageManager.MATCH_SYSTEM_ONLY.toLong()))
@@ -230,8 +316,10 @@ class HeimdallVpnService : VpnService() {
                 packageManager.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.MATCH_SYSTEM_ONLY)
             }
 
+            // ...and add them all to the builder's blacklist
             for (packageInfo in systemApps) {
                 try {
+                    blacklist.add(packageInfo.packageName)
                     builder.addDisallowedApplication(packageInfo.packageName)
                 } catch (e: PackageManager.NameNotFoundException) {
                     Timber.e(e, "Error adding system app to blacklist")
@@ -239,10 +327,51 @@ class HeimdallVpnService : VpnService() {
             }
         }
 
-        Timber.d("Ready to establish VPN interface")
+        // if the monitoring scope excludes blacklisted apps, add them to the builder's blacklist
+        if(monitoringScope == APPS_BLACKLIST || monitoringScope == APPS_NON_SYSTEM_BLACKLIST) {
+            for(packageName in preferences.vpnBlacklistApps.first().filter { it != "de.tomcory.heimdall" }) {
+                try {
+                    blacklist.add(packageName)
+                    builder.addDisallowedApplication(packageName)
+                } catch (e: PackageManager.NameNotFoundException) {
+                    Timber.e("Cannot add non-installed app to VPN blacklist: $packageName")
+                }
+            }
+        }
 
+        // if the monitoring scope includes whitelisted apps, add them to the builder's whitelist
+        if(monitoringScope == APPS_WHITELIST) {
+            for(packageName in preferences.vpnWhitelistApps.first().filter { it != "de.tomcory.heimdall" }) {
+                try {
+                    whitelist.add(packageName)
+                    builder.addAllowedApplication(packageName)
+                } catch (e: PackageManager.NameNotFoundException) {
+                    Timber.e("Cannot add non-installed app to VPN whitelist: $packageName")
+                }
+            }
+        } else {
+            // if we're not using a whitelist, we have to add Heimdall to the blacklist so that we don't monitor ourselves
+            blacklist.add("de.tomcory.heimdall")
+            builder.addDisallowedApplication("de.tomcory.heimdall")
+        }
+
+        val debugString = StringBuilder()
+        debugString.append("dnsServerAddress: ${dnsServerAddress.hostAddress}\n")
+        debugString.append("subnetBaseAddress: ${subnetBaseAddress.hostAddress}\n")
+        debugString.append("subnetPrefix: $subnetPrefix\n")
+        debugString.append("routeBaseAddress: ${routeBaseAddress.hostAddress}\n")
+        debugString.append("routePrefix: $routePrefix\n")
+        debugString.append("useProxy: $useProxy\n")
+        debugString.append("monitoringScope: $monitoringScope\n")
+        debugString.append("blacklist:\n - ${blacklist.joinToString("\n - ")}\n")
+        debugString.append("whitelist:\n - ${whitelist.joinToString("\n - ")}\n")
+        Timber.i(debugString.toString())
+
+        // establish the VPN interface using the builder we just configured
+        Timber.d("Ready to establish VPN interface")
         return try {
             vpnInterface = builder.establish()
+            Timber.d("VPN interface established")
             true
         } catch (e: Exception) {
             Timber.e(e, "Error establishing VPN interface")
@@ -250,37 +379,27 @@ class HeimdallVpnService : VpnService() {
         }
     }
 
-    private fun isValidInet4Address(address: String?): Boolean {
-        if(address == null) {
-            return false
-        }
-        val bytes = address.split(".").toTypedArray()
-        if (bytes.size != 4) {
-            return false
-        }
-        for (b in bytes) {
-            try {
-                val value = b.toInt()
-                if (value < 0 || value > 255) {
-                    return false
-                }
-            } catch (e: java.lang.NumberFormatException) {
-                return false
-            }
-        }
-        return true
-    }
-
+    /**
+     * Shuts down the VPN components and stops the service.
+     * @see [stopVpnComponents]
+     * @see [stopSelf]
+     */
     private suspend fun shutDown() {
         if(componentsActive) {
             Timber.d("Shutting down VpnService")
             stopVpnComponents()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+            preferences.setVpnActive(false)
+            preferences.setVpnLastUpdated(System.currentTimeMillis())
             Timber.d("VpnService stopped")
         }
     }
 
+    /**
+     * Stops the VPN components.
+     * @see [componentManager]
+     */
     private suspend fun stopVpnComponents() {
         withContext(Dispatchers.IO) {
             Timber.d("Stopping VPN service components")
@@ -300,6 +419,9 @@ class HeimdallVpnService : VpnService() {
         }
     }
 
+    /**
+     * Handles the destruction of the service by gracefully shutting down the VPN components via [shutDown].
+     */
     override fun onDestroy() {
         super.onDestroy()
         Timber.d("VpnService onDestroy called")
@@ -310,10 +432,24 @@ class HeimdallVpnService : VpnService() {
     }
 
     companion object {
+        /**
+         * Global action identifier for intents related to the VPN service lifecycle.
+         */
         const val VPN_ACTION = "de.tomcory.heimdall.net.vpn.ACTION_START"
+
+        /**
+         * Intent extra code for starting the VPN service.
+         */
         const val START_SERVICE = 0
+
+        /**
+         * Intent extra code for stopping the VPN service.
+         */
         const val STOP_SERVICE = 1
-        const val START_SERVICE_PROXY = 2
+
+        /**
+         * Notification ID for the foreground notification.
+         */
         private const val ONGOING_NOTIFICATION_ID = 235
     }
 }
