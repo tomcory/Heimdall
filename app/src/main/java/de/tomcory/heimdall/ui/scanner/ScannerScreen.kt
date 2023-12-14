@@ -337,7 +337,7 @@ private fun ScannerCardFooter(
 
 private fun convertUnixToDate(lastUpdated: Long): String {
     val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-    val date = Date(lastUpdated * 1000) // Convert seconds to milliseconds
+    val date = Date(lastUpdated)
     val calendar = Calendar.getInstance()
     calendar.time = date
 
