@@ -2,8 +2,13 @@ package de.tomcory.heimdall.core.util
 
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.UnknownHostException
 
 object InetAddressUtils {
+
+    /**
+     * Converts a string representation of an IPv4 or IPv6 address that specifies a port to an [InetSocketAddress].
+     */
     fun stringToInetSocketAddress(input: String): InetSocketAddress? {
         val ipAddress: String
         val port: Int
@@ -32,6 +37,24 @@ object InetAddressUtils {
         }
     }
 
+    /**
+     * Converts a string representation of an IPv4 or IPv6 address to an [InetAddress] while ignoring the port.
+     */
+    @Throws(UnknownHostException::class)
+    fun stringToInetAddress(addressString: String): InetAddress {
+        val ipAddress = if (addressString.startsWith("[")) {
+            // IPv6 with port, e.g., [2001:db8::1]:8080
+            addressString.substringAfter("[").substringBefore("]")
+        } else {
+            // IPv4 or IPv6 without port
+            addressString.substringBefore(":")
+        }
+        return InetAddress.getByName(ipAddress)
+    }
+
+    /**
+     * Checks if the given string is a valid IP address with a port number.
+     */
     fun isValidInetAddressWithPort(input: String): Boolean {
         val ipPortRegex = Regex("^(.*):([0-9]+)$")
 
