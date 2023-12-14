@@ -14,7 +14,7 @@ data class PreferencesInitialValues(
     val vpnProxyAddressInitial: String = "127.0.0.1:9090",
     val vpnMonitoringScopeInitial: MonitoringScopeApps = MonitoringScopeApps.APPS_ALL,
     val vpnWhitelistAppsInitial: List<String> = listOf(),
-    val vpnBlacklistAppsInitial: List<String> = listOf("de.tomcory.heimdall"),
+    val vpnBlacklistAppsInitial: List<String> = listOf(),
 
     val mitmEnableInitial: Boolean = true,
     val mitmAppLayerPassthroughInitial: Boolean = true,
