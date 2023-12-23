@@ -7,9 +7,9 @@ import de.tomcory.heimdall.core.database.entity.Permission
 import timber.log.Timber
 import javax.inject.Inject
 
-class PermissionScanner @Inject constructor(
-    private val database: HeimdallDatabase
-) {
+class PermissionScanner {
+
+    @Inject lateinit var database: HeimdallDatabase
 
     /**
      * List of all dangerous permissions as of Android 13
