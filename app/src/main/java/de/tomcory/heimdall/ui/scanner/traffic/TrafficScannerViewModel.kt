@@ -14,6 +14,7 @@ import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
 import de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.service.HeimdallVpnService
+import de.tomcory.heimdall.ui.scanner.ScannerRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +30,7 @@ import javax.inject.Inject
 @HiltViewModel
 class TrafficScannerViewModel @Inject constructor(
     @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
-    private val repository: TrafficScannerRepository
+    private val repository: ScannerRepository
 ) : ViewModel() {
 
     val scanActiveInitial = false
