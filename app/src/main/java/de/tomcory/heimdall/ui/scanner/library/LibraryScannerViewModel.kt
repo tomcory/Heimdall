@@ -2,16 +2,20 @@ package de.tomcory.heimdall.ui.scanner.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.tomcory.heimdall.core.scanner.ExodusUpdater
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 class LibraryScannerViewModel : ViewModel() {
 
     val scanActiveInitial = false
     val scanProgressInitial = 0f
     val lastUpdatedInitial = 0L
+
+    @Inject lateinit var exodusUpdater: ExodusUpdater
 
     ///////////////////////////////
     // State variables
@@ -67,4 +71,17 @@ class LibraryScannerViewModel : ViewModel() {
     ///////////////////////////////
     // Private methods
     ///////////////////////////////
+
+
+
+    private fun updateExodus(onShowSnackbar: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                exodusUpdater.updateAll()
+                onShowSnackbar("Tracker signatures updated.")
+            } catch (e: Exception) {
+                onShowSnackbar("Error updating tracker signatures.")
+            }
+        }
+    }
 }
