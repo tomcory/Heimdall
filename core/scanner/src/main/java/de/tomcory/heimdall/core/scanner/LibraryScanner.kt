@@ -4,17 +4,23 @@ import android.content.pm.PackageInfo
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.AppXTracker
 import de.tomcory.heimdall.core.database.entity.Tracker
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.util.Trie
 import net.dongliu.apk.parser.ApkFile
 import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
 
-class LibraryScanner private constructor(trackers: List<Tracker>) {
+class LibraryScanner @Inject constructor(
+    val database: HeimdallDatabase,
+    val preferences: PreferencesDataSource,
+    val exodusUpdater: ExodusUpdater
+) {
 
-    @Inject lateinit var database: HeimdallDatabase
+    //TODO: implement
+    lateinit var trackerSignatures: Map<String, Tracker>
+        private set
 
-    private val trackerSignatures = mapSignatures(trackers)
     private val shortestSignatureLength = trackerSignatures.keys.reduce { acc, s -> if(s.length < acc.length) s else acc }.length
     private val trackerTrie: Trie<Tracker> = Trie { it.removeSuffix(".").split(".") }
 
