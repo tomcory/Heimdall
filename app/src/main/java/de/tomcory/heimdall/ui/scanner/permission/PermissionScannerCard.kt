@@ -5,13 +5,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import de.tomcory.heimdall.ui.scanner.ScannerCard
 
 @Composable
 fun PermissionScannerCard(
     modifier: Modifier = Modifier,
-    viewModel: PermissionScannerViewModel = viewModel(),
+    viewModel: PermissionScannerViewModel = hiltViewModel(),
     onShowSnackbar: (String) -> Unit
 ) {
     val scanActive by viewModel.scanActive.collectAsState(initial = viewModel.scanActiveInitial)

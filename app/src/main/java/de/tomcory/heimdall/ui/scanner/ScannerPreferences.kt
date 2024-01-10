@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import de.tomcory.heimdall.ui.scanner.library.LibraryScannerPreferences
+import de.tomcory.heimdall.ui.scanner.permission.PermissionScannerPreferences
 import de.tomcory.heimdall.ui.scanner.traffic.TrafficScannerPreferences
 import de.tomcory.heimdall.ui.settings.CategoryHeadline
 import kotlinx.coroutines.launch
@@ -70,6 +72,18 @@ fun ScannerPreferencesDialog(onDismiss: () -> Unit) {
             LazyColumn(modifier = Modifier.padding(it)) {
                 item {
                     CategoryHeadline(text = "Traffic scanner preferences")
+                }
+
+                item {
+                    PermissionScannerPreferences(onShowSnackbar = { message ->
+                        showSnackbar(message)
+                    })
+                }
+
+                item {
+                    LibraryScannerPreferences(onShowSnackbar = { message ->
+                        showSnackbar(message)
+                    })
                 }
 
                 item {

@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.core.database.entity.App
@@ -20,14 +21,16 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 
+@HiltViewModel
 class PermissionScannerViewModel @Inject constructor(
     @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
-    private val repository: ScannerRepository
+    private val repository: ScannerRepository,
+    private val permissionScanner: PermissionScanner
 ) : ViewModel() {
 
     val scanActiveInitial = false
     val scanProgressInitial = 0f
-    val lastUpdatedInitial = 0L
+    val lastUpdatedInitial = repository.preferences.initialValues.permissionLastUpdatedInitial
 
     ///////////////////////////////
     // State variables
@@ -39,8 +42,7 @@ class PermissionScannerViewModel @Inject constructor(
     private val _scanProgress = MutableStateFlow(scanProgressInitial)
     val scanProgress = _scanProgress.asStateFlow()
 
-    private val _lastUpdated = MutableStateFlow(lastUpdatedInitial)
-    val lastUpdated = _lastUpdated.asStateFlow()
+    val lastUpdated = repository.preferences.permissionLastUpdated
 
     ///////////////////////////////
     // Event handlers
@@ -83,9 +85,6 @@ class PermissionScannerViewModel @Inject constructor(
         val scope = repository.preferences.permissionMonitoringScope.first()
         val whitelist = repository.preferences.permissionWhitelist.first()
         val blacklist = repository.preferences.permissionBlacklist.first()
-
-        // create a permission scanner
-        val permissionScanner = PermissionScanner()
 
         _scanProgress.emit(0.03f)
 
@@ -135,6 +134,7 @@ class PermissionScannerViewModel @Inject constructor(
             // scan the permissions of the app (also persists them)
             try {
                 permissionScanner.scanApp(it)
+                repository.preferences.setPermissionLastUpdated(System.currentTimeMillis())
             } catch (e: Exception) {
                 Timber.e(e, "Error scanning permissions of ${it.packageName}")
             }

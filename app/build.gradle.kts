@@ -139,6 +139,11 @@ dependencies {
     implementation (libs.multidexlib2)
     implementation (libs.apk.parser)
 
+    // Dependencies for the evaluator
+    implementation (libs.jsoup)
+    implementation (libs.okhttp)
+    implementation (libs.gson)
+
     // various UI libraries
     implementation (libs.mpAndroidChart)
 

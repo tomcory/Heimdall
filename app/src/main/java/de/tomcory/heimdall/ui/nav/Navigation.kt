@@ -5,9 +5,9 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import de.tomcory.heimdall.R
-import de.tomcory.heimdall.ui.apps.AppsScreen
 import de.tomcory.heimdall.ui.apps.PermissionsScreen
 import de.tomcory.heimdall.ui.database.DatabaseScreen
+import de.tomcory.heimdall.ui.evaluator.ScoreScreen
 import de.tomcory.heimdall.ui.scanner.ScannerScreen
 
 /**
@@ -19,7 +19,7 @@ import de.tomcory.heimdall.ui.scanner.ScannerScreen
  */
 sealed class NavigationItem(var route: String, var unselectedIcon: Int, var selectedIcon: Int, var title: String) {
     data object Traffic : NavigationItem("traffic", R.drawable.ic_scanner, R.drawable.ic_scanner_filled, "Scanners")
-    data object Apps : NavigationItem("apps", R.drawable.ic_score, R.drawable.ic_score_filled, "Score")
+    data object Score : NavigationItem("score", R.drawable.ic_score, R.drawable.ic_score_filled, "Score")
     data object Database : NavigationItem("database", R.drawable.ic_insights, R.drawable.ic_insights_filled, "Insights")
 }
 
@@ -28,7 +28,7 @@ sealed class NavigationItem(var route: String, var unselectedIcon: Int, var sele
  */
 val navigationItems = listOf(
     NavigationItem.Traffic,
-    NavigationItem.Apps,
+    NavigationItem.Score,
     NavigationItem.Database
 )
 
@@ -42,8 +42,8 @@ fun Navigation(navController: NavHostController) {
         composable(NavigationItem.Traffic.route) {
             ScannerScreen()
         }
-        composable(NavigationItem.Apps.route) {
-            AppsScreen(navController)
+        composable(NavigationItem.Score.route) {
+            ScoreScreen()
         }
         composable(NavigationItem.Database.route) {
             DatabaseScreen()
