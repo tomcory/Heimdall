@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -45,9 +46,6 @@ class ScoreViewModel @Inject constructor (
     private val appIcons: MutableMap<String, Drawable> = mutableMapOf()
 
     // state variables
-
-    private val _queryingDatabase = MutableStateFlow(false)
-    val queryingDatabase: StateFlow<Boolean> = _queryingDatabase.asStateFlow()
 
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -96,9 +94,9 @@ class ScoreViewModel @Inject constructor (
     }
 
     /**
-     * Rescan current app and update [uiState] with new report
+     * Scan currently selected app and expose the new report to the UI. Calls [scoreApp].
      */
-    suspend fun scoreApp() {
+    suspend fun scoreSelectedApp() {
         withContext(Dispatchers.IO) {
             // trigger rescan
             val report = scoreApp(selectedAppPackageName.value)
@@ -112,6 +110,10 @@ class ScoreViewModel @Inject constructor (
         }
     }
 
+    /**
+     * Scan app with [packageName] and return the new report.
+     * Returns null if no new report was generated due to an error.
+     */
     suspend fun scoreApp(packageName: String): ReportWithSubReports? {
         return withContext(Dispatchers.IO) {
             Timber.d("Scoring $packageName...")
@@ -120,7 +122,18 @@ class ScoreViewModel @Inject constructor (
     }
 
     /**
-     *  Triggers operating system uninstall flow
+     * Scan all apps. Calls [scoreApp] for each app.
+     */
+    suspend fun scoreAllApps() {
+        withContext(Dispatchers.IO) {
+            apps.first().forEach { app ->
+                scoreApp(app.app.packageName)
+            }
+        }
+    }
+
+    /**
+     *  Triggers operating system uninstall flow for the current app.
      */
     fun uninstallApp(composableContext: Context) {
         val uri: Uri = Uri.fromParts("package", selectedAppPackageName.value, null)

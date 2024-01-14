@@ -18,10 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -110,6 +106,8 @@ fun ScoreScreen(
 @Composable
 fun ScoreTopBar() {
     var searchActive by remember { mutableStateOf(false) }
+    val viewModel: ScoreViewModel = hiltViewModel()
+    val coroutineScope = rememberCoroutineScope()
 
     Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
         SearchBar(
@@ -120,27 +118,24 @@ fun ScoreTopBar() {
             active = searchActive,
             onActiveChange = { searchActive = it },
             leadingIcon = {
-                if (searchActive) {
-                    IconButton(onClick = { searchActive = false }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Close,
-                            contentDescription = ""
-                        )
+                IconButton(onClick = {
+                    coroutineScope.launch {
+                        viewModel.scoreAllApps()
                     }
-                } else {
-                    IconButton(onClick = { searchActive = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.Search,
-                            contentDescription = ""
-                        )
-                    }
+                }) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_scanner),
+                        contentDescription = "Settings icon"
+                    )
                 }
             },
             trailingIcon = {
-                IconButton(onClick = { /*TODO*/ }) {
+                IconButton(onClick = {
+                    /* TODO: implement settings */
+                }) {
                     Icon(
-                        imageVector = Icons.Outlined.Settings,
-                        contentDescription = ""
+                        painter = painterResource(id = R.drawable.ic_settings),
+                        contentDescription = "Settings icon"
                     )
                 }
             },
