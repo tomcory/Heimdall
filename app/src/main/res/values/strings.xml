@@ -2,10 +2,13 @@
 <resources>
     <string name="app_name">Heimdall</string>
     <string name="channel_name">Heimdall Notification Channel</string>
-    <string name="channel_description">Notification Channel for the HeimdallVpnService foreground service</string>
-    <string name="notification_title">Heimdall is active</string>
-    <string name="notification_text">…and keeping watch.</string>
-    <string name="notification_stop_vpn">Stop VPN Service</string>
+    <string name="channel_description">Notification Channel for the foreground services of Heimdall</string>
+    <string name="notification_title_vpn">Heimdall VpnService is active</string>
+    <string name="notification_text_vpn">…and monitoring the device\'s network traffic.</string>
+    <string name="notification_stop_vpn">Stop VpnService</string>
+    <string name="notification_title_scan">Heimdall ScanService active</string>
+    <string name="notification_text_scan">…and scanning apps on installation.</string>
+    <string name="notification_stop_scan">Stop ScanService</string>
     <string name="ca_dialog_message">Heimdall needs to install a root certificate to be able to analyse encrypted TLS traffic. Please select install to continue.</string>
     <string name="ca_dialog_title">Install Root Certificate</string>
     <string name="ca_dialog_install">Install</string>

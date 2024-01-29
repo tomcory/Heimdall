@@ -14,15 +14,18 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.hilt.navigation.compose.hiltViewModel
 import de.tomcory.heimdall.ui.scanner.library.LibraryScannerPreferences
 import de.tomcory.heimdall.ui.scanner.permission.PermissionScannerPreferences
 import de.tomcory.heimdall.ui.scanner.traffic.TrafficScannerPreferences
+import de.tomcory.heimdall.ui.settings.BooleanPreference
 import de.tomcory.heimdall.ui.settings.CategoryHeadline
 import kotlinx.coroutines.launch
 
@@ -70,10 +73,6 @@ fun ScannerPreferencesDialog(onDismiss: () -> Unit) {
             }
         ) {
             LazyColumn(modifier = Modifier.padding(it)) {
-                item {
-                    CategoryHeadline(text = "Traffic scanner preferences")
-                }
-
                 item {
                     PermissionScannerPreferences(onShowSnackbar = { message ->
                         showSnackbar(message)

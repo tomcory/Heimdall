@@ -48,5 +48,8 @@ data class PreferencesInitialValues(
     val certIssuerOuInitial: String = "SNET",
     val certSubjectCnInitial: String = "Heimdall",
 
-    val proxyActiveInitial: Boolean = false
+    val proxyActiveInitial: Boolean = false,
+
+    val bootScanServiceInitial: Boolean = true,
+    val bootVpnServiceInitial: Boolean = false
 )

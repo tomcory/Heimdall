@@ -1,8 +1,10 @@
 package de.tomcory.heimdall.application
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.os.Build
 import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
@@ -19,20 +21,10 @@ class HeimdallApplication : Application() {
     @Inject
     lateinit var preferences: PreferencesDataSource
 
+    @SuppressLint("ObsoleteSdkInt")
     override fun onCreate() {
         super.onCreate()
         //StrictMode.enableDefaults()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, getString(R.string.channel_name), NotificationManager.IMPORTANCE_LOW)
-            channel.description = getString(R.string.channel_description)
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm != null) {
-                nm.createNotificationChannel(channel)
-            } else {
-                Timber.e("Error creating NotificationChannel: NotificationManager is null")
-            }
-        }
 
         // initialize Timber
         CoroutineScope(Dispatchers.IO).launch {
@@ -45,6 +37,20 @@ class HeimdallApplication : Application() {
             preferences.setLibraryActive(false)
             preferences.setPermissionActive(false)
             preferences.setProxyActive(false)
+        }
+
+        // create notification channel
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = getString(R.string.channel_name)
+            val descriptionText = getString(R.string.channel_description)
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+            Timber.d("NotificationChannel created")
         }
     }
 

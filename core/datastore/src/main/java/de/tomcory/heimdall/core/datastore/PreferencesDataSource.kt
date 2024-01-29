@@ -65,6 +65,9 @@ class PreferencesDataSource @Inject constructor(
 
     val proxyActive: Flow<Boolean> = datastore.data.map { it.proxyActive }
 
+    val bootScanService: Flow<Boolean> = datastore.data.map { it.bootScanService }
+    val bootVpnService: Flow<Boolean> = datastore.data.map { it.bootVpnService }
+
     /*
      * Setters for every field of Preferences
      */
@@ -318,6 +321,18 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setProxyActive(proxyActive: Boolean) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setProxyActive(proxyActive).build()
+        }
+    }
+
+    suspend fun setBootScanService(bootScanService: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setBootScanService(bootScanService).build()
+        }
+    }
+
+    suspend fun setBootVpnService(bootVpnService: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setBootVpnService(bootVpnService).build()
         }
     }
 }

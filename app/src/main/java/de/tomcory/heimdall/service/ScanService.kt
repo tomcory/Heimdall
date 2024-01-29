@@ -1,5 +1,8 @@
 package de.tomcory.heimdall.service
 
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -16,6 +19,7 @@ import de.tomcory.heimdall.core.database.entity.App
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.scanner.LibraryScanner
 import de.tomcory.heimdall.core.scanner.PermissionScanner
+import de.tomcory.heimdall.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -35,18 +39,7 @@ class ScanService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-
-        Timber.d("ScanService creating...")
-
-        // Create a notification for the foreground service
-        val notification = NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
-            .setContentTitle("ScanService")
-            .setContentText("Ready to scan freshly installed apps...")
-            .setSmallIcon(R.drawable.ic_scan_active)
-            .build()
-
-        // Start the service in foreground
-        startForeground(1, notification)
+        Timber.d("ScanService created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -68,10 +61,30 @@ class ScanService : Service() {
             Timber.d("ScanBroadcastReceiver registered")
         }
 
-        return super.onStartCommand(intent, flags, startId)
+        // Start the service in foreground
+        startForeground(1, createForegroundNotification())
+
+        return START_STICKY
+    }
+
+    @SuppressLint("ObsoleteSdkInt")
+    private fun createForegroundNotification(): Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val activityPendingIntent = PendingIntent.getActivity(this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE)
+
+        return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_title_scan))
+            .setContentText(getString(R.string.notification_text_scan))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setSmallIcon(R.drawable.ic_scan_active)
+            .setContentIntent(activityPendingIntent)
+            .setOngoing(true)
+            .build()
     }
 
     override fun onDestroy() {
+        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
 
         Timber.d("ScanService onDestroy")

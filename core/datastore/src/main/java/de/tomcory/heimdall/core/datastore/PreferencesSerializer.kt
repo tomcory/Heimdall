@@ -57,6 +57,9 @@ object PreferencesSerializer : Serializer<Preferences> {
 
         .setProxyActive(initialValues.proxyActiveInitial)
 
+        .setBootScanService(initialValues.bootScanServiceInitial)
+        .setBootVpnService(initialValues.bootVpnServiceInitial)
+
         .build()
 
     override suspend fun readFrom(input: InputStream): Preferences {

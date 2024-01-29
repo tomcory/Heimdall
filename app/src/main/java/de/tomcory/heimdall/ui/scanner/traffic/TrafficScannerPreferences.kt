@@ -32,6 +32,12 @@ fun VpnPreferences(
             text = "VPN core preferences"
         )
 
+        BooleanPreference(
+            text = "Start VPN on boot",
+            value = viewModel.preferences.bootVpnService.collectAsState(initial = viewModel.prefInit.bootVpnServiceInitial).value,
+            onValueChange = { value -> viewModel.preferences.setBootVpnService(value) }
+        )
+
         MonitoringScopePreference(
             text = "VPN monitoring scope",
             dialogText = "VPN monitoring scope",

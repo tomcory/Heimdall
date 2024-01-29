@@ -20,6 +20,12 @@ fun PermissionScannerPreferences(
             text = "Permission scanner preferences"
         )
 
+        BooleanPreference(
+            text = "Start ScanService on boot",
+            value = viewModel.preferences.bootScanService.collectAsState(initial = viewModel.prefInit.bootScanServiceInitial).value,
+            onValueChange = { value -> viewModel.preferences.setBootScanService(value) }
+        )
+
         MonitoringScopePreference(
             text = "Permission scanner scope",
             dialogText = "Permission scanner scope",

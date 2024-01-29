@@ -130,14 +130,16 @@ class HeimdallVpnService : VpnService() {
     @SuppressLint("ObsoleteSdkInt")
     private fun createForegroundNotification(): Notification {
 
+        val notificationIntent = Intent(this, MainActivity::class.java)
         val stopVpnIntent = Intent(this, NotificationIntentService::class.java)
         stopVpnIntent.action = NotificationIntentService.STOP_VPN
-        val activityPendingIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val activityPendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
         val stopVpnPendingIntent = PendingIntent.getService(this, 0, stopVpnIntent, PendingIntent.FLAG_IMMUTABLE)
 
         return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_scan_active)
-            .setContentTitle(getString(R.string.notification_title))
+            .setContentTitle(getString(R.string.notification_title_vpn))
+            .setContentText(getString(R.string.notification_text_vpn))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .addAction(R.drawable.ic_cancel, getString(R.string.notification_stop_vpn), stopVpnPendingIntent)
             .setContentIntent(activityPendingIntent)
@@ -423,12 +425,13 @@ class HeimdallVpnService : VpnService() {
      * Handles the destruction of the service by gracefully shutting down the VPN components via [shutDown].
      */
     override fun onDestroy() {
-        super.onDestroy()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         Timber.d("VpnService onDestroy called")
         coroutineScope.launch {
             shutDown()
             Timber.d("VpnService destroyed")
         }
+        super.onDestroy()
     }
 
     companion object {
