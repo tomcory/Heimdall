@@ -15,7 +15,6 @@ import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
-import de.tomcory.heimdall.core.database.entity.Session
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
@@ -143,11 +142,13 @@ class HeimdallVpnService : VpnService() {
         val doMitm = preferences.mitmEnable.first()
 
         // determine whether to use the proxy - this is only possible if MitM mode is disabled
-        val useProxy = if(doMitm && preferences.vpnUseProxy.first()) {
-            Timber.w("Proxy cannot be used in MitM mode, disabling proxy")
-            false
-        } else {
-            true
+        val useProxy = preferences.vpnUseProxy.first().let {
+            if(doMitm && it) {
+                Timber.w("Proxy cannot be used in MitM mode, disabling proxy")
+                false
+            } else {
+                it
+            }
         }
 
         // establish the VPN interface
@@ -271,6 +272,7 @@ class HeimdallVpnService : VpnService() {
 
         // if a proxy is to be used, set it for the VPN interface
         if(useProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Timber.d("VPN in proxy mode")
             // validate and parse the proxy address
             val proxyAddress = InetAddressUtils.stringToInetSocketAddress(preferences.vpnProxyAddress.first()).let {
                 if(it != null) {
