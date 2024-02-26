@@ -5,8 +5,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.hilt.navigation.compose.hiltViewModel
 import de.tomcory.heimdall.core.util.InetAddressUtils
+import de.tomcory.heimdall.ui.settings.ActionPreference
 import de.tomcory.heimdall.ui.settings.BooleanPreference
 import de.tomcory.heimdall.ui.settings.CategoryHeadline
+import de.tomcory.heimdall.ui.settings.MagiskExportPreference
 import de.tomcory.heimdall.ui.settings.MonitoringScopePreference
 import de.tomcory.heimdall.ui.settings.StringPreference
 
@@ -88,6 +90,12 @@ fun VpnPreferences(
             valueVerifier = { value -> InetAddressUtils.isValidInetAddressWithPort(value) },
             onValueChange = { value -> viewModel.preferences.setVpnProxyAddress(value) }
         )
+
+        ActionPreference(text = "Whitelist health and fitness apps", onClick = { viewModel.whitelistHealthAndFitnessApps() })
+
+        ActionPreference(text = "Whitelist medical apps", onClick = { viewModel.whitelistMedicalApps() })
+
+        ActionPreference(text = "Reset whitelist", onClick = { viewModel.resetWhitelist() })
     }
 }
 

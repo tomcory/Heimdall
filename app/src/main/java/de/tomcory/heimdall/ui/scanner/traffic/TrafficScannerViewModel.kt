@@ -215,4 +215,16 @@ class TrafficScannerViewModel @Inject constructor(
         _scanSetup.emit(false)
         _scanActive.emit(false)
     }
+
+    suspend fun whitelistHealthAndFitnessApps() {
+        preferences.setVpnWhitelistApps(healthAndFitnessApps)
+    }
+
+    suspend fun whitelistMedicalApps() {
+        preferences.setVpnWhitelistApps(medicalApps)
+    }
+
+    suspend fun resetWhitelist() {
+        preferences.setVpnWhitelistApps(listOf())
+    }
 }
