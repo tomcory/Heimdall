@@ -112,8 +112,8 @@ fun MitMPreferences(
 
         BooleanPreference(
             text = "App-layer passthrough",
-            value = viewModel.preferences.mitmAppLayerPassthrough.collectAsState(initial = viewModel.prefInit.vpnPersistTransportLayerInitial).value,
-            onValueChange = { value -> viewModel.preferences.setVpnPersistTransportLayer(value) }
+            value = viewModel.preferences.mitmAppLayerPassthrough.collectAsState(initial = viewModel.prefInit.mitmAppLayerPassthroughInitial).value,
+            onValueChange = { value -> viewModel.preferences.setMitmAppLayerPassthrough(value) }
         )
 
         MonitoringScopePreference(
@@ -124,6 +124,8 @@ fun MitMPreferences(
                 viewModel.preferences.setMitmMonitoringScopeApps(value)
             }
         )
+
+        MagiskExportPreference(onShowSnackbar = onShowSnackbar)
     }
 }
 
