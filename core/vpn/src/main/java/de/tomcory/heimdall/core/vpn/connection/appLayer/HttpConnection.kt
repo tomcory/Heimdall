@@ -4,6 +4,7 @@ import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
@@ -34,9 +35,9 @@ class HttpConnection(
     private var remainingContentLength = -1
 
     /**
-     * The ID of the request of this connection as returned by the database insertion. This is used to link requests and responses in the database.
+     * Channel for passing the request ID from the HTTP request insertion coroutine to the HTTP response insertion coroutine.
      */
-    private var requestId: Int = -1
+    private val requestIdChannel = Channel<Int>()
 
     init {
         if(id > 0) {
@@ -155,7 +156,6 @@ class HttpConnection(
     }
 
     private fun persistMessage(message: String, isOutbound: Boolean) {
-        Timber.d("http$id persisting message")
         // parse the three components of the message individually
         val statusLine = parseStatusLine(message, isOutbound)
         val headers = parseHeaders(message)
@@ -167,11 +167,9 @@ class HttpConnection(
         statedContentLength = -1
         remainingContentLength = -1
 
-        //Timber.e("http$id HTTP ${if(isOutbound) "REQUEST by" else "RESPONSE to"} ${encryptionLayer.transportLayer.appPackage} ${if(isOutbound) "to" else "from"} ${encryptionLayer.transportLayer.remoteHost}:\n${statusLine?.get(0)} ${statusLine?.get(1)}, ${statusLine?.get(2)}\n${headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" }}> Content length: ${body.length}")
-
         CoroutineScope(Dispatchers.IO).launch {
             if(isOutbound) {
-                requestId = componentManager.databaseConnector.persistHttpRequest(
+                val requestId = componentManager.databaseConnector.persistHttpRequest(
                     connectionId = id,
                     timestamp = System.currentTimeMillis(),
                     headers = headers,
@@ -187,7 +185,11 @@ class HttpConnection(
                     initiatorId = encryptionLayer.transportLayer.appId ?: 0,
                     initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
                 )
+                Timber.d("http$id persisting request with ID $requestId")
+                requestIdChannel.send(requestId)
             } else {
+                val requestId = requestIdChannel.receive()
+                Timber.d("http$id persisting response to request with ID $requestId")
                 componentManager.databaseConnector.persistHttpResponse(
                     connectionId = id,
                     requestId = requestId,
