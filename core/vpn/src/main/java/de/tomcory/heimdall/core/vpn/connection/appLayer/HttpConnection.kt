@@ -1,8 +1,5 @@
 package de.tomcory.heimdall.core.vpn.connection.appLayer
 
-import de.tomcory.heimdall.core.database.HeimdallDatabase
-import de.tomcory.heimdall.core.database.entity.Request
-import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import kotlinx.coroutines.CoroutineScope
@@ -21,12 +18,24 @@ class HttpConnection(
     componentManager
 ) {
 
+    /**
+     * Caches payloads if they don't contain the end of the headers. Once the end of the headers is found (double CRLF), the message is handled normally (chunked, overflowing, or persisted).
+     */
+    private var previousPayload: ByteArray = ByteArray(0)
+
+    /**
+     * Cache for chunked messages. Used for chunked messages and messages that overflow the buffer. Messages are only persisted once they are complete.
+     */
     private val chunkCache = mutableListOf<ByteArray>()
+
     private var overflowing = false
     private var chunked = false
     private var statedContentLength = -1
     private var remainingContentLength = -1
 
+    /**
+     * The ID of the request of this connection as returned by the database insertion. This is used to link requests and responses in the database.
+     */
     private var requestId: Int = -1
 
     init {
@@ -48,23 +57,40 @@ class HttpConnection(
     }
 
     private fun handleData(payload: ByteArray, isOutbound: Boolean) {
-        Timber.d("http$id Processing http ${if(isOutbound) "out" else "in"}:\n${payload.size} bytes")
+        Timber.d("http$id Processing http ${if(isOutbound) "out" else "in"}: ${payload.size} bytes")
+        val assembledPayload = previousPayload + payload
 
         // distinguish between the first/only chuck and additional chunks
         if(!chunked && !overflowing) {
 
             // parse the raw bytes
-            val message = payload.toString(Charsets.UTF_8)
+            val message = assembledPayload.toString(Charsets.UTF_8)
+            val lowercaseMessage = message.lowercase()
+
+            if(!message.contains("\r\n\r\n")) {
+                // if the message doesn't contain the end of the headers, cache the chunk and wait for more
+                Timber.w("http$id incomplete headers")
+                previousPayload += assembledPayload
+                return
+            } else {
+                if(previousPayload.isNotEmpty()) {
+                    Timber.w("http$id incomplete headers resolved (header length: ${message.length})")
+                }
+                previousPayload = ByteArray(0)
+            }
 
             // the message is "officially" chunked only if this header is present
-            chunked = message.contains("Transfer-Encoding: chunked")
+            chunked = lowercaseMessage.contains("transfer-encoding: chunked")
+            if(chunked) {
+                Timber.d("http$id chunked")
+            }
 
             // messages can still overflow, which we can check by comparing the stated and actual content lengths
             overflowing = if(!chunked) {
-                val lengthIndex = message.indexOf("Content-Length: ")
+                val lengthIndex = lowercaseMessage.indexOf("content-length: ")
                 statedContentLength = if(lengthIndex > 0) {
-                    val endOfContentLength = message.indexOf("\r\n", lengthIndex + 16)
-                    message.substring(lengthIndex + 16, endOfContentLength).toIntOrNull() ?: -1
+                    val endOfContentLength = lowercaseMessage.indexOf("\r\n", lengthIndex + 16)
+                    lowercaseMessage.substring(lengthIndex + 16, endOfContentLength).toIntOrNull() ?: -1
                 } else {
                     -1
                 }
@@ -72,7 +98,7 @@ class HttpConnection(
                 // if there was no Content-Length header, we have to assume that there's no overflow since we cannot determine the intended length
                 if(statedContentLength > 0) {
                     val bodyIndex = message.indexOf("\r\n\r\n") + 4
-                    val actualContentLength = payload.size - bodyIndex
+                    val actualContentLength = assembledPayload.size - bodyIndex
                     remainingContentLength = statedContentLength - actualContentLength
                     remainingContentLength > 0
                 } else {
@@ -86,49 +112,50 @@ class HttpConnection(
             // check whether the message is chunked or overflowing
             if(chunked || overflowing) {
                 if(overflowing) {
-                    Timber.w("http$id overflowing with $remainingContentLength of $statedContentLength remaining")
+                    Timber.d("http$id starting overflow with $remainingContentLength of $statedContentLength bytes remaining")
                 }
                 // if it is, cache this chunk and wait for more
-                chunkCache.add(payload)
+                chunkCache.add(assembledPayload)
             } else {
                 // otherwise persist the message
                 persistMessage(message, isOutbound)
             }
         } else {
             // add the chunk to the cache
-            chunkCache.add(payload)
+            chunkCache.add(assembledPayload)
 
             // we boldly assume that a message is overflowing XOR chunked - may the testers forgive us
             if(overflowing) {
                 // check whether there's still content remaining after the current payload
-                remainingContentLength -= payload.size
-                Timber.w("http$id overflowing with $remainingContentLength of $statedContentLength remaining")
+                remainingContentLength -= assembledPayload.size
                 if(remainingContentLength <= 0) {
+                    Timber.d("http$id resolved overflow with $remainingContentLength of $statedContentLength bytes remaining")
                     // if there isn't, flatten the cache and persist the message
                     persistMessage(combineChunks().toString(Charsets.UTF_8), isOutbound)
+                } else {
+                    Timber.d("http$id continuing overflow with $remainingContentLength of $statedContentLength bytes remaining")
                 }
             } else {
                 // check whether it's the last chunk
-                //TODO: consider trailing headers
-                val lines = payload.toString(Charsets.UTF_8).split("\r\n")
+                val lines = assembledPayload.toString(Charsets.UTF_8).split("\r\n")
                 if(lines.size >= 2 && (lines[lines.size - 2].trim().toIntOrNull(16) ?: -1) == 0) {
+                    Timber.d("http$id last chunk")
                     // if it is, flatten the cache, recombine the message and persist it
                     persistMessage(dechunkHttpMessage(combineChunks()), isOutbound)
                 }
             }
-
-
         }
 
         // pass the payload back to the encryption layer
         if(isOutbound) {
-            encryptionLayer.wrapOutbound(payload)
+            encryptionLayer.wrapOutbound(assembledPayload)
         } else {
-            encryptionLayer.wrapInbound(payload)
+            encryptionLayer.wrapInbound(assembledPayload)
         }
     }
 
     private fun persistMessage(message: String, isOutbound: Boolean) {
+        Timber.d("http$id persisting message")
         // parse the three components of the message individually
         val statusLine = parseStatusLine(message, isOutbound)
         val headers = parseHeaders(message)
@@ -212,8 +239,9 @@ class HttpConnection(
         val headersIndex = message.indexOf("\r\n") + 2
         val bodyIndex = message.indexOf("\r\n\r\n")
 
-        if(headersIndex < 0 || bodyIndex < 0) {
-            Timber.e("http$id parseHeaders Invalid HTTP message, no headers found")
+        if(headersIndex < 0 || bodyIndex < 0 || headersIndex >= bodyIndex) {
+            Timber.e("http$id parseHeaders: Invalid HTTP message, no headers found")
+            Timber.w("http$id $message")
             return emptyMap()
         }
 
@@ -231,7 +259,7 @@ class HttpConnection(
         val bodyIndex = message.indexOf("\r\n\r\n") + 4
 
         if(bodyIndex < 0) {
-            Timber.e("http$id parseBody Invalid HTTP message, no chunks found")
+            Timber.e("http$id parseBody: Invalid HTTP message, no chunks found")
             return ""
         }
 

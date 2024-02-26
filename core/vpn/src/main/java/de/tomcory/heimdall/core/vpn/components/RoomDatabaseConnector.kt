@@ -69,7 +69,7 @@ class RoomDatabaseConnector(
             Request(
                 connectionId = connectionId,
                 timestamp = timestamp,
-                headers = headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" },
+                headers = if(headers.isNotEmpty()) headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" } else "",
                 content = content,
                 contentLength = contentLength,
                 method = method,
@@ -108,7 +108,7 @@ class RoomDatabaseConnector(
                 connectionId = connectionId,
                 requestId = requestId,
                 timestamp = timestamp,
-                headers = headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" },
+                headers = if(headers.isNotEmpty()) headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" } else "",
                 content = content,
                 contentLength = contentLength,
                 statusCode = statusCode,
