@@ -129,7 +129,6 @@ class PrivacyPolicyScore(database: HeimdallDatabase) : Module(database) {
                 val contentText = htmlOKHTTP.text()
 
                 Timber.d("Extracted content with length ${contentText.length} from policy page")
-                Timber.d(contentText)
 
                 return PolicyTextInfo(
                     packageName = packageName,
@@ -231,9 +230,7 @@ class PrivacyPolicyScore(database: HeimdallDatabase) : Module(database) {
         app: App,
         text: String
     ): PolicyTrackerInfo {
-        val trackers =
-            database.appXTrackerDao().getAppWithTrackers(app.packageName).trackers
-                ?: listOf()
+        val trackers = database.appXTrackerDao().getAppWithTrackers(app.packageName).trackers
         //val trackers = HeimdallDatabase.instance?.appDao?.getAppWithTrackersFromPackageName(app.packageName)?.trackers
         val trackerNames = trackers.map { t -> t.name }
         //if no policy don't continue
@@ -432,12 +429,12 @@ class PrivacyPolicyScore(database: HeimdallDatabase) : Module(database) {
                     .equals(name.uppercase(Locale.ROOT))
             }
 
-            if (current.isNotEmpty()) {
+            return if (current.isNotEmpty()) {
                 current[0].parent?.let { result.add(it) }
                 current[0].root_parent?.let { result.add(it) }
                 //if (result.isNotEmpty()) Timber.e("found parent for ${name} : $result")
-                return result
-            } else return mutableListOf()
+                result
+            } else mutableListOf()
 
 
         } catch (e: Exception) {

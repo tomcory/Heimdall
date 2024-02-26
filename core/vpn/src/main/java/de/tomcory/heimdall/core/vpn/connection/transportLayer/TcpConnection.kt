@@ -79,7 +79,7 @@ class TcpConnection internal constructor(
 
     private fun connectChannel(selector: Selector): SelectionKey? {
         // register OP_READ interest for the channel
-        synchronized(de.tomcory.heimdall.core.vpn.components.ComponentManager.selectorMonitor) {
+        synchronized(ComponentManager.selectorMonitor) {
             selector.wakeup()
             val selectionKey = try {
                 selectableChannel.register(selector, SelectionKey.OP_CONNECT)

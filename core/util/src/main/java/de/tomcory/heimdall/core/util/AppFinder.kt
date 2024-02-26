@@ -39,7 +39,6 @@ class AppFinder(
             Timber.e(e)
             return null
         }
-        Timber.w("InitiatorId for port $localPort is $aid")
         return aid
     }
 
