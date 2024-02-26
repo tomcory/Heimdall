@@ -9,6 +9,7 @@ import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.proxy.littleshoot.HttpFiltersAdapter
+import de.tomcory.heimdall.core.util.AppFinder
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.FullHttpResponse
@@ -31,8 +32,8 @@ class HttpProxyFiltersImpl(
     originalRequest: HttpRequest?,
     ctx: ChannelHandlerContext,
     private val clientAddress: InetSocketAddress,
-    private val httpCount: Long,
-    private val context: Context
+    context: Context,
+    private val database: HeimdallDatabase
 ) : HttpFiltersAdapter(originalRequest, ctx) {
     private var isHttps = false
     private var connectedRemoteAddress: InetSocketAddress? = null
@@ -41,6 +42,10 @@ class HttpProxyFiltersImpl(
 
     private val isHttpsAttrKey = AttributeKey.valueOf<Boolean>("isHttps")
     private val resolvedRemoteAddressKey = AttributeKey.valueOf<InetSocketAddress>("resolvedRemoteAddress")
+
+    private val appFinder = AppFinder(context)
+
+    private var requestId = 0
 
     @RequiresApi(api = Build.VERSION_CODES.Q)
     private suspend fun saveRequest(fhr: FullHttpRequest, currentResolved: InetSocketAddress, storeContent: Boolean = false) {
@@ -51,16 +56,8 @@ class HttpProxyFiltersImpl(
             return
         }
 
-        // get the id of the app that initiated the request
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
-        aid = cm?.getConnectionOwnerUid(OsConstants.IPPROTO_TCP, clientAddress, ctx.channel().localAddress() as InetSocketAddress) ?: -1
-        val pm = context.packageManager
-        if (aid >= 0) {
-            val packages = pm.getPackagesForUid(aid)
-            if (packages != null) {
-                packageName = packages[0]
-            }
-        }
+        aid = appFinder.getAppId(clientAddress.address, currentResolved.address, clientAddress.port, currentResolved.port, OsConstants.IPPROTO_TCP) ?: -1
+        packageName = appFinder.getAppPackage(aid) ?: ""
 
         //wrap the access to the headers and content ByteBuf in try-catch blocks to prevent Netty weirdness
         val headers = try {
@@ -80,12 +77,12 @@ class HttpProxyFiltersImpl(
         }
 
         val request = Request(
+            connectionId = 0,
             timestamp = System.currentTimeMillis(),
-            reqResId = httpCount.toInt(),
             headers = headers,
             content = content,
             contentLength = content.length,
-            method = fhr.method().toString(),
+            method = fhr.method().name(),
             remoteHost = currentResolved.hostString,
             remotePath = if (fhr.uri().startsWith("/")) fhr.uri() else "",
             remoteIp = currentResolved.address.hostAddress ?: "",
@@ -96,8 +93,9 @@ class HttpProxyFiltersImpl(
             initiatorPkg = packageName
         )
 
-        Timber.i("Inserting request into DB: aid=%s, pkg=%s, reqResId=%s, method=%s, host=%s", request.initiatorId, request.initiatorPkg, httpCount.toInt(), request.method, request.remoteHost)
-        HeimdallDatabase.instance?.requestDao?.insert(request)
+        requestId = database.requestDao().insert(request).let { if (it.isNotEmpty()) it.first().toInt() else 0 }
+        Timber.i("Inserted request into DB: aid=%s, pkg=%s, reqResId=%s, method=%s, host=%s", request.initiatorId, request.initiatorPkg, requestId, request.method, request.remoteHost)
+
     }
 
     private suspend fun saveResponse(fhr: FullHttpResponse, currentResolved: InetSocketAddress, storeContent: Boolean = false) {
@@ -120,8 +118,9 @@ class HttpProxyFiltersImpl(
         }
 
         val response = Response(
+            connectionId = 0,
             timestamp = System.currentTimeMillis(),
-            reqResId = httpCount.toInt(),
+            requestId = requestId,
             headers = headers,
             content = content,
             contentLength = content.length,
@@ -136,8 +135,8 @@ class HttpProxyFiltersImpl(
             initiatorPkg = packageName
         )
 
-        Timber.i("Inserting response into DB: aid=%s, pkg=%s, reqResId=%s, status=%s host=%s", response.initiatorId, response.initiatorPkg, httpCount.toInt(), response.statusCode, response.remoteHost)
-        HeimdallDatabase.instance?.responseDao?.insert(response)
+        Timber.i("Inserting response into DB: aid=%s, pkg=%s, reqResId=%s, status=%s host=%s", response.initiatorId, response.initiatorPkg, requestId, response.statusCode, response.remoteHost)
+        database.responseDao().insert(response)
     }
 
     override fun clientToProxyRequest(httpObject: HttpObject): HttpResponse? {

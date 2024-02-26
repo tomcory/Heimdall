@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
 private fun findResponse(request: Request, responses: List<Response>): TexResponse {
-    val response = responses.find { it.reqResId == request.reqResId }
+    val response = responses.find { it.requestId == request.id }
     return if(response != null) {
         mapResponseToTex(response, request)
     } else {
@@ -16,7 +16,7 @@ private fun findResponse(request: Request, responses: List<Response>): TexRespon
             initiator = request.initiatorPkg,
             method = request.method,
             parentFrameId = -1,
-            requestId = request.reqResId.toString(),
+            requestId = request.id.toString(),
             responseHeaders = listOf(),
             statusCode = 0,
             timeStamp = request.timestamp,
@@ -31,7 +31,7 @@ private fun mapResponseToTex(response: Response, request: Request) : TexResponse
         initiator = response.initiatorPkg,
         method = request.method,
         parentFrameId = -1,
-        requestId = response.reqResId.toString(),
+        requestId = request.id.toString(),
         responseHeaders = headersJsonToHeadersList(response.headers),
         statusCode = response.statusCode,
         timeStamp = response.timestamp,
@@ -46,7 +46,7 @@ private fun mapRequestToTex(request: Request, responses: List<Response>) : TexRe
     return TexRequest(
         initiator = request.initiatorPkg, // pkg, important
         method = request.method,
-        requestId = request.reqResId.toString(),
+        requestId = request.id.toString(),
         timeStamp = request.timestamp, // important
         url = "https://" + request.remoteHost + request.remotePath, // = remoteHost + path
         requestHeaders = headersJsonToHeadersList(request.headers),

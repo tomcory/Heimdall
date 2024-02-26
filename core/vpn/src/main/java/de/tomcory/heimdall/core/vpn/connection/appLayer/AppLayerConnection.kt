@@ -6,7 +6,7 @@ import org.pcap4j.packet.DnsPacket
 import org.pcap4j.packet.Packet
 
 abstract class AppLayerConnection(
-    val id: Long,
+    val id: Int,
     val encryptionLayer: EncryptionLayerConnection,
     val componentManager: ComponentManager
 ) {
@@ -33,7 +33,7 @@ abstract class AppLayerConnection(
          * @param id
          * @param encryptionLayer
          */
-        fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
+        fun getInstance(payload: ByteArray, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
             return try {
                 if(encryptionLayer.transportLayer.remotePort == 53) {
                     DnsConnection(id, encryptionLayer, componentManager)
@@ -54,7 +54,7 @@ abstract class AppLayerConnection(
          * @param id
          * @param encryptionLayer
          */
-        fun getInstance(packet: Packet, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
+        fun getInstance(packet: Packet, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
             return try {
                 if(packet is DnsPacket) {
                     DnsConnection(id, encryptionLayer, componentManager)

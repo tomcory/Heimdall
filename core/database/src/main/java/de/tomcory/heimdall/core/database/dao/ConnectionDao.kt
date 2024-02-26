@@ -16,10 +16,10 @@ interface ConnectionDao {
     suspend fun update(vararg connections: Connection)
 
     @Query("UPDATE Connection SET bytesOut = bytesIn + :delta WHERE id = :id")
-    suspend fun updateBytesOut(id: Long, delta: Int)
+    suspend fun updateBytesOut(id: Int, delta: Int)
 
     @Query("UPDATE Connection SET bytesIn = bytesIn + :delta WHERE id = :id")
-    suspend fun updateBytesIn(id: Long, delta: Int)
+    suspend fun updateBytesIn(id: Int, delta: Int)
 
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>

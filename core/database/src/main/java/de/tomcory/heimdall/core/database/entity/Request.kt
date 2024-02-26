@@ -1,13 +1,15 @@
 package de.tomcory.heimdall.core.database.entity
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 
 @Entity
 data class Request(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    @PrimaryKey(autoGenerate = true)
+    val id: Int = 0,
+    val connectionId: Int,
     val timestamp: Long,
-    val reqResId: Int,
     val headers: String,
     val content: String,
     val contentLength: Int,

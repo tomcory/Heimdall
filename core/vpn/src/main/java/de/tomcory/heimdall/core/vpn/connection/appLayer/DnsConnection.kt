@@ -9,7 +9,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class DnsConnection(
-    id: Long,
+    id: Int,
     encryptionLayer: EncryptionLayerConnection,
     componentManager: ComponentManager
 ) : AppLayerConnection(

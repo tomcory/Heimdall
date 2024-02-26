@@ -36,13 +36,13 @@ class ExodusUpdater @Inject constructor(
             trackersRaw?.trackers?.values?.forEach{
                 trackerList.add(
                     Tracker(
-                    name = it.name,
-                    categories = it.categories.joinToString(","),
-                    codeSignature = it.code_signature,
-                    networkSignature = it.network_signature,
-                    creationDate = it.creation_date,
-                    web = it.website
-                )
+                        name = it.name,
+                        categories = it.categories.joinToString(","),
+                        codeSignature = it.code_signature,
+                        networkSignature = it.network_signature,
+                        creationDate = it.creation_date,
+                        web = it.website
+                    )
                 )
             }
 
@@ -76,6 +76,7 @@ data class ExodusTrackers(
 
 interface ExodusAPIInterface {
     companion object {
+        //TODO: fetch from preferences
         const val BASE_URL = "https://reports.exodus-privacy.eu.org/api/"
     }
 

@@ -72,4 +72,8 @@ message Preferences {
 
   // ---- PROXY PREFERENCES
   bool proxy_active = 42;
+
+  // ---- BOOT PREFERENCES
+  bool boot_scan_service = 43;
+  bool boot_vpn_service = 44;
 }

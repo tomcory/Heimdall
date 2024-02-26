@@ -8,7 +8,7 @@ import timber.log.Timber
 import javax.inject.Inject
 
 class PermissionScanner @Inject constructor(
-    private val database: HeimdallDatabase
+    val database: HeimdallDatabase
 ) {
 
     /**

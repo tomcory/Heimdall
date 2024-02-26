@@ -1,52 +1,56 @@
 package de.tomcory.heimdall.application
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
-import androidx.datastore.core.DataStore
-import androidx.datastore.dataStore
 import dagger.hilt.android.HiltAndroidApp
-import de.tomcory.heimdall.Preferences
 import de.tomcory.heimdall.R
-import de.tomcory.heimdall.core.database.HeimdallDatabase
-import de.tomcory.heimdall.core.datastore.PreferencesSerializer
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
-
-@Deprecated("Use Hilt dependency injection instead.")
-val Context.preferencesStore: DataStore<Preferences> by dataStore(
-    fileName = "preferences.pb",
-    serializer = PreferencesSerializer
-)
+import javax.inject.Inject
 
 @HiltAndroidApp
 class HeimdallApplication : Application() {
 
+    @Inject
+    lateinit var preferences: PreferencesDataSource
+
+    @SuppressLint("ObsoleteSdkInt")
     override fun onCreate() {
         super.onCreate()
         //StrictMode.enableDefaults()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, getString(R.string.channel_name), NotificationManager.IMPORTANCE_LOW)
-            channel.description = getString(R.string.channel_description)
-            val nm = getSystemService(NotificationManager::class.java)
-            if (nm != null) {
-                nm.createNotificationChannel(channel)
-            } else {
-                Timber.e("Error creating NotificationChannel: NotificationManager is null")
-            }
-        }
-
+        // initialize Timber
         CoroutineScope(Dispatchers.IO).launch {
             Timber.plant(Timber.DebugTree())
+        }
 
-            if (HeimdallDatabase.init(this@HeimdallApplication)) {
-                Timber.d("Database instance created")
+        // reset global state (necessary in case of crash or forced stop)
+        CoroutineScope(Dispatchers.IO).launch {
+            preferences.setVpnActive(false)
+            preferences.setLibraryActive(false)
+            preferences.setPermissionActive(false)
+            preferences.setProxyActive(false)
+        }
+
+        // create notification channel
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = getString(R.string.channel_name)
+            val descriptionText = getString(R.string.channel_description)
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
             }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+            Timber.d("NotificationChannel created")
         }
     }
 

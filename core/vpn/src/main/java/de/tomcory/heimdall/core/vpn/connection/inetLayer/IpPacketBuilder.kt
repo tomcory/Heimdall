@@ -18,6 +18,7 @@ import java.net.InetAddress
 abstract class IpPacketBuilder protected constructor(
     val localAddress: InetAddress,
     val remoteAddress: InetAddress,
+    val ipVersion: Int,
     val transportProtocol: IpNumber) {
 
     /**

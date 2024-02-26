@@ -7,7 +7,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 abstract class EncryptionLayerConnection(
-    val id: Long,
+    val id: Int,
     val transportLayer: TransportLayerConnection,
     val componentManager: ComponentManager
 ) {
@@ -75,7 +75,7 @@ abstract class EncryptionLayerConnection(
          * @param componentManager The ComponentManager responsible for the VPN session.
          * @param rawPayload The connection's first raw transport-layer payload.
          */
-        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray): EncryptionLayerConnection {
+        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray): EncryptionLayerConnection {
             return if (detectTls(rawPayload)) {
                 TlsConnection(id, transportLayer, componentManager)
             } else if(detectQuic(rawPayload)) {
@@ -85,7 +85,7 @@ abstract class EncryptionLayerConnection(
             }
         }
 
-        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet): EncryptionLayerConnection {
+        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet): EncryptionLayerConnection {
             return getInstance(id, transportLayer, componentManager, packet.rawData)
         }
 

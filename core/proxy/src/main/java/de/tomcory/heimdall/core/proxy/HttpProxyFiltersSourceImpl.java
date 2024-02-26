@@ -4,6 +4,7 @@ import android.content.Context;
 
 import java.net.InetSocketAddress;
 
+import de.tomcory.heimdall.core.database.HeimdallDatabase;
 import de.tomcory.heimdall.core.proxy.littleshoot.HttpFilters;
 import de.tomcory.heimdall.core.proxy.littleshoot.HttpFiltersSourceAdapter;
 
@@ -12,23 +13,21 @@ import io.netty.handler.codec.http.HttpRequest;
 
 public class HttpProxyFiltersSourceImpl extends HttpFiltersSourceAdapter {
 
+    private final Context context;
+    private final HeimdallDatabase database;
 
-    private long httpCount = 0L;
-    private Context context;
-
-    public HttpProxyFiltersSourceImpl(Context context) {
+    public HttpProxyFiltersSourceImpl(Context context, HeimdallDatabase database) {
         this.context = context;
+        this.database = database;
     }
 
     @Override
     public HttpFilters filterRequest(HttpRequest originalRequest, ChannelHandlerContext ctx) {
 
-        httpCount++;
         return new HttpProxyFiltersImpl(
             originalRequest,
             ctx,
-            (InetSocketAddress) ctx.channel().remoteAddress(),
-            httpCount, context);
+            (InetSocketAddress) ctx.channel().remoteAddress(), context, database);
     }
 
     @Override

@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.ui.main
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.navigation.compose.rememberNavController
 import dagger.hilt.android.AndroidEntryPoint
+import de.tomcory.heimdall.service.ScanService
 import de.tomcory.heimdall.ui.nav.BottomNavigationBar
 import de.tomcory.heimdall.ui.nav.Navigation
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
@@ -20,6 +22,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        startService(Intent(this, ScanService::class.java))
+
         setContent {
             HeimdallTheme {
                 MainScreen()

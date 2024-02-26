@@ -6,7 +6,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class PlaintextConnection(
-    id: Long,
+    id: Int,
     transportLayer: TransportLayerConnection,
     componentManager: ComponentManager
 ) : EncryptionLayerConnection(

@@ -139,8 +139,15 @@ fun BooleanPreference(text: String, value: Boolean, onValueChange: suspend (Bool
 }
 
 @Composable
-fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: suspend (Int) -> Unit) {
+fun IntPreference(
+    text: String,
+    dialogText: String,
+    value: Int,
+    valueVerifier: (Int) -> Boolean = { true },
+    onValueChange: suspend (Int) -> Unit
+) {
     var rememberedValue by remember { mutableStateOf(value) }
+    var rememberedValueValid by remember { mutableStateOf(true) }
     var openDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -163,24 +170,34 @@ fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: s
                     value = rememberedValue.toString(),
                     keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    onValueChange = { rememberedValue = it.toInt() })
+                    isError = !rememberedValueValid,
+                    onValueChange = {
+                        rememberedValue = it.toInt()
+                        rememberedValueValid = valueVerifier(it.toInt())
+                    }
+                )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    coroutineScope.launch {
-                        withContext(Dispatchers.IO) {
-                            onValueChange(rememberedValue)
-                            openDialog = false
+                TextButton(
+                    enabled = rememberedValueValid,
+                    onClick = {
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) {
+                                onValueChange(rememberedValue)
+                                openDialog = false
+                            }
                         }
                     }
-                }) {
+                ) {
                     Text("Confirm")
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    openDialog = false
-                }) {
+                TextButton(
+                    onClick = {
+                        openDialog = false
+                    }
+                ) {
                     Text("Dismiss")
                 }
             }
@@ -191,8 +208,15 @@ fun IntPreference(text: String, dialogText: String, value: Int, onValueChange: s
 
 
 @Composable
-fun StringPreference(text: String, dialogText: String, value: String, onValueChange: suspend (String) -> Unit) {
+fun StringPreference(
+    text: String,
+    dialogText: String,
+    value: String,
+    valueVerifier: (String) -> Boolean = { true },
+    onValueChange: suspend (String) -> Unit
+) {
     var rememberedValue by remember { mutableStateOf(value) }
+    var rememberedValueValid by remember { mutableStateOf(true) }
     var openDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -214,27 +238,34 @@ fun StringPreference(text: String, dialogText: String, value: String, onValueCha
                 TextField(
                     value = rememberedValue,
                     singleLine = true,
+                    isError = !rememberedValueValid,
                     onValueChange = {
                         rememberedValue = it
+                        rememberedValueValid = valueVerifier(it)
                     }
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    coroutineScope.launch {
-                        withContext(Dispatchers.IO) {
-                            onValueChange(rememberedValue)
-                            openDialog = false
+                TextButton(
+                    enabled = rememberedValueValid,
+                    onClick = {
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) {
+                                onValueChange(rememberedValue)
+                                openDialog = false
+                            }
                         }
                     }
-                }) {
+                ) {
                     Text("Confirm")
                 }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    openDialog = false
-                }) {
+                TextButton(
+                    onClick = {
+                        openDialog = false
+                    }
+                ) {
                     Text("Dismiss")
                 }
             }

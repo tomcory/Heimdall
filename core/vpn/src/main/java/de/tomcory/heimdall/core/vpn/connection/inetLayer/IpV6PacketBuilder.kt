@@ -18,6 +18,7 @@ class IpV6PacketBuilder(
 ) : IpPacketBuilder(
     localAddress = initialPacket.header.srcAddr,
     remoteAddress = initialPacket.header.dstAddr,
+    ipVersion = 6,
     transportProtocol = initialPacket.header.protocol
 ) {
 

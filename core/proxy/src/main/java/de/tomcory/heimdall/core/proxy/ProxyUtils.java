@@ -60,18 +60,4 @@ public class ProxyUtils {
         reader.close();
         return sb.toString();
     }
-
-
-    public static HeimdallHttpProxyServer startProxyService(File file, Context applicationContext) {
-        try {
-            Timber.d("startProxyService");
-            Authority authority = new Authority(file, "heimdall-proxy", "changeit".toCharArray(), "Heimdall", "HeimdallOrga", "HeimdallOrgaUnit", "HeimdallCert", "HeimdallCertUnit");
-            HeimdallHttpProxyServer server = new HeimdallHttpProxyServer(new InetSocketAddress("127.0.0.1",9090),new CertificateSniffingMitmManager(authority), applicationContext);
-            server.start();
-            return server;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
 }

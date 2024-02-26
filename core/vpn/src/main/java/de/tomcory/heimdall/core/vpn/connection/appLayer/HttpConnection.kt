@@ -12,7 +12,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class HttpConnection(
-    id: Long,
+    id: Int,
     encryptionLayer: EncryptionLayerConnection,
     componentManager: ComponentManager
 ) : AppLayerConnection(
@@ -26,6 +26,8 @@ class HttpConnection(
     private var chunked = false
     private var statedContentLength = -1
     private var remainingContentLength = -1
+
+    private var requestId: Int = -1
 
     init {
         if(id > 0) {
@@ -141,49 +143,43 @@ class HttpConnection(
         //Timber.e("http$id HTTP ${if(isOutbound) "REQUEST by" else "RESPONSE to"} ${encryptionLayer.transportLayer.appPackage} ${if(isOutbound) "to" else "from"} ${encryptionLayer.transportLayer.remoteHost}:\n${statusLine?.get(0)} ${statusLine?.get(1)}, ${statusLine?.get(2)}\n${headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" }}> Content length: ${body.length}")
 
         CoroutineScope(Dispatchers.IO).launch {
-            val id = if(isOutbound) {
-                HeimdallDatabase.instance?.requestDao?.insert(
-                    Request(
-                        timestamp = System.currentTimeMillis(),
-                        reqResId = id.toInt(),
-                        headers = headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" },
-                        content = body,
-                        contentLength = body.length,
-                        method = statusLine?.get(0) ?: "",
-                        remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
-                        remotePath = statusLine?.get(1) ?: "",
-                        remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                        remotePort = encryptionLayer.transportLayer.remotePort,
-                        localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
-                        localPort = encryptionLayer.transportLayer.localPort,
-                        initiatorId = encryptionLayer.transportLayer.appId ?: 0,
-                        initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
-                    )
+            if(isOutbound) {
+                requestId = componentManager.databaseConnector.persistHttpRequest(
+                    connectionId = id,
+                    timestamp = System.currentTimeMillis(),
+                    headers = headers,
+                    content = body,
+                    contentLength = body.length,
+                    method = statusLine?.get(0) ?: "",
+                    remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
+                    remotePath = statusLine?.get(1) ?: "",
+                    remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                    remotePort = encryptionLayer.transportLayer.remotePort,
+                    localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
+                    localPort = encryptionLayer.transportLayer.localPort,
+                    initiatorId = encryptionLayer.transportLayer.appId ?: 0,
+                    initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
                 )
             } else {
-                HeimdallDatabase.instance?.responseDao?.insert(
-                    Response(
-                        timestamp = System.currentTimeMillis(),
-                        reqResId = id.toInt(),
-                        headers = headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" },
-                        content = body,
-                        contentLength = body.length,
-                        statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
-                        statusMsg = statusLine?.get(2) ?: "",
-                        remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
-                        remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                        remotePort = encryptionLayer.transportLayer.remotePort,
-                        localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
-                        localPort = encryptionLayer.transportLayer.localPort,
-                        initiatorId = encryptionLayer.transportLayer.appId ?: 0,
-                        initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
-                    )
+                componentManager.databaseConnector.persistHttpResponse(
+                    connectionId = id,
+                    requestId = requestId,
+                    timestamp = System.currentTimeMillis(),
+                    headers = headers,
+                    content = body,
+                    contentLength = body.length,
+                    statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
+                    statusMsg = statusLine?.get(2) ?: "",
+                    remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
+                    remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                    remotePort = encryptionLayer.transportLayer.remotePort,
+                    localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
+                    localPort = encryptionLayer.transportLayer.localPort,
+                    initiatorId = encryptionLayer.transportLayer.appId ?: 0,
+                    initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
                 )
             }
-
-            Timber.e("http$id HTTP ${if(isOutbound) "REQUEST" else "RESPONSE"} insertion returned id ${id?.first()}")
         }
-        //TODO: build entity and persist, that could be done in a coroutine
     }
 
     private fun parseStatusLine(message: String, isOutbound: Boolean): List<String>? {

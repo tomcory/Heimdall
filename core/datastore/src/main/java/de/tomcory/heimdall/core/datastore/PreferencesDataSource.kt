@@ -11,10 +11,12 @@ import javax.inject.Inject
 class PreferencesDataSource @Inject constructor(
     private val datastore: DataStore<Preferences>
 ) {
+    // provides the initial values for all fields of Preferences
+    val initialValues = PreferencesInitialValues()
+
     /*
      * Getters for every field of Preferences, returning Flows
      */
-
     val vpnActive: Flow<Boolean> = datastore.data.map { it.vpnActive }
     val vpnLastUpdated: Flow<Long> = datastore.data.map { it.vpnLastUpdated }
     val vpnPersistTransportLayer: Flow<Boolean> = datastore.data.map { it.vpnPersistTransportLayer }
@@ -62,6 +64,9 @@ class PreferencesDataSource @Inject constructor(
     val certSubjectOu: Flow<String> = datastore.data.map { it.certSubjectOu }
 
     val proxyActive: Flow<Boolean> = datastore.data.map { it.proxyActive }
+
+    val bootScanService: Flow<Boolean> = datastore.data.map { it.bootScanService }
+    val bootVpnService: Flow<Boolean> = datastore.data.map { it.bootVpnService }
 
     /*
      * Setters for every field of Preferences
@@ -316,6 +321,18 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setProxyActive(proxyActive: Boolean) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setProxyActive(proxyActive).build()
+        }
+    }
+
+    suspend fun setBootScanService(bootScanService: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setBootScanService(bootScanService).build()
+        }
+    }
+
+    suspend fun setBootVpnService(bootVpnService: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setBootVpnService(bootVpnService).build()
         }
     }
 }

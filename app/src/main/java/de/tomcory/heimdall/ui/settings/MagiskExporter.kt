@@ -29,7 +29,7 @@ import timber.log.Timber
 import java.io.File
 
 @Composable
-fun MagiskExportPreference(snackbarHostState: SnackbarHostState) {
+fun MagiskExportPreference(onShowSnackbar: (String) -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -49,10 +49,10 @@ fun MagiskExportPreference(snackbarHostState: SnackbarHostState) {
 
             if (success) {
                 Timber.d("Successfully copied Magisk module")
-                snackbarHostState.showSnackbar(message = "Magisk module created", actionLabel = null, withDismissAction = false, duration = SnackbarDuration.Short)
+                onShowSnackbar("Magisk module created")
             } else {
                 Timber.e("Error copying Magisk module")
-                snackbarHostState.showSnackbar(message = "Could not export Magisk module", actionLabel = null, withDismissAction = false, duration = SnackbarDuration.Short)
+                onShowSnackbar("Could not export Magisk module")
             }
         }
     }
@@ -69,7 +69,7 @@ fun MagiskExportPreference(snackbarHostState: SnackbarHostState) {
                     filename = generateMagiskModule(context)
                     if (filename.isEmpty()) {
                         Timber.e("Module creation failed")
-                        snackbarHostState.showSnackbar(message = "Could not create Magisk module", actionLabel = null, withDismissAction = false, duration = SnackbarDuration.Short)
+                        onShowSnackbar("Could not create Magisk module")
                         isGenerating = false
                     } else {
                         Timber.d("Module creation successful")
