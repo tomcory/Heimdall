@@ -39,7 +39,6 @@ class InboundTrafficHandler(
                             continue
                         }
                         if (attachment is TransportLayerConnection) {
-                            Timber.d("Handling inbound data")
                             attachment.unwrapInbound()
                         } else {
                             Timber.e("Invalid attachment %s", attachment.javaClass)

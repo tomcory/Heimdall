@@ -42,11 +42,11 @@ class UdpConnection internal constructor(
     ipPacketBuilder = ipPacketBuilder
 ) {
     override val protocol = "UDP"
+    override val id = createDatabaseEntity()
     override val selectableChannel: DatagramChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
     override val selectionKey = connectChannel(componentManager.selector)
     override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
     override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
-    override val id = createDatabaseEntity()
 
     init {
         if(id > 0) {

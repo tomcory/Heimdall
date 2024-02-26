@@ -41,7 +41,6 @@ class OutboundTrafficHandler(
     private fun handleMessageImpl(msg: Message) {
         if((msg.what == 6 || msg.what == 17) && msg.obj is IpPacket) {
             val ipPacket = msg.obj as IpPacket
-            Timber.d("Handling outbound IP packet with protocol ${msg.what}")
             TransportLayerConnection.getInstance(ipPacket, componentManager, deviceWriter)?.unwrapOutbound(ipPacket.payload)
         }
     }

@@ -53,7 +53,6 @@ class DeviceWriteThread(
         val packet = msg.obj as IpPacket
 
         try {
-            Timber.d("Writing ${packet.length()} bytes to device")
             outputStream.write(packet.rawData)
             outputStream.flush()
         } catch (e: IOException) {

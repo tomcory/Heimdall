@@ -141,6 +141,8 @@ class HeimdallVpnService : VpnService() {
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
 
+        Timber.d("MitM mode: $doMitm")
+
         // determine whether to use the proxy - this is only possible if MitM mode is disabled
         val useProxy = preferences.vpnUseProxy.first().let {
             if(doMitm && it) {

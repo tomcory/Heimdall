@@ -96,7 +96,6 @@ class DevicePollThread internal constructor(
             }
 
             if(rawPacket.isNotEmpty()) {
-                Timber.w("Read ${rawPacket.size} bytes from device")
                 val parsedPacket = parsePacket(rawPacket)
 
                 // forward packet to traffic handler
