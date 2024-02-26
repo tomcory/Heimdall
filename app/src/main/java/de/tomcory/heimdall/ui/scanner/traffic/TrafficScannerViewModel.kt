@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
 import de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.util.InetAddressUtils
@@ -30,7 +31,8 @@ import javax.inject.Inject
 @HiltViewModel
 class TrafficScannerViewModel @Inject constructor(
     @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
-    private val repository: ScannerRepository
+    private val repository: ScannerRepository,
+    private val database: HeimdallDatabase
 ) : ViewModel() {
 
     val scanActiveInitial = false
@@ -188,7 +190,9 @@ class TrafficScannerViewModel @Inject constructor(
             )
             val proxyServer = HeimdallHttpProxyServer(
                 InetAddressUtils.stringToInetSocketAddress(repository.preferences.vpnProxyAddress.first()),
-                CertificateSniffingMitmManager(oldAuth), context
+                CertificateSniffingMitmManager(oldAuth),
+                context,
+                database
             )
             proxyServer.start()
             proxyServer

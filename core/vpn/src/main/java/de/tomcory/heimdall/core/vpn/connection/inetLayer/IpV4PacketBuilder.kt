@@ -20,6 +20,7 @@ class IpV4PacketBuilder(
 ) : IpPacketBuilder(
     localAddress = initialPacket.header.srcAddr,
     remoteAddress = initialPacket.header.dstAddr,
+    ipVersion = 4,
     transportProtocol = initialPacket.header.protocol
 ) {
 

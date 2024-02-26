@@ -4,6 +4,7 @@ import android.os.Handler
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
+import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import kotlinx.coroutines.runBlocking
@@ -22,7 +23,7 @@ import java.nio.channels.Selector
  */
 abstract class TransportLayerConnection protected constructor(
     val deviceWriter: Handler,
-    val componentManager: de.tomcory.heimdall.core.vpn.components.ComponentManager,
+    val componentManager: ComponentManager,
     val localPort: Int,
     val remotePort: Int,
     val remoteHost: String?,
@@ -49,7 +50,7 @@ abstract class TransportLayerConnection protected constructor(
         ABORTED
     }
 
-    protected abstract val id: Long
+    protected abstract val id: Int
 
     /**
      * Buffer used for write operations on the connection's [SelectableChannel].
@@ -123,26 +124,24 @@ abstract class TransportLayerConnection protected constructor(
         }
     }
 
-    protected fun createDatabaseEntity(): Long {
+    protected fun createDatabaseEntity(): Int {
         return if(remotePort == 53) {
             0
         } else {
             runBlocking {
-                val ids = HeimdallDatabase.instance?.connectionDao?.insert(
-                    Connection(
-                        protocol = protocol,
-                        initialTimestamp = System.currentTimeMillis(),
-                        initiatorId = appId ?: -1,
-                        initiatorPkg = appPackage ?: appId.toString(),
-                        localPort = localPort,
-                        remoteHost = remoteHost ?: "",
-                        remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                        remotePort = remotePort,
-                        isTracker = isTracker
-                    )
+                return@runBlocking componentManager.databaseConnector.persistTransportLayerConnection(
+                    sessionId = componentManager.sessionId,
+                    protocol = protocol,
+                    ipVersion = ipPacketBuilder.ipVersion,
+                    initialTimestamp = System.currentTimeMillis(),
+                    initiatorId = appId ?: -1,
+                    initiatorPkg = appPackage ?: appId.toString(),
+                    localPort = localPort,
+                    remoteHost = remoteHost ?: "",
+                    remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                    remotePort = remotePort,
+                    isTracker = isTracker
                 )
-
-                return@runBlocking ids?.first() ?: -1
             }
         }
     }

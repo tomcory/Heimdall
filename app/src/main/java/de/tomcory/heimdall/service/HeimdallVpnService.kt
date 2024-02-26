@@ -19,6 +19,7 @@ import de.tomcory.heimdall.core.database.entity.Session
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
+import de.tomcory.heimdall.core.vpn.components.RoomDatabaseConnector
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
 import de.tomcory.heimdall.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -44,7 +45,6 @@ class HeimdallVpnService : VpnService() {
     private var componentManager: ComponentManager? = null
     private var vpnInterface: ParcelFileDescriptor? = null
 
-    private var sessionId: Long = 0
     private var componentsActive = false
 
     /**
@@ -79,26 +79,11 @@ class HeimdallVpnService : VpnService() {
 
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
-
-                    // insert a new session into the database and keep track of the ID
-                    val insertedIds = database.sessionDao().insert(Session())
-                    sessionId = if(insertedIds.isNotEmpty()) {
-                        insertedIds.first()
-                    } else {
-                        0
-                    }
-
-                    // launch the VPN components or shut down if the session ID is invalid
-                    if(sessionId > 0) {
-                        Timber.d("VpnService startup: got session, launching service components")
-                        launchServiceComponents()
-                        Timber.d("VpnService started")
-                        preferences.setVpnActive(true)
-                        preferences.setVpnLastUpdated(System.currentTimeMillis())
-                    } else {
-                        Timber.e("VpnService startup: invalid session, service components not launched")
-                        shutDown()
-                    }
+                    Timber.d("Launching service components...")
+                    launchServiceComponents()
+                    Timber.d("VpnService started")
+                    preferences.setVpnActive(true)
+                    preferences.setVpnLastUpdated(System.currentTimeMillis())
                 }
 
                 START_STICKY
@@ -177,6 +162,7 @@ class HeimdallVpnService : VpnService() {
             componentManager = ComponentManager(
                 outboundStream = FileInputStream(vpnInterface?.fileDescriptor),
                 inboundStream = FileOutputStream(vpnInterface?.fileDescriptor),
+                databaseConnector = RoomDatabaseConnector(database),
                 vpnService = this,
                 doMitm = doMitm
             )
@@ -413,8 +399,6 @@ class HeimdallVpnService : VpnService() {
             } catch (e: IOException) {
                 Timber.e(e, "Error closing FileDescriptor")
             }
-
-            database.sessionDao().updateEndTime(sessionId, System.currentTimeMillis())
 
             // set the flag to signal that the VPN components are no longer active
             componentsActive = false

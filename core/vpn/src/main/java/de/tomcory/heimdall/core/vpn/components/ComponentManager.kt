@@ -4,15 +4,16 @@ import android.content.Context
 import android.net.VpnService
 import android.system.ErrnoException
 import android.system.Os
+import de.tomcory.heimdall.core.util.Trie
 import de.tomcory.heimdall.core.vpn.R
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
-import de.tomcory.heimdall.core.vpn.metadata.AppFinder
+import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
-import de.tomcory.heimdall.core.util.Trie
+import kotlinx.coroutines.runBlocking
 import org.pcap4j.packet.IllegalRawDataException
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.TcpPacket
@@ -20,7 +21,12 @@ import org.pcap4j.packet.UdpPacket
 import org.pcap4j.packet.namednumber.TcpPort
 import org.pcap4j.packet.namednumber.UdpPort
 import timber.log.Timber
-import java.io.*
+import java.io.BufferedReader
+import java.io.FileDescriptor
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStreamReader
 import java.nio.channels.Selector
 
 /**
@@ -31,6 +37,7 @@ import java.nio.channels.Selector
 class ComponentManager(
     private val outboundStream: FileInputStream,
     private val inboundStream: FileOutputStream,
+    val databaseConnector: DatabaseConnector,
     val vpnService: VpnService?,
     val doMitm: Boolean = false,
     val maxPacketSize: Int = 16413,
@@ -40,6 +47,7 @@ class ComponentManager(
         ).reversed()
     }
 ) {
+    val sessionId: Int
 
     private var devicePollThread: DevicePollThread? = null
     private var deviceWriteThread: DeviceWriteThread? = null
@@ -87,6 +95,8 @@ class ComponentManager(
             populateTrieFromRawFile(it.applicationContext, R.raw.adhosts, trackerTrie)
         }
 
+        sessionId = runBlocking { return@runBlocking databaseConnector.persistSession(System.currentTimeMillis()) }
+
         /*
          * Create and start the traffic handler threads. Since the threads rely on handlers to pass messages to each other
          * and the handler is instantiated asynchronously within the threads, this needs to be wrapped in callbacks.
@@ -126,7 +136,7 @@ class ComponentManager(
         deviceWriteThread?.start()
     }
 
-    fun stopComponents() {
+    suspend fun stopComponents() {
         // closing the interrupter pipe stops the DevicePollThread's polling
         try {
             Os.close(interrupter)
@@ -146,6 +156,8 @@ class ComponentManager(
         }
 
         ConnectionCache.closeAllAndClear()
+
+        databaseConnector.updateSession(sessionId, System.currentTimeMillis())
     }
 
     /**

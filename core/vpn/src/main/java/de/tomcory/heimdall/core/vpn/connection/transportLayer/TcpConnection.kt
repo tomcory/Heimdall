@@ -3,6 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 import android.net.VpnService
 import android.os.Handler
 import android.system.OsConstants
+import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import org.pcap4j.packet.IpPacket
@@ -30,7 +31,7 @@ import java.util.Arrays
  * @param ipPacketBuilder
  */
 class TcpConnection internal constructor(
-    componentManager: de.tomcory.heimdall.core.vpn.components.ComponentManager,
+    componentManager: ComponentManager,
     deviceWriter: Handler,
     initialPacket: TcpPacket,
     ipPacketBuilder: IpPacketBuilder,
@@ -64,6 +65,7 @@ class TcpConnection internal constructor(
     }
 
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
+        Timber.d("tcp$id openChannel")
         state = TransportLayerState.CONNECTING
         val selectableChannel = SocketChannel.open()
         vpnService?.protect(selectableChannel.socket())
@@ -77,6 +79,7 @@ class TcpConnection internal constructor(
     }
 
     private fun connectChannel(selector: Selector): SelectionKey? {
+        Timber.d("tcp$id connectChannel")
         // register OP_READ interest for the channel
         synchronized(de.tomcory.heimdall.core.vpn.components.ComponentManager.selectorMonitor) {
             selector.wakeup()
@@ -91,10 +94,12 @@ class TcpConnection internal constructor(
     }
 
     private fun writeToDevice(packet: IpPacket) {
+        Timber.d("tcp$id writeToDevice")
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_TCP, packet))
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
+        Timber.d("tcp$id unwrapOutbound")
         val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
         if (tcpHeader.ack) {
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
@@ -113,6 +118,7 @@ class TcpConnection internal constructor(
     }
 
     override fun unwrapInbound() {
+        Timber.d("tcp$id unwrapInbound")
         if(selectionKey == null) {
             Timber.e("tcp$id SelectionKey is null")
             state = TransportLayerState.ABORTED
@@ -132,6 +138,7 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapOutbound(payload: ByteArray) {
+        Timber.d("tcp$id wrapOutbound")
         if (payload.isNotEmpty()) {
             if(payload.size <= outBuffer.limit()) {
                 outBuffer.clear()
@@ -176,6 +183,7 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
+        Timber.d("tcp$id wrapInbound")
         // if the application layer returned anything, write it to the device's VPN interface
         if (payload.isNotEmpty()) {
             if(payload.size <= componentManager.maxPacketSize) {
@@ -201,6 +209,7 @@ class TcpConnection internal constructor(
     }
 
     private fun handleAckData(outgoingPacket: Packet) {
+        Timber.d("tcp$id handleAckData")
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
             Timber.w("tcp$id Got ACK (data, invalid state $state)")
@@ -217,6 +226,7 @@ class TcpConnection internal constructor(
     }
 
     private fun handleAckEmpty() {
+        Timber.d("tcp$id handleAckEmpty")
         when (state) {
             TransportLayerState.CONNECTING -> {
                 // establishing handshake complete, set status to CONNECTED
@@ -239,12 +249,14 @@ class TcpConnection internal constructor(
     }
 
     private fun handleSynAck() {
+        Timber.d("tcp$id handleSynAck")
         // SYN ACK packets should not be sent by the client, abort
         Timber.e("tcp$id Got SYN ACK (invalid)")
         abortAndRst()
     }
 
     private fun handleFinAck() {
+        Timber.d("tcp$id handleFinAck")
         if (state == TransportLayerState.CLOSING) {
             // connection is closing, so this must be an actual FIN ACK - acknowledge it and close the connection for good
             increaseTheirSeqNum(1)
@@ -257,6 +269,7 @@ class TcpConnection internal constructor(
     }
 
     private fun handleFin() {
+        Timber.d("tcp$id handleFin")
         if (state == TransportLayerState.CLOSED) {
             // the connection is already closed, abort
             abortAndRst()
@@ -274,6 +287,7 @@ class TcpConnection internal constructor(
      * Handles the OP_READ event on a connection's [SocketChannel], which means that inbound data is available on the channel.
      */
     private fun unwrapInboundReadable() {
+        Timber.d("tcp$id unwrapInboundReadable")
         // OP_READ event triggered
         var bytesRead: Int
         do {
@@ -315,6 +329,7 @@ class TcpConnection internal constructor(
      * Handles the OP_CONNECT event on a connection's [SocketChannel], which means that the channel is connected and ready for outbound data.
      */
     private fun unwrapInboundConnectable() {
+        Timber.d("tcp$id unwrapInboundConnectable")
         // complete the SocketChannel's connection process
         try {
             selectableChannel.finishConnect()
@@ -342,6 +357,7 @@ class TcpConnection internal constructor(
     }
 
     private fun abortAndRst() {
+        Timber.d("tcp$id abortAndRst")
         selectionKey?.cancel()
         val rstResponse = ipPacketBuilder.buildPacket(buildRst())
         state = TransportLayerState.ABORTED

@@ -18,7 +18,7 @@ interface SessionDao {
     suspend fun update(vararg sessions: Session)
 
     @Query("UPDATE Session SET endTime = :endTime WHERE id = :id")
-    suspend fun updateEndTime(id: Long, endTime: Long)
+    suspend fun updateEndTime(id: Int, endTime: Long): Int
 
     @Delete
     suspend fun delete(session: Session)

@@ -1,4 +1,4 @@
-package de.tomcory.heimdall.core.vpn.metadata
+package de.tomcory.heimdall.core.util
 
 import android.content.Context
 import android.content.pm.PackageManager

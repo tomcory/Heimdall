@@ -21,7 +21,7 @@ suspend fun exportRequestsToCSV(requestDao: RequestDao, context: Context, filena
                 requests = requestDao.getAllPaginated(limit, offset)
 
                 requests.forEach { request ->
-                    out.write("${request.id},${request.timestamp},${request.reqResId},${request.headers},${request.content},${request.contentLength},${request.method},${request.remoteHost},${request.remotePath},${request.remoteIp},${request.remotePort},${request.localIp},${request.localPort},${request.initiatorId},${request.initiatorPkg},${request.isTracker}\n")
+                    out.write("${request.id},${request.timestamp},${request.headers},${request.content},${request.contentLength},${request.method},${request.remoteHost},${request.remotePath},${request.remoteIp},${request.remotePort},${request.localIp},${request.localPort},${request.initiatorId},${request.initiatorPkg},${request.isTracker}\n")
                 }
 
                 offset += limit
