@@ -167,9 +167,9 @@ class HttpConnection(
                 val requestId = componentManager.databaseConnector.persistHttpRequest(
                     connectionId = id,
                     timestamp = System.currentTimeMillis(),
-                    headers = headers,
-                    content = body,
-                    contentLength = body.length,
+                    headers = headers ?: emptyMap(),
+                    content = body ?: "",
+                    contentLength = body?.length ?: 0,
                     method = statusLine?.get(0) ?: "",
                     remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
                     remotePath = statusLine?.get(1) ?: "",
@@ -189,9 +189,9 @@ class HttpConnection(
                     connectionId = id,
                     requestId = requestId,
                     timestamp = System.currentTimeMillis(),
-                    headers = headers,
-                    content = body,
-                    contentLength = body.length,
+                    headers = headers ?: emptyMap(),
+                    content = body ?: "",
+                    contentLength = body?.length ?: 0,
                     statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
                     statusMsg = statusLine?.get(2) ?: "",
                     remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
@@ -220,19 +220,19 @@ class HttpConnection(
         val parts = statusLine.split(" ", limit = 3)
 
         if (parts.size < 3) {
-            Timber.e("http$id Invalid status line: $statusLine")
+            Timber.e("http$id parseStatusLine: Invalid status line")
             return null
         }
 
         if(!isOutbound && parts[1].toIntOrNull() == null) {
-            Timber.e("http$id Invalid status code in status line: $statusLine")
+            Timber.e("http$id parseStatusLine: Invalid status code")
             return null
         }
 
         return listOf(parts[0], parts[1], parts[2])
     }
 
-    private fun parseHeaders(message: String): Map<String, String> {
+    private fun parseHeaders(message: String): Map<String, String>? {
         val headersIndex = message.indexOf("\r\n") + 2
         val bodyIndex = message.indexOf("\r\n\r\n")
 
@@ -246,18 +246,23 @@ class HttpConnection(
 
         val headerLines = headerBlock.split("\r\n")
 
-        return headerLines.associate { line ->
-            val (name, value) = line.split(": ", limit = 2)
-            name to value
+        return try {
+            headerLines.associate { line ->
+                val (name, value) = line.split(": ", limit = 2)
+                name to value
+            }
+        } catch (e: Exception) {
+            Timber.e("http$id parseHeaders: Invalid headers")
+            null
         }
     }
 
-    private fun parseBody(message: String): String {
+    private fun parseBody(message: String): String? {
         val bodyIndex = message.indexOf("\r\n\r\n") + 4
 
         if(bodyIndex < 0) {
             Timber.e("http$id parseBody: Invalid HTTP message, no chunks found")
-            return ""
+            return null
         }
 
         return message.substring(bodyIndex)
