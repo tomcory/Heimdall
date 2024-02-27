@@ -4,6 +4,7 @@
     <color name="colorPrimaryDark">#000000</color>
     <color name="colorPrimaryLight">#BABABA</color>
     <color name="colorAccent">#D50000</color>
+    <color name="colorSurface">#1A1B1E</color>
 
     <color name="white">#FFFFFF</color>
 

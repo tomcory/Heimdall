@@ -15,8 +15,8 @@
         <item name="toolbarNavigationButtonStyle">@style/TintedNavigation</item>
         <item name="android:windowContentTransitions">true</item>
 
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@color/colorSurface</item>
+        <item name="android:navigationBarColor">@color/colorSurface</item>
 
     </style>
 
