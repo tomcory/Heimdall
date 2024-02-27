@@ -47,6 +47,7 @@ class HttpConnection(
 
     override fun unwrapOutbound(payload: ByteArray) {
         handleData(payload, true)
+        encryptionLayer.wrapOutbound(payload)
     }
 
     override fun unwrapOutbound(packet: Packet) {
@@ -55,6 +56,7 @@ class HttpConnection(
 
     override fun unwrapInbound(payload: ByteArray) {
         handleData(payload, false)
+        encryptionLayer.wrapInbound(payload)
     }
 
     private fun handleData(payload: ByteArray, isOutbound: Boolean) {
@@ -145,13 +147,6 @@ class HttpConnection(
                     persistMessage(dechunkHttpMessage(combineChunks()), isOutbound)
                 }
             }
-        }
-
-        // pass the payload back to the encryption layer
-        if(isOutbound) {
-            encryptionLayer.wrapOutbound(assembledPayload)
-        } else {
-            encryptionLayer.wrapInbound(assembledPayload)
         }
     }
 
