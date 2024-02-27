@@ -122,7 +122,7 @@ class TcpConnection internal constructor(
 
         if (!selectionKey.isValid) {
             Timber.e("tcp$id Invalid Selection key")
-            abortAndRst()
+            closeHard()
             return
         }
         if (selectionKey.isConnectable) {
@@ -142,13 +142,8 @@ class TcpConnection internal constructor(
                 while (outBuffer.hasRemaining()) {
                     try {
                         selectableChannel.write(outBuffer)
-                    } catch (e: IOException) {
-                        Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
-                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
-                        closeHard()
-                        break
-                    } catch (e: BufferOverflowException) {
-                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
+                    } catch (e: Exception) {
+                        Timber.e("tcp$id Error writing to SocketChannel (${e.javaClass}, closing connection")
                         closeHard()
                         break
                     }
@@ -164,11 +159,11 @@ class TcpConnection internal constructor(
                     } catch (e: IOException) {
                         Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
                         Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
-                        abortAndRst()
+                        closeHard()
                         break
                     } catch (e: BufferOverflowException) {
                         Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
-                        abortAndRst()
+                        closeHard()
                         break
                     }
                 }
@@ -205,7 +200,7 @@ class TcpConnection internal constructor(
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
             Timber.w("tcp$id Got ACK (data, invalid state $state)")
-            abortAndRst()
+            closeHard()
         } else {
             increaseTheirSeqNum(outgoingPacket.payload.length())
 
@@ -234,7 +229,7 @@ class TcpConnection internal constructor(
             else -> {
                 // there is no good reason for an acknowledgement in any other flow state, abort
                 Timber.e("tcp$id Got ACK (empty, invalid state $state)")
-                abortAndRst()
+                closeHard()
             }
         }
     }
@@ -242,7 +237,7 @@ class TcpConnection internal constructor(
     private fun handleSynAck() {
         // SYN ACK packets should not be sent by the client, abort
         Timber.e("tcp$id Got SYN ACK (invalid)")
-        abortAndRst()
+        closeHard()
     }
 
     private fun handleFinAck() {
@@ -260,7 +255,7 @@ class TcpConnection internal constructor(
     private fun handleFin() {
         if (state == TransportLayerState.CLOSED) {
             // the connection is already closed, abort
-            abortAndRst()
+            closeHard()
         } else {
             // close asynchronously
             closeSoft()
@@ -321,7 +316,7 @@ class TcpConnection internal constructor(
             selectableChannel.finishConnect()
         } catch (e: IOException) {
             Timber.e(e, "tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
-            abortAndRst()
+            closeHard()
             return
         }
 
@@ -338,15 +333,17 @@ class TcpConnection internal constructor(
             writeToDevice(synAckPacket)
         } else {
             Timber.e("tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
-            abortAndRst()
+            closeHard()
         }
     }
 
-    private fun abortAndRst() {
+    /**
+     * Closes the client-side connection by sending a RST packet and setting the connection's state to ABORTED.
+     */
+    override fun closeHardImpl() {
+        state = TransportLayerState.ABORTED
         selectionKey?.cancel()
         val rstResponse = ipPacketBuilder.buildPacket(buildRst())
-        state = TransportLayerState.ABORTED
-        closeHard()
         writeToDevice(rstResponse)
     }
 

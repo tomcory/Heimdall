@@ -1,8 +1,6 @@
 package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
 import android.os.Handler
-import de.tomcory.heimdall.core.database.HeimdallDatabase
-import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
@@ -159,11 +157,16 @@ abstract class TransportLayerConnection protected constructor(
 
     abstract fun wrapInbound(payload: ByteArray)
 
+    abstract fun closeHardImpl()
+
     /**
-     * Closes the connection's outward-facing [SelectableChannel] and removes the connection from the [ConnectionCache]
+     * Closes the connection's outward-facing [SelectableChannel], performs protocol-specific steps to close the client-side session and removes the connection from the [ConnectionCache]
      */
     fun closeHard() {
+        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection")
         closeSoft()
+        closeHardImpl()
+        state = TransportLayerState.CLOSED
         ConnectionCache.removeConnection(this)
     }
 
@@ -172,7 +175,11 @@ abstract class TransportLayerConnection protected constructor(
      */
     fun closeSoft() {
         state = TransportLayerState.CLOSING
-        selectableChannel.close()
+        try {
+            selectableChannel.close()
+        } catch (e: Exception) {
+            Timber.e(e, "${protocol.lowercase()}${id} Error closing SelectableChannel")
+        }
     }
 
     companion object {
@@ -180,10 +187,12 @@ abstract class TransportLayerConnection protected constructor(
          * Creates a [TransportLayerConnection] instance based on the transport protocol and IP version of the supplied packet.
          *
          * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
+         * @param componentManager The [ComponentManager] instance to use for this connection.
+         * @param deviceWriter The [Handler] used to write packets to the device's TUN interface.
          */
         fun getInstance(
             initialPacket: IpPacket,
-            componentManager: de.tomcory.heimdall.core.vpn.components.ComponentManager,
+            componentManager: ComponentManager,
             deviceWriter: Handler,)
         : TransportLayerConnection? {
 

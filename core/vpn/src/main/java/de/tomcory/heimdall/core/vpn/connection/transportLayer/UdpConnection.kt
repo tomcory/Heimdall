@@ -170,4 +170,6 @@ class UdpConnection internal constructor(
             Timber.e("udp$id UDP connection's channel triggered an event that isn't OP_READ")
         }
     }
+
+    override fun closeHardImpl() {}
 }
