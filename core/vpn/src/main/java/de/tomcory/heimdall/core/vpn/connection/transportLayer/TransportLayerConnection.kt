@@ -116,10 +116,10 @@ abstract class TransportLayerConnection protected constructor(
 
     protected fun passInboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
-            throw java.lang.IllegalStateException("Inbound data without an encryption layer instance!")
-        } else {
-            encryptionLayer?.unwrapInbound(payload)
+            Timber.w("${protocol.lowercase()}$id Inbound data without an encryption layer instance, creating one...")
+            encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, payload, true)
         }
+        encryptionLayer?.unwrapInbound(payload)
     }
 
     protected fun createDatabaseEntity(): Int {

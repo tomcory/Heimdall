@@ -29,6 +29,8 @@ class TlsConnection(
         }
     }
 
+    override val protocol = "TLS"
+
     private var state: ConnectionState = ConnectionState.NEW
     private var hostname: String = transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: ""
 

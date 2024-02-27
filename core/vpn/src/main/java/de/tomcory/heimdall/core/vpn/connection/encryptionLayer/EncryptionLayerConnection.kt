@@ -13,6 +13,11 @@ abstract class EncryptionLayerConnection(
 ) {
 
     /**
+     * The connection's encryption protocol's name.
+     */
+    protected abstract val protocol: String
+
+    /**
      * Reference to the connection's application layer handler.
      */
     private var appLayer: AppLayerConnection? = null
@@ -35,11 +40,10 @@ abstract class EncryptionLayerConnection(
 
     fun passInboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
-            Timber.e("$id Inbound data without an application layer instance!")
-            throw java.lang.IllegalStateException("Inbound data without an application layer instance!")
-        } else {
-            appLayer?.unwrapInbound(payload)
+            Timber.w("${protocol.lowercase()}$id Inbound data without an application layer instance, creating one...")
+            appLayer = AppLayerConnection.getInstance(payload, id, this, componentManager, true)
         }
+        appLayer?.unwrapInbound(payload)
     }
 
     /**
@@ -70,13 +74,15 @@ abstract class EncryptionLayerConnection(
          * Creates an [EncryptionLayerConnection] instance based on the protocol of the supplied payload (must be the very first transport-layer payload of the connection).
          * You still need to call [unwrapOutbound] to actually process the payload once the instance is created.
          *
-         * @param id
-         * @param transportLayer
-         * @param componentManager The ComponentManager responsible for the VPN session.
-         * @param rawPayload The connection's first raw transport-layer payload.
+         * @param id The ID of the connection stack.
+         * @param transportLayer The [TransportLayerConnection] instance underlying this connection.
+         * @param componentManager The [ComponentManager] instance to use for this connection.
+         * @param rawPayload The connection's first raw outbound transport-layer payload.
          */
-        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray): EncryptionLayerConnection {
-            return if (detectTls(rawPayload)) {
+        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray, isInbound: Boolean = false): EncryptionLayerConnection {
+            return if (isInbound) {
+                PlaintextConnection(id, transportLayer, componentManager)
+            } else if (detectTls(rawPayload)) {
                 TlsConnection(id, transportLayer, componentManager)
             } else if(detectQuic(rawPayload)) {
                 QuicConnection(id, transportLayer, componentManager)
@@ -85,8 +91,17 @@ abstract class EncryptionLayerConnection(
             }
         }
 
-        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet): EncryptionLayerConnection {
-            return getInstance(id, transportLayer, componentManager, packet.rawData)
+        /**
+         * Creates an [EncryptionLayerConnection] instance based on the protocol of the supplied packet (must be the very first transport-layer packet of the connection).
+         * You still need to call [unwrapOutbound] to actually process the packet once the instance is created.
+         *
+         * @param id The ID of the connection stack.
+         * @param transportLayer The [TransportLayerConnection] instance underlying this connection.
+         * @param componentManager The [ComponentManager] instance to use for this connection.
+         * @param packet The connection's first outbound transport-layer [Packet].
+         */
+        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet, isInbound: Boolean = false): EncryptionLayerConnection {
+            return getInstance(id, transportLayer, componentManager, packet.rawData, isInbound)
         }
 
         private fun detectTls(rawPayload: ByteArray): Boolean {

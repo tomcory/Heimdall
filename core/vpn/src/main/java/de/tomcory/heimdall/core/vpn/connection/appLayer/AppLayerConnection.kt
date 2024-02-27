@@ -29,13 +29,17 @@ abstract class AppLayerConnection(
         /**
          * Creates an [AppLayerConnection] instance based on the application protocol of the supplied payload (must be the very first application-layer payload of the connection).
          * You still need to call [unwrapOutbound] to actually process the payload once the instance is created.
-         * @param payload
-         * @param id
-         * @param encryptionLayer
+         * @param payload The first outbound payload of the connection.
+         * @param id The ID of the connection stack.
+         * @param encryptionLayer The [EncryptionLayerConnection] instance underlying this connection.
+         * @param componentManager The [ComponentManager] instance to use for this connection.
+         * @param isInbound Set to true if you need to create an instance based on inbound data. Created instances will be of type [RawConnection] if set to true.
          */
-        fun getInstance(payload: ByteArray, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
+        fun getInstance(payload: ByteArray, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
             return try {
-                if(encryptionLayer.transportLayer.remotePort == 53) {
+                if(isInbound) {
+                    RawConnection(id, encryptionLayer, componentManager)
+                } else if(encryptionLayer.transportLayer.remotePort == 53) {
                     DnsConnection(id, encryptionLayer, componentManager)
                 } else if(payload.size > 7 && HTTP_KEYWORDS.any { String(payload.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)
@@ -50,13 +54,17 @@ abstract class AppLayerConnection(
         /**
          * Creates an [AppLayerConnection] instance based on the application protocol of the supplied payload (must be the very first application-layer payload of the connection).
          * You still need to call [unwrapOutbound] to actually process the payload once the instance is created.
-         * @param packet
-         * @param id
-         * @param encryptionLayer
+         * @param packet The first outbound packet of the connection.
+         * @param id The ID of the connection stack.
+         * @param encryptionLayer The [EncryptionLayerConnection] instance underlying this connection.
+         * @param componentManager The [ComponentManager] instance to use for this connection.
+         * @param isInbound Set to true if you need to create an instance based on inbound data. Created instances will be of type [RawConnection] if set to true.
          */
-        fun getInstance(packet: Packet, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager): AppLayerConnection {
+        fun getInstance(packet: Packet, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
             return try {
-                if(packet is DnsPacket) {
+                if(isInbound) {
+                    RawConnection(id, encryptionLayer, componentManager)
+                } else if(packet is DnsPacket) {
                     DnsConnection(id, encryptionLayer, componentManager)
                 } else if(packet.rawData.size > 7 && HTTP_KEYWORDS.any { String(packet.rawData.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)

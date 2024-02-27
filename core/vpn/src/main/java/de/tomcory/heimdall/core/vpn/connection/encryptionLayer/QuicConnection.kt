@@ -22,6 +22,8 @@ class QuicConnection(
         doMitm = false
     }
 
+    override val protocol = "QUIC"
+
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
         passOutboundToAppLayer(payload)

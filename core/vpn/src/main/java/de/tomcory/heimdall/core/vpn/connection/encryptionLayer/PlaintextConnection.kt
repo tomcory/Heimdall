@@ -21,6 +21,8 @@ class PlaintextConnection(
         }
     }
 
+    override val protocol = "PLAIN"
+
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
         passOutboundToAppLayer(payload)
