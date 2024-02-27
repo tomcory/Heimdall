@@ -154,7 +154,7 @@ class HeimdallVpnService : VpnService() {
         }
 
         // establish the VPN interface
-        if (!establishInterface(useProxy)) {
+        if (!establishInterface(doMitm, useProxy)) {
             // shut down the VPN components if the interface could not be established
             stopSelf()
             return
@@ -187,7 +187,7 @@ class HeimdallVpnService : VpnService() {
      * @return Whether the VPN interface was established successfully.
      * @see [launchServiceComponents]
      */
-    private suspend fun establishInterface(useProxy: Boolean): Boolean {
+    private suspend fun establishInterface(doMitm: Boolean, useProxy: Boolean): Boolean {
 
         // only establish the VPN interface if it is not already established
         if (vpnInterface != null) {
@@ -345,6 +345,12 @@ class HeimdallVpnService : VpnService() {
             // if we're not using a whitelist, we have to add Heimdall to the blacklist so that we don't monitor ourselves
             blacklist.add("de.tomcory.heimdall")
             builder.addDisallowedApplication("de.tomcory.heimdall")
+
+            // if we're performing MitM, we also have to add Chrome to the blacklist because it doesn't work with MitM
+            if(doMitm && !blacklist.contains("com.android.chrome")) {
+                blacklist.add("com.android.chrome")
+                builder.addDisallowedApplication("com.android.chrome")
+            }
         }
 
         val debugString = StringBuilder()
