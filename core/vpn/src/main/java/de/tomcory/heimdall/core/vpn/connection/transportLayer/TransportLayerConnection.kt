@@ -157,16 +157,13 @@ abstract class TransportLayerConnection protected constructor(
 
     abstract fun wrapInbound(payload: ByteArray)
 
-    abstract fun closeHardImpl()
+    abstract fun closeClientSession()
 
     /**
      * Closes the connection's outward-facing [SelectableChannel], performs protocol-specific steps to close the client-side session and removes the connection from the [ConnectionCache]
      */
     fun closeHard() {
-        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection")
         closeSoft()
-        closeHardImpl()
-        state = TransportLayerState.CLOSED
         ConnectionCache.removeConnection(this)
     }
 
@@ -174,12 +171,16 @@ abstract class TransportLayerConnection protected constructor(
      * Closes the connection's outward-facing [SelectableChannel] but doesn't remove the connection from the [ConnectionCache]
      */
     fun closeSoft() {
+        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection")
         state = TransportLayerState.CLOSING
         try {
+            selectionKey?.cancel()
             selectableChannel.close()
         } catch (e: Exception) {
             Timber.e(e, "${protocol.lowercase()}${id} Error closing SelectableChannel")
         }
+        closeClientSession()
+        state = TransportLayerState.CLOSED
     }
 
     companion object {

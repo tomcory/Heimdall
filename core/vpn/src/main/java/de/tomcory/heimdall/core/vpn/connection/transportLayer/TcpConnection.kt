@@ -340,9 +340,8 @@ class TcpConnection internal constructor(
     /**
      * Closes the client-side connection by sending a RST packet and setting the connection's state to ABORTED.
      */
-    override fun closeHardImpl() {
+    override fun closeClientSession() {
         state = TransportLayerState.ABORTED
-        selectionKey?.cancel()
         val rstResponse = ipPacketBuilder.buildPacket(buildRst())
         writeToDevice(rstResponse)
     }

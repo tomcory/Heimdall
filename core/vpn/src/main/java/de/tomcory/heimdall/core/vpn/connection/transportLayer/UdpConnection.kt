@@ -171,5 +171,5 @@ class UdpConnection internal constructor(
         }
     }
 
-    override fun closeHardImpl() {}
+    override fun closeClientSession() {}
 }
