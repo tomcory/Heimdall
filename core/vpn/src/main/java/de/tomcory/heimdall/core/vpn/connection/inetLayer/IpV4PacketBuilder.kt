@@ -11,9 +11,9 @@ import timber.log.Timber
 import java.net.Inet4Address
 
 /**
- * Represents a connection based on IP version 4.
+ * Represents a connection based on IPv4. This class is used to build new IPv4 packets and to store the necessary metadata for the connection
  *
- * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
+ * @param initialPacket [IpV4Packet] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
  */
 class IpV4PacketBuilder(
     initialPacket: IpV4Packet
@@ -27,12 +27,18 @@ class IpV4PacketBuilder(
     /**
      * IPv4 type of service used by this connection.
      */
-    val tos: IpV4Tos? = initialPacket.header.tos
+    private val tos: IpV4Tos? = initialPacket.header.tos
     /**
      * IPv4 identification header value used by [buildPacket] to construct packets for this connection.
      */
-    var identification: Short = 0
+    private var identification: Short = 0
 
+    /**
+     * Builds a new [IpV4Packet] with the specified payload.
+     *
+     * @param payloadBuilder The [Packet.Builder] used to build the payload of the packet.
+     * @return The newly created [IpV4Packet].
+     */
     override fun buildPacket(payloadBuilder: Packet.Builder?): IpPacket {
         val safeTos = tos ?: PacketFactories.getFactory(IpV4Tos::class.java, NotApplicable::class.java).newInstance(byteArrayOf(0), 0, 1)
         if(tos == null) {
@@ -61,6 +67,14 @@ class IpV4PacketBuilder(
     }
 
     companion object {
+
+        /**
+         * Builds a new [IpV4Packet] with the specified payload. This method is used to create a response to a stray packet, i.e. a packet that does not belong to any known connection.
+         *
+         * @param strayPacket The [IpV4Packet] from which the necessary metadata is extracted to create the instance.
+         * @param payloadBuilder The [Packet.Builder] used to build the payload of the packet.
+         * @return The newly created [IpV4Packet].
+         */
         internal fun buildStray(strayPacket: IpV4Packet, payloadBuilder: Packet.Builder?): IpV4Packet {
             return IpV4Packet.Builder()
                 .version(IpVersion.IPV4)

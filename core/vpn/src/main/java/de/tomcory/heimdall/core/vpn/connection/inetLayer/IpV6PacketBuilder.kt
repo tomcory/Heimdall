@@ -9,9 +9,9 @@ import org.pcap4j.packet.namednumber.IpVersion
 import java.net.Inet6Address
 
 /**
- * Represents a connection based on IP version 6.
+ * Represents a connection based on IPv6. This class is used to build new IPv6 packets and to store the necessary metadata for the connection
  *
- * @param initialPacket [IpPacket] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
+ * @param initialPacket [IpV6Packet] from which the necessary metadata is extracted to create the instance (ideally the very first packet of a new socket).
  */
 class IpV6PacketBuilder(
     initialPacket: IpV6Packet
@@ -25,13 +25,19 @@ class IpV6PacketBuilder(
     /**
      * IPv6 traffic class used by this connection.
      */
-    val trafficClass: IpV6TrafficClass = initialPacket.header.trafficClass
+    private val trafficClass: IpV6TrafficClass = initialPacket.header.trafficClass
 
     /**
      * IPv6 flow label used by this connection.
      */
-    val flowLabel: IpV6FlowLabel = initialPacket.header.flowLabel
+    private val flowLabel: IpV6FlowLabel = initialPacket.header.flowLabel
 
+    /**
+     * Builds a new [IpV6Packet] with the specified payload.
+     *
+     * @param payloadBuilder The [Packet.Builder] used to build the payload of the packet.
+     * @return The newly created [IpV6Packet].
+     */
     override fun buildPacket(payloadBuilder: Packet.Builder?): IpPacket {
         return IpV6Packet.Builder()
             .version(IpVersion.IPV6)
@@ -47,6 +53,14 @@ class IpV6PacketBuilder(
     }
 
     companion object {
+
+        /**
+         * Builds a new [IpV6Packet] with the specified payload. This method is used to create a response to a stray packet, i.e. a packet that does not belong to any known connection.
+         *
+         * @param strayPacket The [IpV6Packet] from which the necessary metadata is extracted to create the instance.
+         * @param payloadBuilder The [Packet.Builder] used to build the payload of the packet.
+         * @return The newly created [IpV6Packet].
+         */
         internal fun buildStray(strayPacket: IpV6Packet, payloadBuilder: Packet.Builder?): IpV6Packet {
             return IpV6Packet.Builder()
                 .version(IpVersion.IPV6)
