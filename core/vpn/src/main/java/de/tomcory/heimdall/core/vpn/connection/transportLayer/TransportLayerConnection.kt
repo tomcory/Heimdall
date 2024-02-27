@@ -171,7 +171,7 @@ abstract class TransportLayerConnection protected constructor(
      * Closes the connection's outward-facing [SelectableChannel] but doesn't remove the connection from the [ConnectionCache]
      */
     fun closeSoft() {
-        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection")
+        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort (${remoteHost})...")
         state = TransportLayerState.CLOSING
         try {
             selectionKey?.cancel()
@@ -213,7 +213,8 @@ abstract class TransportLayerConnection protected constructor(
 //                        null
 //                    } else
                     if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
-                        Timber.w("Resetting unknown TCP packet to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
+                        val headerString = if(tcpPacket.header.fin) "FIN" else "" + if(tcpPacket.header.ack) "ACK" else "" + if (tcpPacket.header.rst) "RST" else ""
+                        Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {

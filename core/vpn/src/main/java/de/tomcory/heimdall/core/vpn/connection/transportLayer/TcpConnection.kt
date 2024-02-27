@@ -3,6 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 import android.net.VpnService
 import android.os.Handler
 import android.system.OsConstants
+import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
@@ -218,17 +219,17 @@ class TcpConnection internal constructor(
                 // establishing handshake complete, set status to CONNECTED
                 state = TransportLayerState.CONNECTED
             }
-            TransportLayerState.CONNECTED -> {
+            TransportLayerState.CONNECTED, TransportLayerState.CLOSED -> {
                 // ignore empty ACK packets, there is no packet loss that would make acknowledgements useful
             }
             TransportLayerState.CLOSING -> {
-                // closing handshake complete, set status to CLOSED
+                // closing handshake complete, set status to CLOSED and remove the connection from the cache
                 state = TransportLayerState.CLOSED
-                de.tomcory.heimdall.core.vpn.cache.ConnectionCache.removeConnection(this)
+                ConnectionCache.removeConnection(this)
             }
             else -> {
                 // there is no good reason for an acknowledgement in any other flow state, abort
-                Timber.e("tcp$id Got ACK (empty, invalid state $state)")
+                Timber.w("tcp$id Got ACK (empty, invalid state $state)")
                 closeHard()
             }
         }
@@ -236,7 +237,7 @@ class TcpConnection internal constructor(
 
     private fun handleSynAck() {
         // SYN ACK packets should not be sent by the client, abort
-        Timber.e("tcp$id Got SYN ACK (invalid)")
+        Timber.w("tcp$id Got SYN ACK (invalid)")
         closeHard()
     }
 
@@ -468,6 +469,5 @@ class TcpConnection internal constructor(
                 return null
             }
         }
-
     }
 }
