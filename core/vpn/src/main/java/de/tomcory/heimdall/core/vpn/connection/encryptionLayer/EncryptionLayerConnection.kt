@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.appLayer.AppLayerConnection
+import de.tomcory.heimdall.core.vpn.connection.appLayer.RawConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import org.pcap4j.packet.Packet
 import timber.log.Timber
@@ -22,8 +23,16 @@ abstract class EncryptionLayerConnection(
      */
     private var appLayer: AppLayerConnection? = null
 
+    /**
+     * Indicates whether to perform a man-in-the-middle attack on this connection.
+     */
     var doMitm = componentManager.doMitm
 
+    /**
+     * Passes an outbound payload to the application layer, creating an [AppLayerConnection] instance if necessary.
+     *
+     * @param payload The outbound payload to pass to the application layer.
+     */
     fun passOutboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
             appLayer = AppLayerConnection.getInstance(payload, id, this, componentManager)
@@ -31,13 +40,26 @@ abstract class EncryptionLayerConnection(
         appLayer?.unwrapOutbound(payload)
     }
 
-        fun passOutboundToAppLayer(packet: Packet) {
+    /**
+     * Passes an outbound [Packet] to the application layer, creating an [AppLayerConnection] instance if necessary.
+     *
+     * @param packet The [Packet] to pass to the application layer.
+     */
+    fun passOutboundToAppLayer(packet: Packet) {
         if(appLayer == null) {
             appLayer = AppLayerConnection.getInstance(packet, id, this, componentManager)
         }
         appLayer?.unwrapOutbound(packet)
     }
 
+    /**
+     * Passes an inbound payload to the application layer, creating an [AppLayerConnection] instance if necessary.
+     *
+     * Note: Normally, the application layer should already be created by the time inbound data is received.
+     * The creation of an application layer instance here is a fallback and will result in a [RawConnection] being created.
+     *
+     * @param payload The inbound payload to pass to the application layer.
+     */
     fun passInboundToAppLayer(payload: ByteArray) {
         if(appLayer == null) {
             Timber.w("${protocol.lowercase()}$id Inbound data without an application layer instance, creating one...")
@@ -47,24 +69,37 @@ abstract class EncryptionLayerConnection(
     }
 
     /**
-     * Receives an outbound payload from the transport layer, processes it and passes it up to the application layer.
+     * Receives a raw outbound payload from the transport layer, processes it and passes it up to the application layer.
+     *
+     * @param payload The raw outbound payload to process and forward to the application layer.
      */
     abstract fun unwrapOutbound(payload: ByteArray)
 
+    /**
+     * Receives an outbound [Packet] from the transport layer, processes its payload and passes it up to the application layer.
+     *
+     * @param packet The [Packet] to process and forward to the application layer.
+     */
     abstract fun unwrapOutbound(packet: Packet)
 
     /**
-     * Receives an inbound payload from the transport layer, processes it and passes it up to the application layer.
+     * Receives a raw inbound payload from the transport layer, processes it and passes it up to the application layer.
+     *
+     * @param payload The raw inbound payload to process and forward to the application layer.
      */
     abstract fun unwrapInbound(payload: ByteArray)
 
     /**
      * Receives an outbound payload from the application layer, processes it and passes it down to the transport layer.
+     *
+     * @param payload The outbound payload to process and forward to the transport layer.
      */
     abstract fun wrapOutbound(payload: ByteArray)
 
     /**
      * Receives an inbound payload from the application layer, processes it and passes it down to the transport layer.
+     *
+     * @param payload The inbound payload to process and forward to the transport layer.
      */
     abstract fun wrapInbound(payload: ByteArray)
 
