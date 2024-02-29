@@ -42,13 +42,20 @@ class UdpConnection internal constructor(
     ipPacketBuilder = ipPacketBuilder
 ) {
     override val protocol = "UDP"
-    override val id = createDatabaseEntity()
-    override val selectableChannel: DatagramChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
-    override val selectionKey = connectChannel(componentManager.selector)
-    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
-    override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
+    override val appId: Int?
+    override val appPackage: String?
+    override val id: Int
+    override val selectableChannel: DatagramChannel
+    override val selectionKey: SelectionKey?
 
     init {
+        // these values must be initialised in this order because they each depend on the previous one
+        appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
+        appPackage = componentManager.appFinder.getAppPackage(appId)
+        id = createDatabaseEntity()
+        selectableChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+        selectionKey = connectChannel(componentManager.selector)
+
         if(id > 0) {
             Timber.d("udp$id Creating UDP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
         }

@@ -53,13 +53,20 @@ class TcpConnection internal constructor(
     private var ourSeqNum = ourInitSeqNum
 
     override val protocol = "TCP"
-    override val id = createDatabaseEntity()
-    override val selectableChannel: SocketChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
-    override val selectionKey = connectChannel(componentManager.selector)
-    override val appId: Int? = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
-    override val appPackage: String? = componentManager.appFinder.getAppPackage(appId)
+    override val appId: Int?
+    override val appPackage: String?
+    override val id: Int
+    override val selectableChannel: SocketChannel
+    override val selectionKey: SelectionKey?
 
     init {
+        // these values must be initialised in this order because they each depend on the previous one
+        appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
+        appPackage = componentManager.appFinder.getAppPackage(appId)
+        id = createDatabaseEntity()
+        selectableChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+        selectionKey = connectChannel(componentManager.selector)
+
         if(id > 0) {
             Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
         }

@@ -48,6 +48,9 @@ abstract class TransportLayerConnection protected constructor(
         ABORTED
     }
 
+    /**
+     * The connection's unique identifier.
+     */
     protected abstract val id: Int
 
     /**
