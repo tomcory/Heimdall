@@ -75,13 +75,17 @@ class CertificateSniffingMitmManager(authority: Authority?) {
         throw IllegalStateException("Required java.security.cert.X509Certificate, found: $peerCert")
     }
 
-    fun getCommonName(c: X509Certificate): String {
-        for (each in c.subjectDN.name.split(",\\s*").toTypedArray()) {
-            if (each.startsWith("CN=")) {
-                return each.substring(3)
-            }
+    private fun getCommonName(c: X509Certificate): String {
+        val cnIndex = c.subjectDN.name.indexOf("CN=", ignoreCase = true)
+        if (cnIndex == -1 || cnIndex + 3 >= c.subjectDN.name.length) {
+            throw IllegalStateException("Missing CN in Subject DN: " + c.subjectDN)
         }
-        throw IllegalStateException("Missed CN in Subject DN: " + c.subjectDN)
+        val cnEndIndex = c.subjectDN.name.indexOf(",", cnIndex)
+        return if (cnEndIndex == -1) {
+            c.subjectDN.name.substring(cnIndex + 3).trim()
+        } else {
+            c.subjectDN.name.substring(cnIndex + 3, cnEndIndex).trim()
+        }
     }
 
     //TODO: singleton isn't ideal here; it would be better to attach it to the VpnService lifecycle
