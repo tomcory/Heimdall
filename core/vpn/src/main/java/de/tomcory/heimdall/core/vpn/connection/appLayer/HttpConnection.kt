@@ -34,6 +34,8 @@ class HttpConnection(
     private var statedContentLength = -1
     private var remainingContentLength = -1
 
+    private val maximumMessageSize = 1024 * 1024 // 1 MB
+
     /**
      * Channel for passing the request ID from the HTTP request insertion coroutine to the HTTP response insertion coroutine.
      */
@@ -68,12 +70,12 @@ class HttpConnection(
 
             // parse the raw bytes
             val message = assembledPayload.toString(Charsets.UTF_8)
-            val lowercaseMessage = message.lowercase()
 
-            if(!message.contains("\r\n\r\n")) {
+            val headerLength = message.indexOf("\r\n\r\n") + 4
+            if(headerLength < 0) {
                 // if the message doesn't contain the end of the headers, cache the chunk and wait for more
                 Timber.w("http$id incomplete headers")
-                previousPayload += assembledPayload
+                previousPayload = assembledPayload
                 return
             } else {
                 if(previousPayload.isNotEmpty()) {
@@ -82,18 +84,21 @@ class HttpConnection(
                 previousPayload = ByteArray(0)
             }
 
+            val lowercaseHeaders = message.substring(0, headerLength).lowercase()
+
             // the message is "officially" chunked only if this header is present
-            chunked = lowercaseMessage.contains("transfer-encoding: chunked")
+            chunked = lowercaseHeaders.contains("transfer-encoding: chunked")
             if(chunked) {
                 Timber.d("http$id chunked")
             }
 
             // messages can still overflow, which we can check by comparing the stated and actual content lengths
             overflowing = if(!chunked) {
-                val lengthIndex = lowercaseMessage.indexOf("content-length: ")
+                val lengthIndex = lowercaseHeaders.indexOf("content-length: ")
+
                 statedContentLength = if(lengthIndex > 0) {
-                    val endOfContentLength = lowercaseMessage.indexOf("\r\n", lengthIndex + 16)
-                    lowercaseMessage.substring(lengthIndex + 16, endOfContentLength).toIntOrNull() ?: -1
+                    val endOfContentLength = lowercaseHeaders.indexOf("\r\n", lengthIndex + 16)
+                    lowercaseHeaders.substring(lengthIndex + 16, endOfContentLength).toIntOrNull() ?: -1
                 } else {
                     -1
                 }
@@ -168,7 +173,7 @@ class HttpConnection(
                     connectionId = id,
                     timestamp = System.currentTimeMillis(),
                     headers = headers ?: emptyMap(),
-                    content = body ?: "",
+                    content = if(body == null) "" else if(body.length > maximumMessageSize) "<too large: ${body.length} bytes>" else body,
                     contentLength = body?.length ?: 0,
                     method = statusLine?.get(0) ?: "",
                     remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
@@ -190,7 +195,7 @@ class HttpConnection(
                     requestId = requestId,
                     timestamp = System.currentTimeMillis(),
                     headers = headers ?: emptyMap(),
-                    content = body ?: "",
+                    content = if(body == null) "" else if(body.length > maximumMessageSize) "<too large: ${body.length} bytes>" else body,
                     contentLength = body?.length ?: 0,
                     statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
                     statusMsg = statusLine?.get(2) ?: "",
