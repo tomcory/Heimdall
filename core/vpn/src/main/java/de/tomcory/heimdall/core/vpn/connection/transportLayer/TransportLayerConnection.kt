@@ -147,6 +147,12 @@ abstract class TransportLayerConnection protected constructor(
         }
     }
 
+    protected fun deleteDatabaseEntity() {
+        runBlocking {
+            componentManager.databaseConnector.deleteTransportLayerConnection(id)
+        }
+    }
+
     /**
      * Constructs a transport-layer payload [Packet.Builder] to be used by [IpPacketBuilder.buildPacket].
      */

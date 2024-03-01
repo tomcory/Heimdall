@@ -15,6 +15,9 @@ interface ConnectionDao {
     @Update
     suspend fun update(vararg connections: Connection)
 
+    @Query("DELETE FROM Connection WHERE id = :id")
+    suspend fun delete(id: Int): Int
+
     @Query("UPDATE Connection SET bytesOut = bytesIn + :delta WHERE id = :id")
     suspend fun updateBytesOut(id: Int, delta: Int)
 

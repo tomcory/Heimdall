@@ -65,6 +65,15 @@ class RoomDatabaseConnector(
         return if (ids.isNotEmpty()) ids.first().toInt() else -1
     }
 
+    override suspend fun deleteTransportLayerConnection(id: Int): Int {
+        return try {
+            database.connectionDao().delete(id)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while deleting transport layer connection")
+            -1
+        }
+    }
+
     override suspend fun persistHttpRequest(
         connectionId: Int,
         timestamp: Long,

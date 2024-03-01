@@ -3,6 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 import android.net.VpnService
 import android.os.Handler
 import android.system.OsConstants
+import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import org.pcap4j.packet.Packet
@@ -28,7 +29,7 @@ import java.util.Arrays
  * @param ipPacketBuilder
  */
 class UdpConnection internal constructor(
-    componentManager: de.tomcory.heimdall.core.vpn.components.ComponentManager,
+    componentManager: ComponentManager,
     deviceWriter: Handler,
     initialPacket: UdpPacket,
     ipPacketBuilder: IpPacketBuilder,
@@ -53,11 +54,30 @@ class UdpConnection internal constructor(
         appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
         appPackage = componentManager.appFinder.getAppPackage(appId)
         id = createDatabaseEntity()
-        selectableChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
-        selectionKey = connectChannel(componentManager.selector)
 
         if(id > 0) {
             Timber.d("udp$id Creating UDP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
+        }
+
+        selectableChannel = try {
+            openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+        } catch (e: Exception) {
+            Timber.e("tcp$id Error while creating UDP connection: ${e.message}")
+            state = TransportLayerState.ABORTED
+            deleteDatabaseEntity()
+            DatagramChannel.open()
+        }
+        selectionKey = if(state != TransportLayerState.ABORTED) {
+            try {
+                connectChannel(componentManager.selector)
+            } catch (e: Exception) {
+                Timber.e("tcp$id Error while creating UDP connection: ${e.message}")
+                state = TransportLayerState.ABORTED
+                deleteDatabaseEntity()
+                null
+            }
+        } else {
+            null
         }
     }
 
@@ -76,7 +96,7 @@ class UdpConnection internal constructor(
 
     private fun connectChannel(selector: Selector): SelectionKey? {
         // register OP_READ interest for the channel
-        synchronized(de.tomcory.heimdall.core.vpn.components.ComponentManager.selectorMonitor) {
+        synchronized(ComponentManager.selectorMonitor) {
             selector.wakeup()
             val selectionKey = try {
                 selectableChannel.register(selector, SelectionKey.OP_READ)
@@ -123,11 +143,17 @@ class UdpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
+        if(state == TransportLayerState.ABORTED) {
+            return
+        }
         val forwardPacket = ipPacketBuilder.buildPacket(buildPayload(payload))
         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_UDP, forwardPacket))
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
+        if(state == TransportLayerState.ABORTED) {
+            return
+        }
         passOutboundToEncryptionLayer(outgoingPacket.payload)
     }
 
@@ -156,7 +182,7 @@ class UdpConnection internal constructor(
                     Timber.e(e, "udp$id Error reading data from DatagramChannel")
                     bytesRead = -1
                 }
-            } while (bytesRead > 0) //TODO: improve
+            } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
 
             // no need to keep DNS connections open after the first and only packet
             if (remotePort == 53) {

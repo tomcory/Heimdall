@@ -25,6 +25,10 @@ interface DatabaseConnector {
         isTracker: Boolean
     ): Int
 
+    suspend fun deleteTransportLayerConnection(
+        id: Int
+    ): Int
+
     suspend fun persistHttpRequest(
         connectionId: Int,
         timestamp: Long,

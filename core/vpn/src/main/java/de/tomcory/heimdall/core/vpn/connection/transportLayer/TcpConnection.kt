@@ -64,14 +64,42 @@ class TcpConnection internal constructor(
         appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
         appPackage = componentManager.appFinder.getAppPackage(appId)
         id = createDatabaseEntity()
-        selectableChannel = openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
-        selectionKey = connectChannel(componentManager.selector)
 
         if(id > 0) {
             Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
         }
+
+        selectableChannel = try {
+            openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+        } catch (e: Exception) {
+            Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
+            state = TransportLayerState.ABORTED
+            deleteDatabaseEntity()
+            SocketChannel.open()
+        }
+        selectionKey = if(state != TransportLayerState.ABORTED) {
+            try {
+                connectChannel(componentManager.selector)
+            } catch (e: Exception) {
+                Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
+                state = TransportLayerState.ABORTED
+                deleteDatabaseEntity()
+                null
+            }
+        } else {
+            null
+        }
     }
 
+    /**
+     * Opens a [SocketChannel] and protects it with the supplied [VpnService].
+     * Throws all exceptions that occur during the process.
+     *
+     * @param remoteAddress The remote address to connect to.
+     * @param vpnService The [VpnService] to protect the channel from.
+     *
+     * @return the opened and protected [SocketChannel]
+     */
     private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
         state = TransportLayerState.CONNECTING
         val selectableChannel = SocketChannel.open()
@@ -104,6 +132,9 @@ class TcpConnection internal constructor(
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
+        if(state == TransportLayerState.ABORTED) {
+            return
+        }
         val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
         if (tcpHeader.ack) {
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
@@ -122,6 +153,9 @@ class TcpConnection internal constructor(
     }
 
     override fun unwrapInbound() {
+        if(state == TransportLayerState.ABORTED) {
+            return
+        }
         if(selectionKey == null) {
             Timber.e("tcp$id SelectionKey is null")
             state = TransportLayerState.ABORTED
@@ -261,7 +295,7 @@ class TcpConnection internal constructor(
     }
 
     private fun handleFin() {
-        if (state == TransportLayerState.CLOSED) {
+        if (state == TransportLayerState.CLOSED || state == TransportLayerState.ABORTED) {
             // the connection is already closed, abort
             closeHard()
         } else {
@@ -295,7 +329,7 @@ class TcpConnection internal constructor(
             }  catch (e: IOException) {
                 bytesRead = -1
             }
-        } while (bytesRead > 0) //TODO: improve
+        } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
 
         // SocketChannel is closed
         if (bytesRead == -1) {
@@ -303,7 +337,7 @@ class TcpConnection internal constructor(
             if (state == TransportLayerState.CLOSING) {
                 // client and server agree that the connection is close
                 state = TransportLayerState.CLOSED
-                de.tomcory.heimdall.core.vpn.cache.ConnectionCache.removeConnection(this)
+                ConnectionCache.removeConnection(this)
             } else {
                 // connection closed by server, move to CLOSING state and send a FIN to initiate the local closing handshake
                 Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
