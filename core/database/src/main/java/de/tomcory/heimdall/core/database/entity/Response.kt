@@ -20,7 +20,6 @@ import androidx.room.PrimaryKey
 data class Response(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
-    val connectionId: Int,
     val requestId: Int,
     val timestamp: Long,
     val headers: String,

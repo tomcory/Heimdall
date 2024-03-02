@@ -62,13 +62,13 @@ public class HeimdallHttpProxyServer {
         };
     }
 
-    public void start() {
+    public void start(int sessionId) {
         HttpProxyServerBootstrap serverBootstrap = DefaultHttpProxyServer
                         .bootstrap()
                         .withAddress(listeningAddress)
                         .withManInTheMiddle(getMitmManager())
                         .withTransparent(true)
-                        .withFiltersSource(new HttpProxyFiltersSourceImpl(context, database));
+                        .withFiltersSource(new HttpProxyFiltersSourceImpl(context, database, sessionId));
 
         Timber.d("Proxy server prepared");
 

@@ -39,6 +39,7 @@ class ComponentManager(
     private val inboundStream: FileOutputStream,
     val databaseConnector: DatabaseConnector,
     val vpnService: VpnService?,
+    existingSessionId: Int = -1,
     val doMitm: Boolean = false,
     val maxPacketSize: Int = 16413,
     private val trackerTrie: Trie<String> = Trie {
@@ -95,7 +96,11 @@ class ComponentManager(
             populateTrieFromRawFile(it.applicationContext, R.raw.adhosts, trackerTrie)
         }
 
-        sessionId = runBlocking { return@runBlocking databaseConnector.persistSession(System.currentTimeMillis()) }
+        sessionId = if(existingSessionId < 0) {
+            runBlocking { return@runBlocking databaseConnector.persistSession(System.currentTimeMillis()) }
+        } else {
+            existingSessionId
+        }
 
         /*
          * Create and start the traffic handler threads. Since the threads rely on handlers to pass messages to each other

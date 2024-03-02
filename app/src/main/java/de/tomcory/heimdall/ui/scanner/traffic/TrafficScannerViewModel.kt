@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.entity.Session
 import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
 import de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.util.InetAddressUtils
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -194,9 +196,21 @@ class TrafficScannerViewModel @Inject constructor(
                 context,
                 database
             )
-            proxyServer.start()
+
+            val sessionId = persistSession(System.currentTimeMillis())
+            proxyServer.start(sessionId)
             proxyServer
         }
+    }
+
+    private suspend fun persistSession(startTime: Long): Int {
+        val ids = try {
+            database.sessionDao().insert(Session(startTime = startTime))
+        } catch (e: Exception) {
+            Timber.e(e, "Error while persisting session")
+            emptyList()
+        }
+        return if (ids.isNotEmpty()) ids.first().toInt() else -1
     }
 
     private suspend fun stopProxyAndVpn(context: Context, proxyServer: HeimdallHttpProxyServer?) {

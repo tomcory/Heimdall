@@ -16,9 +16,12 @@ public class HttpProxyFiltersSourceImpl extends HttpFiltersSourceAdapter {
     private final Context context;
     private final HeimdallDatabase database;
 
-    public HttpProxyFiltersSourceImpl(Context context, HeimdallDatabase database) {
+    private final int sessionId;
+
+    public HttpProxyFiltersSourceImpl(Context context, HeimdallDatabase database, int sessionId) {
         this.context = context;
         this.database = database;
+        this.sessionId = sessionId;
     }
 
     @Override
@@ -27,7 +30,7 @@ public class HttpProxyFiltersSourceImpl extends HttpFiltersSourceAdapter {
         return new HttpProxyFiltersImpl(
             originalRequest,
             ctx,
-            (InetSocketAddress) ctx.channel().remoteAddress(), context, database);
+            (InetSocketAddress) ctx.channel().remoteAddress(), context, database, sessionId);
     }
 
     @Override

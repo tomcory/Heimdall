@@ -69,6 +69,8 @@ class HeimdallVpnService : VpnService() {
      * @see [STOP_SERVICE]
      */
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
+        val existingSessionId = intent.getIntExtra("de.tomcory.heimdall.core.vpn.SESSION_ID", -1)
+
         return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
             START_SERVICE -> {
@@ -79,7 +81,7 @@ class HeimdallVpnService : VpnService() {
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     Timber.d("Launching service components...")
-                    launchServiceComponents()
+                    launchServiceComponents(existingSessionId)
                     Timber.d("VpnService started")
                     preferences.setVpnActive(true)
                     preferences.setVpnLastUpdated(System.currentTimeMillis())
@@ -136,7 +138,7 @@ class HeimdallVpnService : VpnService() {
      * @return Whether the VPN interface was established successfully.
      * @see [onStartCommand]
      */
-    private suspend fun launchServiceComponents() {
+    private suspend fun launchServiceComponents(existingSessionId: Int) {
 
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
@@ -167,7 +169,8 @@ class HeimdallVpnService : VpnService() {
                 inboundStream = FileOutputStream(vpnInterface?.fileDescriptor),
                 databaseConnector = RoomDatabaseConnector(database),
                 vpnService = this,
-                doMitm = doMitm
+                doMitm = doMitm,
+                existingSessionId = existingSessionId
             )
         } catch (e: VpnComponentLaunchException) {
             // shut down the VPN components if the ComponentManager could launch the components

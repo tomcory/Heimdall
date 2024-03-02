@@ -6,6 +6,7 @@ import android.os.Build
 import android.system.OsConstants
 import androidx.annotation.RequiresApi
 import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.proxy.littleshoot.HttpFiltersAdapter
@@ -23,22 +24,26 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.nio.charset.Charset
 import java.util.Objects
 import java.util.stream.Collectors
+import kotlin.reflect.typeOf
 
 class HttpProxyFiltersImpl(
     originalRequest: HttpRequest?,
     ctx: ChannelHandlerContext,
     private val clientAddress: InetSocketAddress,
     context: Context,
-    private val database: HeimdallDatabase
+    private val database: HeimdallDatabase,
+    private val sessionId: Int
 ) : HttpFiltersAdapter(originalRequest, ctx) {
     private var isHttps = false
     private var connectedRemoteAddress: InetSocketAddress? = null
     private var aid = 0
     private var packageName = ""
+    private var connectionId: Int = 0
 
     private val isHttpsAttrKey = AttributeKey.valueOf<Boolean>("isHttps")
     private val resolvedRemoteAddressKey = AttributeKey.valueOf<InetSocketAddress>("resolvedRemoteAddress")
@@ -59,6 +64,23 @@ class HttpProxyFiltersImpl(
         aid = appFinder.getAppId(clientAddress.address, currentResolved.address, clientAddress.port, currentResolved.port, OsConstants.IPPROTO_TCP) ?: -1
         packageName = appFinder.getAppPackage(aid) ?: ""
 
+
+        connectionId = database.connectionDao().insert(
+            Connection(
+                sessionId = sessionId,
+                protocol = "TCP",
+                ipVersion = if (currentResolved.address.hostAddress?.contains(':') == true) 6 else 4,
+                initialTimestamp = System.currentTimeMillis(),
+                initiatorId = aid,
+                initiatorPkg = packageName,
+                localPort = clientAddress.port,
+                remoteHost = currentResolved.hostString,
+                remoteIp = currentResolved.address.hostAddress ?: "",
+                remotePort = currentResolved.port,
+                isTracker = false
+            )
+        ).let { if (it.isNotEmpty()) it.first().toInt() else 0 }
+
         //wrap the access to the headers and content ByteBuf in try-catch blocks to prevent Netty weirdness
         val headers = try {
             fhr.headers().entries().stream()
@@ -77,7 +99,7 @@ class HttpProxyFiltersImpl(
         }
 
         val request = Request(
-            connectionId = 0,
+            connectionId = connectionId,
             timestamp = System.currentTimeMillis(),
             headers = headers,
             content = content,
@@ -118,9 +140,8 @@ class HttpProxyFiltersImpl(
         }
 
         val response = Response(
-            connectionId = 0,
-            timestamp = System.currentTimeMillis(),
             requestId = requestId,
+            timestamp = System.currentTimeMillis(),
             headers = headers,
             content = content,
             contentLength = content.length,

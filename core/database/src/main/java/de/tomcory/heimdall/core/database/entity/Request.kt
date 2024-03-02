@@ -4,7 +4,19 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 
-@Entity
+@Entity(
+    foreignKeys = [
+        ForeignKey(
+            entity = Connection::class,
+            parentColumns = ["id"],
+            childColumns = ["connectionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        androidx.room.Index(value = ["connectionId"])
+    ]
+)
 data class Request(
     @PrimaryKey(autoGenerate = true)
     val id: Int = 0,

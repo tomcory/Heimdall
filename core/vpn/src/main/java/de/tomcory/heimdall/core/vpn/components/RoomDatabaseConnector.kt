@@ -136,7 +136,6 @@ class RoomDatabaseConnector(
         val ids = try {
             database.responseDao().insert(
                 Response(
-                    connectionId = connectionId,
                     requestId = requestId,
                     timestamp = timestamp,
                     headers = if(headers.isNotEmpty()) headers.map { "${it.key}: ${it.value}" }.reduce { acc, s -> "$acc$s\n" } else "",
