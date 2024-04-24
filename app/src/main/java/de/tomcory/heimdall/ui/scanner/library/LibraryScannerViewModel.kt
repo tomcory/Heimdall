@@ -13,10 +13,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.core.database.entity.App
 import de.tomcory.heimdall.core.scanner.LibraryScanner
-import de.tomcory.heimdall.core.scanner.PermissionScanner
 import de.tomcory.heimdall.ui.scanner.ScannerRepository
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first

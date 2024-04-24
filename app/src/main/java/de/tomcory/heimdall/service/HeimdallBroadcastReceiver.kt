@@ -9,7 +9,6 @@ import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.scanner.LibraryScanner
 import de.tomcory.heimdall.core.scanner.PermissionScanner
-import de.tomcory.heimdall.core.scanner.ScanManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first

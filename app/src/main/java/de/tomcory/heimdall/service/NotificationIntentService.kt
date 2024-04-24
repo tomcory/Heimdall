@@ -2,7 +2,6 @@ package de.tomcory.heimdall.service
 
 import android.app.IntentService
 import android.content.Intent
-import de.tomcory.heimdall.service.HeimdallVpnService
 import timber.log.Timber
 
 class NotificationIntentService : IntentService(NotificationIntentService::class.java.simpleName) {

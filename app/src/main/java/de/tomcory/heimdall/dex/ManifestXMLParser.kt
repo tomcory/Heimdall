@@ -26,7 +26,7 @@ object ManifestXMLParser {
                         if (name.equals("uses-permission", ignoreCase = true)) {
                             val value = parser.getAttributeValue(null, "name")
                             val permission = value.replace("android.permission.", "")
-                            permissionsList.add(value)
+                            permissionsList.add(permission)
                         }
                     }
                 }
