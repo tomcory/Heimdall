@@ -49,10 +49,14 @@ class TlsConnection(
     private var serverSSLEngine: SSLEngine? = null
     private var clientSSLEngine: SSLEngine? = null
 
-    private var serverAppBuffer: ByteBuffer = ByteBuffer.allocate(0)
-    private var serverNetBuffer: ByteBuffer = ByteBuffer.allocate(0)
-    private var clientAppBuffer: ByteBuffer = ByteBuffer.allocate(0)
-    private var clientNetBuffer: ByteBuffer = ByteBuffer.allocate(0)
+    private var serverAppBufferWrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var serverNetBufferWrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var clientAppBufferWrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var clientNetBufferWrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var serverAppBufferUnwrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var serverNetBufferUnwrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var clientAppBufferUnwrap: ByteBuffer = ByteBuffer.allocate(0)
+    private var clientNetBufferUnwrap: ByteBuffer = ByteBuffer.allocate(0)
 
     private var serverSessionOpen = false
     private var clientSessionOpen = false
@@ -465,8 +469,10 @@ class TlsConnection(
         serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort)
 
         // allocate the application and network buffers used by the serverSSLEngine
-        serverAppBuffer = ByteBuffer.allocate(serverSSLEngine?.session?.applicationBufferSize ?: 0)
-        serverNetBuffer = ByteBuffer.allocate(serverSSLEngine?.session?.packetBufferSize ?: 0)
+        serverAppBufferWrap = ByteBuffer.allocate(serverSSLEngine?.session?.applicationBufferSize ?: 0)
+        serverNetBufferWrap = ByteBuffer.allocate(serverSSLEngine?.session?.packetBufferSize ?: 0)
+        serverAppBufferUnwrap = ByteBuffer.allocate(serverSSLEngine?.session?.applicationBufferSize ?: 0)
+        serverNetBufferUnwrap = ByteBuffer.allocate(serverSSLEngine?.session?.packetBufferSize ?: 0)
 
         // initiate the TLS handshake for the serverSSLEngine
         switchState(ConnectionState.SERVER_HANDSHAKE)
@@ -487,8 +493,10 @@ class TlsConnection(
         clientSSLEngine = serverSSLEngine?.session?.let { componentManager.mitmManager.createClientSSLEngineFor(it) }
 
         // allocate the application and network buffers used by the clientSSLEngine
-        clientAppBuffer = ByteBuffer.allocate(clientSSLEngine?.session?.applicationBufferSize ?: 0)
-        clientNetBuffer = ByteBuffer.allocate(clientSSLEngine?.session?.packetBufferSize ?: 0)
+        clientAppBufferWrap = ByteBuffer.allocate(clientSSLEngine?.session?.applicationBufferSize ?: 0)
+        clientNetBufferWrap = ByteBuffer.allocate(clientSSLEngine?.session?.packetBufferSize ?: 0)
+        clientAppBufferUnwrap = ByteBuffer.allocate(clientSSLEngine?.session?.applicationBufferSize ?: 0)
+        clientNetBufferUnwrap = ByteBuffer.allocate(clientSSLEngine?.session?.packetBufferSize ?: 0)
 
         // initiate the TLS handshake for the clientSSLEngine
         switchState(ConnectionState.CLIENT_HANDSHAKE)
@@ -513,8 +521,8 @@ class TlsConnection(
     private fun handleWrap(payload: ByteArray? = null, isOutbound: Boolean, resizeFactor: Int = 2, closing: Boolean = false): Pair<ByteArray?, SSLEngineResult?> {
         val direction = if(isOutbound) "outbound" else "inbound"
 
-        var appBuffer = if(isOutbound) serverAppBuffer else clientAppBuffer
-        var netBuffer = if(isOutbound) serverNetBuffer else clientNetBuffer
+        var appBuffer = if(isOutbound) serverAppBufferWrap else clientAppBufferWrap
+        var netBuffer = if(isOutbound) serverNetBufferWrap else clientNetBufferWrap
         val sslEngine = if(isOutbound) serverSSLEngine else clientSSLEngine
 
         if(log) Timber.d("tls$id handleWrap ($direction) wrapping ${payload?.size ?: 0} bytes, SSLEngine handshakeStatus: ${sslEngine?.handshakeStatus}")
@@ -527,15 +535,15 @@ class TlsConnection(
             if(appBuffer.capacity() < (it.size)) {
                 if(log) Timber.w("tls$id handleWrap ($direction) Resizing buffers: appBuffer ${appBuffer.capacity()} -> ${it.size}, netBuffer ${netBuffer.capacity()} -> ${it.size * resizeFactor}")
                 if(isOutbound) {
-                    serverAppBuffer = ByteBuffer.allocate(it.size)
-                    serverNetBuffer = ByteBuffer.allocate(it.size * resizeFactor)
-                    appBuffer = serverAppBuffer
-                    netBuffer = serverNetBuffer
+                    serverAppBufferWrap = ByteBuffer.allocate(it.size)
+                    serverNetBufferWrap = ByteBuffer.allocate(it.size * resizeFactor)
+                    appBuffer = serverAppBufferWrap
+                    netBuffer = serverNetBufferWrap
                 } else {
-                    clientAppBuffer = ByteBuffer.allocate(it.size)
-                    clientNetBuffer = ByteBuffer.allocate(it.size * resizeFactor)
-                    appBuffer = clientAppBuffer
-                    netBuffer = clientNetBuffer
+                    clientAppBufferWrap = ByteBuffer.allocate(it.size)
+                    clientNetBufferWrap = ByteBuffer.allocate(it.size * resizeFactor)
+                    appBuffer = clientAppBufferWrap
+                    netBuffer = clientNetBufferWrap
                 }
             }
 
@@ -574,9 +582,9 @@ class TlsConnection(
             SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
                 Timber.w("tls$id handleWrap ($isOutbound) buffer underflow, increasing appBuffer capacity and retrying")
                 if(isOutbound) {
-                    serverAppBuffer = ByteBuffer.allocate(serverAppBuffer.capacity() + (payload?.size ?: serverAppBuffer.capacity()))
+                    serverAppBufferWrap = ByteBuffer.allocate(serverAppBufferWrap.capacity() + (payload?.size ?: serverAppBufferWrap.capacity()))
                 } else {
-                    clientAppBuffer = ByteBuffer.allocate(clientAppBuffer.capacity() + (payload?.size ?: clientAppBuffer.capacity()))
+                    clientAppBufferWrap = ByteBuffer.allocate(clientAppBufferWrap.capacity() + (payload?.size ?: clientAppBufferWrap.capacity()))
                 }
                 return handleWrap(payload, isOutbound, resizeFactor)
             }
@@ -585,9 +593,9 @@ class TlsConnection(
             SSLEngineResult.Status.BUFFER_OVERFLOW -> {
                 Timber.w("tls$id handleWrap ($isOutbound) buffer overflow, increasing netBuffer capacity and retrying")
                 if(isOutbound) {
-                    serverNetBuffer = ByteBuffer.allocate(serverNetBuffer.capacity() * resizeFactor)
+                    serverNetBufferWrap = ByteBuffer.allocate(serverNetBufferWrap.capacity() * resizeFactor)
                 } else {
-                    clientNetBuffer = ByteBuffer.allocate(clientNetBuffer.capacity() * resizeFactor)
+                    clientNetBufferWrap = ByteBuffer.allocate(clientNetBufferWrap.capacity() * resizeFactor)
                 }
                 return handleWrap(payload, isOutbound, resizeFactor)
             }
@@ -631,8 +639,8 @@ class TlsConnection(
     private fun handleUnwrap(record: ByteArray, isOutbound: Boolean, resizeFactor: Int = 2): Pair<ByteArray?, SSLEngineResult?> {
         val direction = if(isOutbound) "outbound" else "inbound"
 
-        var appBuffer = if(isOutbound) clientAppBuffer else serverAppBuffer
-        var netBuffer = if(isOutbound) clientNetBuffer else serverNetBuffer
+        var appBuffer = if(isOutbound) clientAppBufferUnwrap else serverAppBufferUnwrap
+        var netBuffer = if(isOutbound) clientNetBufferUnwrap else serverNetBufferUnwrap
         val sslEngine = if(isOutbound) clientSSLEngine else serverSSLEngine
 
         if(log) Timber.d("tls$id handleUnwrap ($direction) Unwrapping ${record.size} bytes in state $state, handshakeStatus: ${sslEngine?.handshakeStatus}")
@@ -644,15 +652,15 @@ class TlsConnection(
         if(netBuffer.capacity() < record.size) {
             if(log) Timber.w("tls$id handleClientUnwrap ($direction) Resizing buffers: netBuffer ${netBuffer.capacity()} -> ${record.size}, appBuffer ${appBuffer.capacity()} -> ${record.size * resizeFactor}")
             if(isOutbound) {
-                clientNetBuffer = ByteBuffer.allocate(record.size)
-                clientAppBuffer = ByteBuffer.allocate(record.size * resizeFactor)
-                netBuffer = clientNetBuffer
-                appBuffer = clientAppBuffer
+                clientNetBufferUnwrap = ByteBuffer.allocate(record.size)
+                clientAppBufferUnwrap = ByteBuffer.allocate(record.size * resizeFactor)
+                netBuffer = clientNetBufferUnwrap
+                appBuffer = clientAppBufferUnwrap
             } else {
-                serverNetBuffer = ByteBuffer.allocate(record.size)
-                serverAppBuffer = ByteBuffer.allocate(record.size * resizeFactor)
-                netBuffer = serverNetBuffer
-                appBuffer = serverAppBuffer
+                serverNetBufferUnwrap = ByteBuffer.allocate(record.size)
+                serverAppBufferUnwrap = ByteBuffer.allocate(record.size * resizeFactor)
+                netBuffer = serverNetBufferUnwrap
+                appBuffer = serverAppBufferUnwrap
             }
         }
 
@@ -691,9 +699,9 @@ class TlsConnection(
             SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
                 Timber.w("tls$id handleUnwrap ($direction) buffer underflow, increasing netBuffer capacity and retrying")
                 if(isOutbound) {
-                    clientNetBuffer = ByteBuffer.allocate(clientNetBuffer.capacity() + record.size)
+                    clientNetBufferUnwrap = ByteBuffer.allocate(clientNetBufferUnwrap.capacity() + record.size)
                 } else {
-                    serverNetBuffer = ByteBuffer.allocate(serverNetBuffer.capacity() + record.size)
+                    serverNetBufferUnwrap = ByteBuffer.allocate(serverNetBufferUnwrap.capacity() + record.size)
                 }
                 return handleUnwrap(record, isOutbound, resizeFactor)
             }
@@ -702,9 +710,9 @@ class TlsConnection(
             SSLEngineResult.Status.BUFFER_OVERFLOW -> {
                 Timber.w("tls$id handleUnwrap ($direction) buffer overflow, increasing appBuffer capacity and retrying")
                 if(isOutbound) {
-                    clientAppBuffer = ByteBuffer.allocate(clientAppBuffer.capacity() + record.size)
+                    clientAppBufferUnwrap = ByteBuffer.allocate(clientAppBufferUnwrap.capacity() + record.size)
                 } else {
-                    serverAppBuffer = ByteBuffer.allocate(serverAppBuffer.capacity() + record.size)
+                    serverAppBufferUnwrap = ByteBuffer.allocate(serverAppBufferUnwrap.capacity() + record.size)
                 }
                 return handleUnwrap(record, isOutbound, resizeFactor)
             }
@@ -839,12 +847,12 @@ class TlsConnection(
                 if(isOutbound) {
                     if(outboundCount++ > 0) {
                         if(log) Timber.w("tls$id prepareRecords(outbound) this is the ${outboundCount}nd fresh record of the session")
-                        if(log) Timber.w("tls$id cache size: ${outboundCache.size}, remaining bytes: $remainingOutboundBytes, snippet: ${outboundSnippet?.size ?: 0} bytes, clientAppBuffer: ${clientAppBuffer.position()} bytes, clientNetBuffer: ${clientNetBuffer.position()} bytes")
+                        if(log) Timber.w("tls$id cache size: ${outboundCache.size}, remaining bytes: $remainingOutboundBytes, snippet: ${outboundSnippet?.size ?: 0} bytes, clientAppBufferWrap: ${clientAppBufferWrap.position()} bytes, clientNetBufferWrap: ${clientNetBufferWrap.position()} bytes, clientAppBufferUnwrap: ${clientAppBufferUnwrap.position()} bytes, clientNetBufferUnwrap: ${clientNetBufferUnwrap.position()} bytes")
                     }
                 } else {
                     if(inboundCount++ > 0) {
                         if(log) Timber.w("tls$id prepareRecords(inbound) this is the ${inboundCount}nd fresh record of the session")
-                        if(log) Timber.w("tls$id cache size: ${inboundCache.size}, remaining bytes: $remainingInboundBytes, snippet: ${inboundSnippet?.size ?: 0} bytes, serverAppBuffer: ${serverAppBuffer.position()} bytes, serverNetBuffer: ${serverNetBuffer.position()} bytes")
+                        if(log) Timber.w("tls$id cache size: ${inboundCache.size}, remaining bytes: $remainingInboundBytes, snippet: ${inboundSnippet?.size ?: 0} bytes, serverAppBufferWrap: ${serverAppBufferWrap.position()} bytes, serverNetBufferWrap: ${serverNetBufferWrap.position()} bytes, serverAppBufferUnwrap: ${serverAppBufferUnwrap.position()} bytes, serverNetBufferUnwrap: ${serverNetBufferUnwrap.position()} bytes")
                     }
                 }
             }

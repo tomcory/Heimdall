@@ -154,7 +154,9 @@ class UdpConnection internal constructor(
         if(state == TransportLayerState.ABORTED) {
             return
         }
-        passOutboundToEncryptionLayer(outgoingPacket.payload)
+        outgoingPacket.payload?.let {
+            passOutboundToEncryptionLayer(it)
+        }
     }
 
     override fun unwrapInbound() {

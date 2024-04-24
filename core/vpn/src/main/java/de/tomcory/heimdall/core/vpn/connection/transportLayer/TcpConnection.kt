@@ -250,7 +250,9 @@ class TcpConnection internal constructor(
             writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
 
             // pass the payload to the encryption and application layers for processing and store the result
-            passOutboundToEncryptionLayer(outgoingPacket.payload)
+            outgoingPacket.payload?.let {
+                passOutboundToEncryptionLayer(it)
+            }
         }
     }
 

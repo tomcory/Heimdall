@@ -72,7 +72,7 @@ class HttpConnection(
             val message = assembledPayload.toString(Charsets.UTF_8)
 
             val headerLength = message.indexOf("\r\n\r\n") + 4
-            if(headerLength < 0) {
+            if(headerLength < 4) {
                 // if the message doesn't contain the end of the headers, cache the chunk and wait for more
                 Timber.w("http$id incomplete headers")
                 previousPayload = assembledPayload
