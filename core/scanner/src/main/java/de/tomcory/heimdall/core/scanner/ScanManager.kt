@@ -23,6 +23,9 @@ class ScanManager private constructor(
 ) {
     @Inject
     lateinit var preferences: PreferencesDataSource
+    @Inject
+    lateinit var database: HeimdallDatabase
+
     suspend fun scanApp(context: Context, packageName: String) {
         Timber.d("Collecting app info of $packageName")
 
@@ -60,7 +63,7 @@ class ScanManager private constructor(
             isSystem = packageInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
         )
 
-        HeimdallDatabase.instance?.appDao?.insertApps(app)
+        database.appDao().insertApps(app)
 
         if(preferences.permissionOnInstall.first()) {
             permissionScanner.scanApp(packageInfo)
@@ -103,7 +106,7 @@ class ScanManager private constructor(
 
         Timber.d("Found ${apps.size} apps.")
 
-        HeimdallDatabase.instance?.appDao?.insertApps(*apps.toTypedArray())
+        database.appDao().insertApps(*apps.toTypedArray())
 
         val progressStep = 0.89f / filtered.size
         var progressValue = 0.1f

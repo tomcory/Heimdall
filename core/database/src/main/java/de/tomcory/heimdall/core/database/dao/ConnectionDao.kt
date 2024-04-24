@@ -18,6 +18,9 @@ interface ConnectionDao {
     @Query("DELETE FROM Connection WHERE id = :id")
     suspend fun delete(id: Int): Int
 
+    @Query("DELETE FROM Connection WHERE initiatorPkg = :packageName")
+    suspend fun deleteForApp(packageName: String): Int
+
     @Query("UPDATE Connection SET bytesOut = bytesIn + :delta WHERE id = :id")
     suspend fun updateBytesOut(id: Int, delta: Int)
 

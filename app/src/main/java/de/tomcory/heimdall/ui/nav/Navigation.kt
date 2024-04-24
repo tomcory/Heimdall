@@ -5,7 +5,6 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import de.tomcory.heimdall.R
-import de.tomcory.heimdall.ui.apps.PermissionsScreen
 import de.tomcory.heimdall.ui.database.DatabaseScreen
 import de.tomcory.heimdall.ui.evaluator.ScoreScreen
 import de.tomcory.heimdall.ui.scanner.ScannerScreen
@@ -47,13 +46,6 @@ fun Navigation(navController: NavHostController) {
         }
         composable(NavigationItem.Database.route) {
             DatabaseScreen()
-        }
-
-        /*
-         * Add other destinations, e.g. nested screens, here.
-         */
-        composable("permissions/{packageName}") {
-            PermissionsScreen(navController, it.arguments?.getString("packageName"))
         }
     }
 }

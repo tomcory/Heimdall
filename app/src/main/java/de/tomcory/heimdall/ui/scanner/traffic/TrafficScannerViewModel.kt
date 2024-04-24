@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -129,6 +128,7 @@ class TrafficScannerViewModel @Inject constructor(
         viewModelScope.launch {
             if(resultCode == Activity.RESULT_OK) {
                 val useProxy = repository.preferences.vpnUseProxy.first()
+                val doMitm = repository.preferences.mitmEnable.first()
                 if(useProxy) {
                     Timber.d("Starting proxy server...")
                     proxyServer = try {
@@ -144,7 +144,8 @@ class TrafficScannerViewModel @Inject constructor(
                     if(launchVpn(context, useProxy) != null) {
                         repository.preferences.setVpnActive(true)
                         _scanActive.emit(true)
-                        onShowSnackbar("Traffic scanner enabled")
+                        val mitmString = if(doMitm) " with MitM" else ""
+                        onShowSnackbar("Traffic scanner enabled$mitmString")
                     } else {
                         onShowSnackbar("VPN setup failed")
                     }
@@ -228,17 +229,5 @@ class TrafficScannerViewModel @Inject constructor(
         repository.preferences.setVpnActive(false)
         _scanSetup.emit(false)
         _scanActive.emit(false)
-    }
-
-    suspend fun whitelistHealthAndFitnessApps() {
-        preferences.setVpnWhitelistApps(healthAndFitnessApps)
-    }
-
-    suspend fun whitelistMedicalApps() {
-        preferences.setVpnWhitelistApps(medicalApps)
-    }
-
-    suspend fun resetWhitelist() {
-        preferences.setVpnWhitelistApps(listOf())
     }
 }

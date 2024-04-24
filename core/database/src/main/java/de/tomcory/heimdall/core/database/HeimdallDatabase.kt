@@ -1,8 +1,6 @@
 package de.tomcory.heimdall.core.database
 
-import android.content.Context
 import androidx.room.Database
-import androidx.room.Room.databaseBuilder
 import androidx.room.RoomDatabase
 import de.tomcory.heimdall.core.database.dao.AppDao
 import de.tomcory.heimdall.core.database.dao.AppXPermissionDao
@@ -55,45 +53,4 @@ abstract class HeimdallDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun subReportDao(): SubReportDao
     abstract fun trackerDao(): TrackerDao
-
-    @Deprecated("Use function call instead.")
-    val appDao = appDao()
-    @Deprecated("Use function call instead.")
-    val appXPermissionDao = appXPermissionDao()
-    @Deprecated("Use function call instead.")
-    val appXTrackerDao = appXTrackerDao()
-    @Deprecated("Use function call instead.")
-    val connectionDao = connectionDao()
-    @Deprecated("Use function call instead.")
-    val permissionDao = permissionDao()
-    @Deprecated("Use function call instead.")
-    val requestDao = requestDao()
-    @Deprecated("Use function call instead.")
-    val responseDao = responseDao()
-    @Deprecated("Use function call instead.")
-    val sessionDao = sessionDao()
-    @Deprecated("Use function call instead.")
-    val trackerDao = trackerDao()
-
-    companion object {
-        @Deprecated("Use Hilt dependency injection instead.")
-        var instance: HeimdallDatabase? = null
-            private set
-
-        @JvmStatic
-        @Deprecated("Use Hilt dependency injection instead.")
-        fun init(context: Context?): Boolean {
-            return if (instance == null) {
-                instance = context?.let {
-                    databaseBuilder(
-                        it,
-                        HeimdallDatabase::class.java,
-                        "heimdall"
-                    ).fallbackToDestructiveMigration().build() }
-                true
-            } else {
-                false
-            }
-        }
-    }
 }
