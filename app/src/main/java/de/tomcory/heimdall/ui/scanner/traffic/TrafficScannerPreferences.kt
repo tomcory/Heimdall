@@ -90,12 +90,6 @@ fun VpnPreferences(
             valueVerifier = { value -> InetAddressUtils.isValidInetAddressWithPort(value) },
             onValueChange = { value -> viewModel.preferences.setVpnProxyAddress(value) }
         )
-
-        ActionPreference(text = "Whitelist health and fitness apps", onClick = { viewModel.whitelistHealthAndFitnessApps() })
-
-        ActionPreference(text = "Whitelist medical apps", onClick = { viewModel.whitelistMedicalApps() })
-
-        ActionPreference(text = "Reset whitelist", onClick = { viewModel.resetWhitelist() })
     }
 }
 
