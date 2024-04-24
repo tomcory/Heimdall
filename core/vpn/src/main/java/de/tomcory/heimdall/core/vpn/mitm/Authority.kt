@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.core.vpn.mitm
 
-import android.content.Context
 import timber.log.Timber
 import java.io.*
 import java.lang.Exception
@@ -45,9 +44,10 @@ class Authority (
 
     companion object {
 
-        fun getDefaultInstance(context: Context?) : Authority {
+        fun getDefaultInstance(keyStoreDir: File) : Authority {
+            //TODO: get values from secure storage
             return Authority(
-                    File(context?.filesDir, "keystore"),
+                    keyStoreDir = keyStoreDir,
                     alias = "heimdallmitm",
                     password = "changeit".toCharArray(),
                     issuerCN = "Heimdall",

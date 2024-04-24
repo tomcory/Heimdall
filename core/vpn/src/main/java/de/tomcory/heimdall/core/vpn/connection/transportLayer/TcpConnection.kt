@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
-import android.net.VpnService
 import android.os.Handler
 import android.system.OsConstants
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
@@ -70,7 +69,7 @@ class TcpConnection internal constructor(
         }
 
         selectableChannel = try {
-            openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+            openChannel(ipPacketBuilder.remoteAddress)
         } catch (e: Exception) {
             Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
             state = TransportLayerState.ABORTED
@@ -92,18 +91,16 @@ class TcpConnection internal constructor(
     }
 
     /**
-     * Opens a [SocketChannel] and protects it with the supplied [VpnService].
-     * Throws all exceptions that occur during the process.
+     * Opens a [SocketChannel] and throws all exceptions that occur during the process.
      *
      * @param remoteAddress The remote address to connect to.
-     * @param vpnService The [VpnService] to protect the channel from.
      *
      * @return the opened and protected [SocketChannel]
      */
-    private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): SocketChannel {
+    private fun openChannel(remoteAddress: InetAddress): SocketChannel {
         state = TransportLayerState.CONNECTING
         val selectableChannel = SocketChannel.open()
-        vpnService?.protect(selectableChannel.socket())
+        componentManager.protectSocket(selectableChannel.socket())
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().keepAlive = true
         selectableChannel.socket().tcpNoDelay = true

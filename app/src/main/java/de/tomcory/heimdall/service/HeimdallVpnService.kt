@@ -16,6 +16,7 @@ import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
+import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.RoomDatabaseConnector
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
@@ -168,9 +170,13 @@ class HeimdallVpnService : VpnService() {
                 outboundStream = FileInputStream(vpnInterface?.fileDescriptor),
                 inboundStream = FileOutputStream(vpnInterface?.fileDescriptor),
                 databaseConnector = RoomDatabaseConnector(database),
-                vpnService = this,
+                context = this,
+                appFinder = AppFinder(this),
                 doMitm = doMitm,
-                existingSessionId = existingSessionId
+                existingSessionId = existingSessionId,
+                keyStoreDir = File(this.filesDir, "keystore"),
+                protectDatagramSocket = { socket -> protect(socket) },
+                protectSocket = { socket -> protect(socket) }
             )
         } catch (e: VpnComponentLaunchException) {
             // shut down the VPN components if the ComponentManager could launch the components

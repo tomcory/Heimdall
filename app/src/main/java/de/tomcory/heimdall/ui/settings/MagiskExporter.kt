@@ -90,7 +90,7 @@ fun MagiskExportPreference(onShowSnackbar: (String) -> Unit) {
  */
 private suspend fun generateMagiskModule(context: Context): String {
     Timber.d("Generating authority...")
-    val authority = Authority.getDefaultInstance(context)
+    val authority = Authority.getDefaultInstance(File(context.filesDir, "keystore"))
     Timber.d("Loading KeyStore...")
     val keyStore = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
     Timber.d("Building Magisk module...")

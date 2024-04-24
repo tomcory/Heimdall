@@ -1,19 +1,20 @@
 package de.tomcory.heimdall.core.vpn.components
 
 import android.content.Context
-import android.net.VpnService
 import android.system.ErrnoException
 import android.system.Os
+import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.util.Trie
 import de.tomcory.heimdall.core.vpn.R
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
-import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.pcap4j.packet.IllegalRawDataException
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.TcpPacket
@@ -22,11 +23,14 @@ import org.pcap4j.packet.namednumber.TcpPort
 import org.pcap4j.packet.namednumber.UdpPort
 import timber.log.Timber
 import java.io.BufferedReader
+import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.DatagramSocket
+import java.net.Socket
 import java.nio.channels.Selector
 
 /**
@@ -38,36 +42,38 @@ class ComponentManager(
     private val outboundStream: FileInputStream,
     private val inboundStream: FileOutputStream,
     val databaseConnector: DatabaseConnector,
-    val vpnService: VpnService?,
+    val context: Context?,
     existingSessionId: Int = -1,
     val doMitm: Boolean = false,
+    keyStoreDir: File,
+    val appFinder: AppFinder,
     val maxPacketSize: Int = 16413,
     private val trackerTrie: Trie<String> = Trie {
         it.split(
             "."
         ).reversed()
-    }
+    },
+    val protectDatagramSocket: (DatagramSocket) -> Unit = {},
+    val protectSocket: (Socket) -> Unit = {}
 ) {
     val sessionId: Int
 
+    // the traffic handling threads
     private var devicePollThread: DevicePollThread? = null
     private var deviceWriteThread: DeviceWriteThread? = null
     private var outboundTrafficHandler: OutboundTrafficHandler? = null
     private var inboundTrafficHandler: InboundTrafficHandler? = null
 
+    // the interrupter pipe is used to stop the DevicePollThread's polling
     private val interrupter: FileDescriptor
-    private val interrupted: FileDescriptor
 
-    val appFinder = AppFinder(vpnService)
-
+    // set up the caches for DNS lookups and TLS passthrough connections
     val dnsCache = DnsCache()
-
     val tlsPassthroughCache = TlsPassthroughCache()
 
-    //TODO: get strings from config/secure
-    val authority = Authority.getDefaultInstance(vpnService?.applicationContext)
 
     // set up the man-in-the-middle manager
+    private val authority = Authority.getDefaultInstance(keyStoreDir)
     val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
 
     // set up the NIO selector that is used to poll the outgoing sockets for incoming packets
@@ -78,24 +84,24 @@ class ComponentManager(
     }
 
     init {
-        // set up the pipes that are used to poll the VPN interface for new outgoing packets
+        // set up the pipe that is used to stop the DevicePollThread's polling
         val pipes = try {
             Os.pipe()
         } catch (e: ErrnoException) {
             throw VpnComponentLaunchException("Error getting pipes from OS", e)
         }
         interrupter = pipes[0]
-        interrupted = pipes[1]
 
         // initialise the pcap4j configuration now to improve performance during traffic handling
         initialisePcap4j()
 
         // prepare the trie of tracking hosts used to label traffic
-        vpnService?.let {
+        context?.let {
             Timber.d("Building tracking hosts trie")
             populateTrieFromRawFile(it.applicationContext, R.raw.adhosts, trackerTrie)
         }
 
+        // create a new entry in the database for the current session or use the existing one
         sessionId = if(existingSessionId < 0) {
             runBlocking { return@runBlocking databaseConnector.persistSession(System.currentTimeMillis()) }
         } else {
@@ -149,19 +155,25 @@ class ComponentManager(
             Timber.w(e, "Error closing interrupter pipe")
         }
 
+        // close the other three traffic handling threads
         outboundTrafficHandler?.quitSafely()
         inboundTrafficHandler?.interrupt()
         deviceWriteThread?.quitSafely()
 
+        // close the streams to and from the VPN interface
         try {
-            outboundStream.close()
-            inboundStream.close()
+            withContext(Dispatchers.IO) {
+                outboundStream.close()
+                inboundStream.close()
+            }
         } catch (e: IOException) {
             Timber.w(e, "Error closing VPN interface streams")
         }
 
+        // clear the connection cache
         ConnectionCache.closeAllAndClear()
 
+        // update the session end time in the database
         databaseConnector.updateSession(sessionId, System.currentTimeMillis())
     }
 

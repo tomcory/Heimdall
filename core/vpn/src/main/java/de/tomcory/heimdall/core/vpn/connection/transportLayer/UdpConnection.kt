@@ -1,6 +1,5 @@
 package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
-import android.net.VpnService
 import android.os.Handler
 import android.system.OsConstants
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
@@ -60,7 +59,7 @@ class UdpConnection internal constructor(
         }
 
         selectableChannel = try {
-            openChannel(ipPacketBuilder.remoteAddress, componentManager.vpnService)
+            openChannel(ipPacketBuilder.remoteAddress)
         } catch (e: Exception) {
             Timber.e("tcp$id Error while creating UDP connection: ${e.message}")
             state = TransportLayerState.ABORTED
@@ -81,11 +80,18 @@ class UdpConnection internal constructor(
         }
     }
 
-    private fun openChannel(remoteAddress: InetAddress, vpnService: VpnService?): DatagramChannel {
+    /**
+     * Opens a [DatagramChannel] and throws all exceptions that occur during the process.
+     *
+     * @param remoteAddress The remote address to connect to.
+     *
+     * @return the opened and protected [DatagramChannel]
+     */
+    private fun openChannel(remoteAddress: InetAddress): DatagramChannel {
         // open the channel now, but connect it asynchronously for better performance
         state = TransportLayerState.CONNECTING
         val selectableChannel = DatagramChannel.open()
-        vpnService?.protect(selectableChannel.socket())
+        componentManager.protectDatagramSocket(selectableChannel.socket())
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().soTimeout = 0
         selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
