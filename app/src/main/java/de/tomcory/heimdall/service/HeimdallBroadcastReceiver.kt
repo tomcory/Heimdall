@@ -43,8 +43,7 @@ class HeimdallBroadcastReceiver : BroadcastReceiver() {
     private fun actionBootCompleted(context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             if(preferences.bootScanService.first()) {
-                val serviceIntent = Intent(context, ScanService::class.java)
-                context.startService(serviceIntent)
+                ScanWorker.enqueue(context.applicationContext)
             }
 
             if(preferences.bootVpnService.first()) {

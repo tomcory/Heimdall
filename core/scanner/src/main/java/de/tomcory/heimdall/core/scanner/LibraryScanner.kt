@@ -20,7 +20,7 @@ class LibraryScanner @Inject constructor(
     private var shortestSignatureLength = 0
     private val trackerTrie: Trie<Tracker> = Trie { it.removeSuffix(".").split(".") }
 
-    suspend fun scanApp(packageInfo: PackageInfo) {
+    suspend fun scanApp(packageInfo: PackageInfo): ScanResult {
 
         // the trie needs to be populated with tracker signatures before it can be used
         // this is done lazily on the first scan
@@ -28,14 +28,19 @@ class LibraryScanner @Inject constructor(
             init()
         }
 
+        if (trackerTrie.isEmpty()) {
+            Timber.w("Tracker signatures not initialised. Skipping scan of ${packageInfo.packageName}.")
+            return ScanResult(false, "Tracker signatures not initialised.")
+        }
+
         Timber.d("Scanning dex classes of ${packageInfo.packageName}...")
 
         // open the APK file of the app
         val apkFile = try {
-            ApkFile(File(packageInfo.applicationInfo.publicSourceDir))
+            ApkFile(packageInfo.applicationInfo?.publicSourceDir?.let { File(it) })
         } catch (e: Exception) {
             Timber.w("Failed to open APK file of ${packageInfo.packageName}: ${e.message}")
-            return
+            return ScanResult(false, "Failed to open APK file.")
         }
 
         // get all dex classes of the app
@@ -43,7 +48,7 @@ class LibraryScanner @Inject constructor(
            apkFile.dexClasses
         } catch (e: Exception) {
             Timber.w("Failed to open Dex file of ${packageInfo.packageName}: ${e.message}")
-            return
+            return ScanResult(false, "Failed to open Dex file.")
         }
 
         Timber.d("${packageInfo.packageName} comprises $dexClasses classes")
@@ -73,6 +78,8 @@ class LibraryScanner @Inject constructor(
 
         // insert the list of trackers contained in the app into the database
         database.appXTrackerDao().insert(*containedTrackers.toTypedArray())
+
+        return ScanResult(true, "Successfully scanned app.")
     }
 
     private suspend fun init() {
@@ -92,7 +99,11 @@ class LibraryScanner @Inject constructor(
         trackerSignatures.forEach { (signature, tracker) -> trackerTrie.insert(signature, tracker) }
 
         // knowing the shortest tracker signature length allows us to skip the search for signatures that are too short
-        shortestSignatureLength = trackerSignatures.keys.minOf { it.length }
+        shortestSignatureLength = try {
+            trackerSignatures.keys.minOf { it.length }
+        } catch (e: NoSuchElementException) {
+            0
+        }
 
         initialised = true
         Timber.d("Tracker signatures initialised.")
@@ -115,4 +126,9 @@ class LibraryScanner @Inject constructor(
 
         return map
     }
+
+    class ScanResult(
+        val success: Boolean,
+        val message: String
+    )
 }

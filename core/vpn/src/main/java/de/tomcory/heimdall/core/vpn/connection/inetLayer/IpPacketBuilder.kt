@@ -13,6 +13,7 @@ import java.net.InetAddress
  *
  * @property localAddress Intercepted client's IP address.
  * @property remoteAddress Remote host's IP address.
+ * @property ipVersion IP version of the connection.
  * @property transportProtocol Transport protocol used by this connection.
  */
 abstract class IpPacketBuilder protected constructor(

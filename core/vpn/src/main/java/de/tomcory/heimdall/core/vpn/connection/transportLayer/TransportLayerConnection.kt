@@ -18,6 +18,12 @@ import java.nio.channels.Selector
 
 /**
  * Base class for all transport-layer connection holders.
+ * @property deviceWriter The [Handler] used to write packets to the device's TUN interface.
+ * @property componentManager The [ComponentManager] instance to use for this connection.
+ * @property localPort Intercepted client's port.
+ * @property remotePort Remote host's port.
+ * @property remoteHost Remote host's IP address.
+ * @property ipPacketBuilder The [IpPacketBuilder] instance used to construct [IpPacket]s for this connection.
  */
 abstract class TransportLayerConnection protected constructor(
     val deviceWriter: Handler,

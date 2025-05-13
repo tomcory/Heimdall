@@ -34,6 +34,10 @@ class Trie<T>(private val pathSplitter: (String) -> List<String>) {
         }
         return null
     }
+
+    fun isEmpty(): Boolean {
+        return root.children.isEmpty()
+    }
 }
 
 private class TrieNode<T>(var isTerminating: Boolean = false) {

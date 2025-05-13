@@ -5,6 +5,7 @@ import android.content.Intent
 import timber.log.Timber
 
 class NotificationIntentService : IntentService(NotificationIntentService::class.java.simpleName) {
+    @Deprecated("Deprecated in Java")
     override fun onHandleIntent(intent: Intent?) {
         if (intent != null) {
             val action = intent.action

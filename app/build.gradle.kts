@@ -6,6 +6,7 @@ plugins {
     alias (libs.plugins.ksp)
     alias (libs.plugins.kotlin.serialization)
     alias (libs.plugins.hilt)
+    alias(libs.plugins.compose.compiler)
 }
 
 kotlin {
@@ -18,8 +19,8 @@ android {
     defaultConfig {
         applicationId = "de.tomcory.heimdall"
         minSdk = 24
-        compileSdk = 34
-        targetSdk = 34
+        compileSdk = 36
+        targetSdk = 36
 
         versionCode = 1
         versionName = "0.1"
@@ -29,13 +30,6 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-
-        /* val secureProps = Properties()
-           val securePropsFile = file("../secure.properties")
-           if (securePropsFile.exists()) {
-               secureProps.load(securePropsFile.inputStream())
-           }
-           resValue("string", "maps_api_key", secureProps.getProperty("EXAMPLE", "")) */
     }
 
     buildTypes {
@@ -90,6 +84,7 @@ dependencies {
     implementation (libs.lifecycle.runtime.ktx)
     implementation (libs.lifecycle.common.java8)
     implementation (libs.lifecycle.runtime.compose)
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Jetpack Compose Base
     implementation (libs.activity.compose)
@@ -113,9 +108,11 @@ dependencies {
 
     // Hilt dependency injection
     implementation (libs.hilt.android)
+    implementation(libs.androidx.hilt.work)
     ksp (libs.dagger.compiler)
     ksp (libs.hilt.compiler)
     implementation (libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.common)
 
     // Vico Charts for Jetpack Compose https://github.com/patrykandpatrick/vico
     implementation (libs.vico.compose)

@@ -1,4 +1,4 @@
-package de.tomcory.heimdall.ui.apps
+package de.tomcory.heimdall.ui.chart
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -17,7 +17,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Preview
 @Composable
 fun DonutChartPreview() {
@@ -54,7 +53,7 @@ fun DonutChart(
                     .size(size)
             ) {
 
-                var arcRadius = size.toPx() - thickness.toPx()
+                val arcRadius = size.toPx() - thickness.toPx()
                 var startAngle = -90f
 
                 drawCircle(

@@ -125,14 +125,14 @@ class LibraryScannerViewModel @Inject constructor(
             repository.persistApp(
                 App(
                     packageName = it.packageName,
-                    label = it.applicationInfo.loadLabel(pm).toString(),
+                    label = it.applicationInfo?.loadLabel(pm)?.toString() ?: it.packageName,
                     versionName = it.versionName ?: "",
                     versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                         it.longVersionCode
                     } else {
                         it.versionCode.toLong()
                     },
-                    isSystem = it.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
+                    isSystem = (it.applicationInfo?.flags ?: (0 and ApplicationInfo.FLAG_SYSTEM)) != 0
                 )
             )
 
@@ -163,7 +163,7 @@ class LibraryScannerViewModel @Inject constructor(
         }
 
         MonitoringScopeApps.APPS_NON_SYSTEM -> {
-                packageInfo -> packageInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM == 0
+                packageInfo -> (packageInfo.applicationInfo?.flags ?: (0 and ApplicationInfo.FLAG_SYSTEM)) == 0
         }
 
         MonitoringScopeApps.APPS_WHITELIST -> {
@@ -176,8 +176,8 @@ class LibraryScannerViewModel @Inject constructor(
         }
 
         MonitoringScopeApps.APPS_NON_SYSTEM_BLACKLIST -> {
-                packageInfo -> packageInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM == 0
-                && !blacklist.contains(packageInfo.packageName)
+                packageInfo -> ((packageInfo.applicationInfo?.flags ?: (0 and ApplicationInfo.FLAG_SYSTEM)) == 0
+                    && !blacklist.contains(packageInfo.packageName))
         }
     }
 }

@@ -1,57 +1,39 @@
 package de.tomcory.heimdall.ui.main
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.navigation.compose.rememberNavController
+import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import dagger.hilt.android.AndroidEntryPoint
-import de.tomcory.heimdall.service.ScanService
-import de.tomcory.heimdall.ui.nav.BottomNavigationBar
-import de.tomcory.heimdall.ui.nav.Navigation
+import de.tomcory.heimdall.ui.splash.SplashScreen
 import de.tomcory.heimdall.ui.theme.HeimdallTheme
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
+    private val viewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        startService(Intent(this, ScanService::class.java))
+        // Start scanning when the activity is created
+        viewModel.startScan()
 
         setContent {
             HeimdallTheme {
-                MainScreen()
+                // Collect state from ViewModel as Compose state
+                val scanProgress by viewModel.scanProgress.collectAsState()
+                val showSplashScreen by viewModel.showSplashScreen.collectAsState()
+
+                // Show the appropriate screen based on the state
+                if (showSplashScreen) {
+                    SplashScreen(progress = scanProgress)
+                } else {
+                    MainScreen()
+                }
             }
         }
     }
-}
-
-@Composable
-fun MainScreen() {
-    val navController = rememberNavController()
-
-    HeimdallTheme {
-        Scaffold(
-            bottomBar = { BottomNavigationBar(navController) },
-            content = { padding -> // We have to pass the scaffold inner padding to our content. That's why we use Box.
-                Box(modifier = Modifier.padding(padding)) {
-                    Navigation(navController = navController)
-                }
-            },
-            containerColor = MaterialTheme.colorScheme.surface // Set background color to avoid the white flashing when you switch between screens
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun MainScreenPreview() {
-    MainScreen()
 }

@@ -16,8 +16,8 @@ android {
     namespace = "de.tomcory.heimdall.core.datastore.proto"
 
     defaultConfig {
-        compileSdk = 34
         minSdk = 24
+        compileSdk = 36
     }
 
     sourceSets {

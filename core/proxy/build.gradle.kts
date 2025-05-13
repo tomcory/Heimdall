@@ -12,13 +12,13 @@ android {
     namespace = "de.tomcory.heimdall.core.proxy"
 
     defaultConfig {
-        compileSdk = 34
         minSdk = 24
+        compileSdk = 36
     }
 
     ndkVersion = "21.0.6113669"
 
-    packagingOptions {
+    packaging {
         resources {
             excludes.add("META-INF/INDEX.LIST")
             excludes.add("META-INF/io.netty.versions.properties")

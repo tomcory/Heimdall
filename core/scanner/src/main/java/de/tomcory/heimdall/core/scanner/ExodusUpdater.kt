@@ -17,13 +17,18 @@ class ExodusUpdater @Inject constructor(
     suspend fun updateAll() {
         Timber.d("Querying Exodus API...")
 
-        val apiInstance = Retrofit.Builder()
-            .baseUrl(ExodusAPIInterface.BASE_URL)
-            .addConverterFactory(MoshiConverterFactory.create())
-            .build()
-            .create(ExodusAPIInterface::class.java)
+        val result = try {
+            val apiInstance = Retrofit.Builder()
+                .baseUrl(ExodusAPIInterface.BASE_URL)
+                .addConverterFactory(MoshiConverterFactory.create())
+                .build()
+                .create(ExodusAPIInterface::class.java)
 
-        val result = apiInstance.getAllTrackers()
+            apiInstance.getAllTrackers()
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to query Exodus API.")
+            return
+        }
 
         if (result.isSuccessful && result.body() != null) {
             Timber.d("Successfully queried Exodus API.")

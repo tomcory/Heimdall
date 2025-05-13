@@ -6,6 +6,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
@@ -16,10 +18,15 @@ import timber.log.Timber
 import javax.inject.Inject
 
 @HiltAndroidApp
-class HeimdallApplication : Application() {
+class HeimdallApplication : Application(), Configuration.Provider {
 
-    @Inject
-    lateinit var preferences: PreferencesDataSource
+    @Inject lateinit var preferences: PreferencesDataSource
+    @Inject lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
 
     @SuppressLint("ObsoleteSdkInt")
     override fun onCreate() {

@@ -12,8 +12,8 @@ android {
     namespace = "de.tomcory.heimdall.core.util"
 
     defaultConfig {
-        compileSdk = 34
         minSdk = 24
+        compileSdk = 36
     }
 }
 
