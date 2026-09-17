@@ -2,6 +2,7 @@ package de.tomcory.heimdall.service
 
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -94,11 +95,7 @@ class ScanWorker(
             return
         }
 
-        val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            pkgInfo.longVersionCode
-        } else {
-            pkgInfo.versionCode.toLong()
-        }
+        val versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
         val versionName = pkgInfo.versionName ?: ""
 
         val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
@@ -140,11 +137,7 @@ class ScanWorker(
 
         packages.forEachIndexed { index, pkgInfo ->
             val packageName = pkgInfo.packageName
-            val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                pkgInfo.longVersionCode
-            } else {
-                pkgInfo.versionCode.toLong()
-            }
+            val versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
             val versionName = pkgInfo.versionName ?: ""
 
             // Check if app is new or has a different version

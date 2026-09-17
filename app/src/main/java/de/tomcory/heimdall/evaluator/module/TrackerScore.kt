@@ -22,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.App
 import de.tomcory.heimdall.core.database.entity.Report
@@ -162,7 +161,7 @@ class TrackerScore(
                                 // open the tracker's URL in the browser
                                 val browserIntent =
                                     Intent(Intent.ACTION_VIEW, Uri.parse(tracker.web))
-                                ContextCompat.startActivity(context, browserIntent, null)
+                                context.startActivity(browserIntent, null)
                             }
                         )
                     }

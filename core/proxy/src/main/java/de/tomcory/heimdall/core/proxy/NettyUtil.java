@@ -41,11 +41,11 @@ public class NettyUtil {
 
     public static byte[] FullHttpRequestToBytes(FullHttpRequest fhr) {
         StringBuilder headersb = new StringBuilder(8 * 1024);
-        headersb.append(fhr.getMethod().name());
+        headersb.append(fhr.method().name());
         headersb.append(" ");
-        headersb.append(fhr.getUri());
+        headersb.append(fhr.uri());
         headersb.append(" ");
-        headersb.append(fhr.getProtocolVersion().text());
+        headersb.append(fhr.protocolVersion().text());
         headersb.append("\r\n");
         HttpHeaders headers = fhr.headers();
         for (Entry<String, String> header : headers) {
@@ -100,11 +100,11 @@ public class NettyUtil {
 
     public static byte[] FullHttpResponseToBytes(FullHttpResponse fhr) {
         StringBuilder headersb = new StringBuilder(8 * 1024);
-        headersb.append(fhr.getProtocolVersion().text());
+        headersb.append(fhr.protocolVersion().text());
         headersb.append(" ");
-        headersb.append(fhr.getStatus().code());
+        headersb.append(fhr.status().code());
         headersb.append(" ");
-        headersb.append(fhr.getStatus().reasonPhrase());
+        headersb.append(fhr.status().reasonPhrase());
         headersb.append("\r\n");
         HttpHeaders headers = fhr.headers();
         for (Entry<String, String> header : headers) {

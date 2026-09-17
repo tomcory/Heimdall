@@ -162,7 +162,7 @@ class HttpProxyFiltersImpl(
 
     override fun clientToProxyRequest(httpObject: HttpObject): HttpResponse? {
         if (httpObject is HttpRequest) {
-            val isHttpsAttr = ctx.attr(isHttpsAttrKey)
+            val isHttpsAttr = ctx.channel().attr(isHttpsAttrKey)
             var isHttpsVal = isHttpsAttr.get()
             if (Objects.isNull(isHttpsVal)) {
                 isHttpsVal = false
@@ -184,14 +184,14 @@ class HttpProxyFiltersImpl(
 
     override fun proxyToServerResolutionSucceeded(serverHostAndPort: String, resolvedRemoteAddress: InetSocketAddress) {
         Timber.d("proxyToServerResolutionSucceeded(%s, %s", serverHostAndPort, resolvedRemoteAddress)
-        ctx.attr(resolvedRemoteAddressKey).set(resolvedRemoteAddress)
+        ctx.channel().attr(resolvedRemoteAddressKey).set(resolvedRemoteAddress)
     }
 
     @RequiresApi(api = Build.VERSION_CODES.Q)
     override fun proxyToServerRequest(httpObject: HttpObject): HttpResponse? {
         if (httpObject is FullHttpRequest) {
             CoroutineScope(Dispatchers.IO).launch {
-                val currentResolved = ctx.attr(resolvedRemoteAddressKey).get()
+                val currentResolved = ctx.channel().attr(resolvedRemoteAddressKey).get()
 
                 Timber.d("proxyToServerRequest: isHttps=%s method=%s, client=%s, remote=%s, url=%s",
                     isHttps,
@@ -235,7 +235,7 @@ class HttpProxyFiltersImpl(
                 )
 
                 // insert the response into the DB
-                saveResponse(httpObject, ctx.attr(resolvedRemoteAddressKey).get())
+                saveResponse(httpObject, ctx.channel().attr(resolvedRemoteAddressKey).get())
             }
         }
         return httpObject

@@ -425,8 +425,7 @@ class PrivacyPolicyScore(database: HeimdallDatabase) : Module(database) {
             entries = gson.fromJson(reader, entryListType)
 
             val current = entries.filter { e ->
-                e.owner_name != null && e.owner_name.uppercase(Locale.ROOT)
-                    .equals(name.uppercase(Locale.ROOT))
+                e.owner_name.uppercase(Locale.ROOT) == name.uppercase(Locale.ROOT)
             }
 
             return if (current.isNotEmpty()) {

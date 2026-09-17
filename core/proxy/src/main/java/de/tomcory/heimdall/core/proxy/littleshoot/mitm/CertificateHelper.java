@@ -202,7 +202,7 @@ public final class CertificateHelper {
         try {
             is = new ASN1InputStream(bIn);
             ASN1Sequence seq = (ASN1Sequence) is.readObject();
-            SubjectPublicKeyInfo info = new SubjectPublicKeyInfo(seq);
+            SubjectPublicKeyInfo info = SubjectPublicKeyInfo.getInstance(seq);
             return new BcX509ExtensionUtils().createSubjectKeyIdentifier(info);
         } finally {
             IOUtils.closeQuietly(is);

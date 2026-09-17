@@ -11,7 +11,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class ScannerViewModel @Inject constructor(
-    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context
+    @field:SuppressLint("StaticFieldLeak") @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     val showPreferencesDialogInitial = false

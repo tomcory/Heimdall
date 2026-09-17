@@ -9,6 +9,8 @@ import io.netty.channel.udt.nio.NioUdtProvider;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.DefaultHttpResponse;
 import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpMessage;
 import io.netty.handler.codec.http.HttpMethod;
@@ -50,14 +52,14 @@ public class ProxyUtils {
      * Header names are stored as lowercase to make case-insensitive comparisons easier.
      */
     private static final Set<String> SHOULD_NOT_PROXY_HOP_BY_HOP_HEADERS = ImmutableSet.of(
-            HttpHeaders.Names.CONNECTION.toLowerCase(Locale.US),
-            HttpHeaders.Names.PROXY_AUTHENTICATE.toLowerCase(Locale.US),
-            HttpHeaders.Names.PROXY_AUTHORIZATION.toLowerCase(Locale.US),
-            HttpHeaders.Names.TE.toLowerCase(Locale.US),
-            HttpHeaders.Names.TRAILER.toLowerCase(Locale.US),
+            HttpHeaderNames.CONNECTION.toLowerCase().toString(),
+            HttpHeaderNames.PROXY_AUTHENTICATE.toLowerCase().toString(),
+            HttpHeaderNames.PROXY_AUTHORIZATION.toLowerCase().toString(),
+            HttpHeaderNames.TE.toLowerCase().toString(),
+            HttpHeaderNames.TRAILER.toLowerCase().toString(),
             /*  Note: Not removing Transfer-Encoding since LittleProxy does not normally re-chunk content.
-                HttpHeaders.Names.TRANSFER_ENCODING.toLowerCase(Locale.US), */
-            HttpHeaders.Names.UPGRADE.toLowerCase(Locale.US),
+                HttpHeaderNames.TRANSFER_ENCODING.toLowerCase(Locale.US), */
+            HttpHeaderNames.UPGRADE.toLowerCase().toString(),
             "Keep-Alive".toLowerCase(Locale.US)
     );
 
@@ -179,7 +181,7 @@ public class ProxyUtils {
      * @return The host and port string.
      */
     public static String parseHostAndPort(final HttpRequest httpRequest) {
-        final String uriHostAndPort = parseHostAndPort(httpRequest.getUri());
+        final String uriHostAndPort = parseHostAndPort(httpRequest.uri());
         return uriHostAndPort;
     }
 
@@ -223,11 +225,11 @@ public class ProxyUtils {
         HttpResponse copy = null;
         if (original instanceof DefaultFullHttpResponse) {
             ByteBuf content = ((DefaultFullHttpResponse) original).content();
-            copy = new DefaultFullHttpResponse(original.getProtocolVersion(),
-                    original.getStatus(), content);
+            copy = new DefaultFullHttpResponse(original.protocolVersion(),
+                    original.status(), content);
         } else {
-            copy = new DefaultHttpResponse(original.getProtocolVersion(),
-                    original.getStatus());
+            copy = new DefaultHttpResponse(original.protocolVersion(),
+                    original.status());
         }
         final Collection<String> headerNames = original.headers().names();
         for (final String name : headerNames) {
@@ -255,23 +257,23 @@ public class ProxyUtils {
      */
     public static void addVia(HttpMessage httpMessage, String alias) {
         String newViaHeader =  new StringBuilder()
-                .append(httpMessage.getProtocolVersion().majorVersion())
+                .append(httpMessage.protocolVersion().majorVersion())
                 .append('.')
-                .append(httpMessage.getProtocolVersion().minorVersion())
+                .append(httpMessage.protocolVersion().minorVersion())
                 .append(' ')
                 .append(alias)
                 .toString();
 
         final List<String> vias;
-        if (httpMessage.headers().contains(HttpHeaders.Names.VIA)) {
-            List<String> existingViaHeaders = httpMessage.headers().getAll(HttpHeaders.Names.VIA);
+        if (httpMessage.headers().contains(HttpHeaderNames.VIA)) {
+            List<String> existingViaHeaders = httpMessage.headers().getAll(HttpHeaderNames.VIA);
             vias = new ArrayList<String>(existingViaHeaders);
             vias.add(newViaHeader);
         } else {
             vias = Collections.singletonList(newViaHeader);
         }
 
-        httpMessage.headers().set(HttpHeaders.Names.VIA, vias);
+        httpMessage.headers().set(HttpHeaderNames.VIA, vias);
     }
 
     /**
@@ -334,7 +336,7 @@ public class ProxyUtils {
     public static boolean isCONNECT(HttpObject httpObject) {
         return httpObject instanceof HttpRequest
                 && HttpMethod.CONNECT.equals(((HttpRequest) httpObject)
-                        .getMethod());
+                        .method());
     }
 
     /**
@@ -344,7 +346,7 @@ public class ProxyUtils {
      * @return true if request is a HEAD, otherwise false
      */
     public static boolean isHEAD(HttpRequest httpRequest) {
-        return HttpMethod.HEAD.equals(httpRequest.getMethod());
+        return HttpMethod.HEAD.equals(httpRequest.method());
     }
 
     private static boolean checkTrueOrFalse(final String val,
@@ -363,7 +365,7 @@ public class ProxyUtils {
     public static boolean isContentAlwaysEmpty(HttpMessage msg) {
         if (msg instanceof HttpResponse) {
             HttpResponse res = (HttpResponse) msg;
-            int code = res.getStatus().code();
+            int code = res.status().code();
 
             // Correctly handle return codes of 1xx.
             //
@@ -425,16 +427,16 @@ public class ProxyUtils {
         }
 
         // if there is a Transfer-Encoding value, determine whether the final encoding is "chunked", which makes the message self-terminating
-        List<String> allTransferEncodingHeaders = getAllCommaSeparatedHeaderValues(HttpHeaders.Names.TRANSFER_ENCODING, response);
+        List<String> allTransferEncodingHeaders = getAllCommaSeparatedHeaderValues(HttpHeaderNames.TRANSFER_ENCODING.toString(), response);
         if (!allTransferEncodingHeaders.isEmpty()) {
             String finalEncoding = allTransferEncodingHeaders.get(allTransferEncodingHeaders.size() - 1);
 
             // per #3 above: "If a message is received with both a Transfer-Encoding header field and a Content-Length header field, the latter MUST be ignored."
             // since the Transfer-Encoding field is present, the message is self-terminating if and only if the final Transfer-Encoding value is "chunked"
-            return HttpHeaders.Values.CHUNKED.equals(finalEncoding);
+            return HttpHeaderValues.CHUNKED.contentEquals(finalEncoding);
         }
 
-        String contentLengthHeader = HttpHeaders.getHeader(response, HttpHeaders.Names.CONTENT_LENGTH);
+        String contentLengthHeader = response.headers().get(HttpHeaderNames.CONTENT_LENGTH);
         if (contentLengthHeader != null && !contentLengthHeader.isEmpty()) {
             return true;
         }
@@ -501,7 +503,7 @@ public class ProxyUtils {
      * @return a new HttpResponse with the same status line and headers
      */
     public static HttpResponse duplicateHttpResponse(HttpResponse originalResponse) {
-        DefaultHttpResponse newResponse = new DefaultHttpResponse(originalResponse.getProtocolVersion(), originalResponse.getStatus());
+        DefaultHttpResponse newResponse = new DefaultHttpResponse(originalResponse.protocolVersion(), originalResponse.status());
         newResponse.headers().add(originalResponse.headers());
 
         return newResponse;
@@ -628,8 +630,8 @@ public class ProxyUtils {
 
         if (body != null) {
             response = new DefaultFullHttpResponse(httpVersion, status, body);
-            response.headers().set(HttpHeaders.Names.CONTENT_LENGTH, contentLength);
-            response.headers().set(HttpHeaders.Names.CONTENT_TYPE, contentType);
+            response.headers().set(HttpHeaderNames.CONTENT_LENGTH, contentLength);
+            response.headers().set(HttpHeaderNames.CONTENT_TYPE, contentType);
         } else {
             response = new DefaultFullHttpResponse(httpVersion, status);
         }
@@ -645,8 +647,8 @@ public class ProxyUtils {
      * @param headers The headers to modify.
      */
     public static void removeSdchEncoding(HttpHeaders headers) {
-        List<String> encodings = headers.getAll(HttpHeaders.Names.ACCEPT_ENCODING);
-        headers.remove(HttpHeaders.Names.ACCEPT_ENCODING);
+        List<String> encodings = headers.getAll(HttpHeaderNames.ACCEPT_ENCODING);
+        headers.remove(HttpHeaderNames.ACCEPT_ENCODING);
 
         for (String encoding : encodings) {
             if (encoding != null) {
@@ -657,7 +659,7 @@ public class ProxyUtils {
                 encoding = encoding.replaceAll(",? *(sdch|SDCH)", "").replaceFirst("^ *, *", "");
 
                 if (StringUtils.isNotBlank(encoding)) {
-                    headers.add(HttpHeaders.Names.ACCEPT_ENCODING, encoding);
+                    headers.add(HttpHeaderNames.ACCEPT_ENCODING, encoding);
                 }
             }
         }

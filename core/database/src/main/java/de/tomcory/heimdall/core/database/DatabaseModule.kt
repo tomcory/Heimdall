@@ -19,6 +19,6 @@ object DatabaseModule {
         return Room.databaseBuilder(
             context,
             HeimdallDatabase::class.java, "heimdall"
-        ).fallbackToDestructiveMigration().build()
+        ).fallbackToDestructiveMigration(dropAllTables = true).build()
     }
 }

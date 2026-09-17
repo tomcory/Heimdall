@@ -4,7 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -77,7 +77,7 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
                             modifier = Modifier.padding(0.dp, 0.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Outlined.ArrowBack,
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
                                 contentDescription = "Close preferences dialog"
                             )
                         }
@@ -95,7 +95,7 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
                 }
 
                 item {
-                    Divider()
+                    HorizontalDivider()
                 }
 
                 item {
@@ -103,7 +103,7 @@ fun PreferencesScreen(onDismissRequest: () -> Unit) {
                 }
 
                 item {
-                    Divider()
+                    HorizontalDivider()
                 }
 
                 item {

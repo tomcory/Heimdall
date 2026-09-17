@@ -19,6 +19,7 @@ import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.service.HeimdallVpnService
 import de.tomcory.heimdall.ui.scanner.ScannerRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,7 +48,7 @@ data class SessionStats(
 
 @HiltViewModel
 class TrafficScannerViewModel @Inject constructor(
-    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
+    @field:SuppressLint("StaticFieldLeak") @param:ApplicationContext private val context: Context,
     private val repository: ScannerRepository,
     private val database: HeimdallDatabase,
 ) : ViewModel() {
@@ -83,6 +84,7 @@ class TrafficScannerViewModel @Inject constructor(
 
     private val _currentSessionId = MutableStateFlow<Int?>(null)
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val liveConnections: StateFlow<List<Connection>> = _currentSessionId
         .flatMapLatest { sessionId ->
             if (sessionId != null) database.connectionDao().getForSessionObservable(sessionId)

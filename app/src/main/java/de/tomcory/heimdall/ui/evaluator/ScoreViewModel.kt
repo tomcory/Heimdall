@@ -7,7 +7,6 @@ import android.content.pm.PackageManager.NameNotFoundException
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import androidx.core.content.ContextCompat
-import androidx.core.content.ContextCompat.startActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -48,7 +47,7 @@ data class DeviceStats(
 class ScoreViewModel @Inject constructor(
     private val database: HeimdallDatabase,
     private val evaluator: Evaluator,
-    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
+    @field:SuppressLint("StaticFieldLeak") @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     val evaluatorModules = evaluator.modules
@@ -179,7 +178,7 @@ class ScoreViewModel @Inject constructor(
 
     fun uninstallApp(composableContext: Context) {
         val uri = Uri.fromParts("package", selectedAppPackageName.value, null)
-        startActivity(composableContext, Intent(Intent.ACTION_DELETE, uri), null)
+        composableContext.startActivity(Intent(Intent.ACTION_DELETE, uri), null)
     }
 
     suspend fun exportToJson() {
@@ -192,7 +191,7 @@ class ScoreViewModel @Inject constructor(
                     type = "text/json"
                 }, null
             )
-            startActivity(context, shareIntent, null)
+            context.startActivity(shareIntent, null)
         }
     }
 }

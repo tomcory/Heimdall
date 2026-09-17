@@ -246,7 +246,6 @@ abstract class NioSslPeer(
                 }
                 SSLEngineResult.HandshakeStatus.FINISHED -> Timber.d("FINISHED")
                 SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING -> Timber.d("NOT_HANDSHAKING")
-                else -> throw IllegalStateException("Invalid SSL status: $handshakeStatus")
             }
         }
         Timber.d("Handshake done (%s)", handshakeStatus)

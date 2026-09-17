@@ -6,6 +6,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,7 +26,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class LibraryScannerViewModel @Inject constructor(
-    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
+    @field:SuppressLint("StaticFieldLeak") @param:ApplicationContext private val context: Context,
     private val repository: ScannerRepository,
     private val libraryScanner: LibraryScanner
 ) : ViewModel() {
@@ -127,11 +128,7 @@ class LibraryScannerViewModel @Inject constructor(
                     packageName = it.packageName,
                     label = it.applicationInfo?.loadLabel(pm)?.toString() ?: it.packageName,
                     versionName = it.versionName ?: "",
-                    versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        it.longVersionCode
-                    } else {
-                        it.versionCode.toLong()
-                    },
+                    versionCode = PackageInfoCompat.getLongVersionCode(it),
                     isSystem = (it.applicationInfo?.flags ?: (0 and ApplicationInfo.FLAG_SYSTEM)) != 0
                 )
             )
