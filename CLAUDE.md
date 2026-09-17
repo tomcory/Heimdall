@@ -28,7 +28,6 @@ core/
   database/             Room database: entities, DAOs, migrations
   scanner/              PermissionScanner, LibraryScanner, Exodus API client
   vpn/                  VPN packet pipeline, MitM engine (Pcap4j + Netty + BouncyCastle)
-  proxy/                LittleProxy-based HTTP proxy (alternative interception path)
   util/                 Trie, AppFinder, file/network utilities
   export/               CSV, JSON, TeX export logic
   datastore/            DataStore preferences (type-safe wrappers)
@@ -114,7 +113,7 @@ Dependencies are centrally managed in `gradle/libs.versions.toml`.
 | DataStore 1.1.6 + Protobuf | Type-safe preferences |
 | Retrofit 2.9.0 + OkHttp 5.0.0-alpha.2 | Exodus API calls |
 | Pcap4j 1.7.6 | IP/TCP/UDP packet parsing |
-| Netty 4.1.58 | Proxy TCP |
+| Netty 4.1.58 | TCP/TLS handling in the VPN's MitM engine |
 | BouncyCastle 1.69 | TLS cert generation |
 | multidexlib2 | APK/DEX parsing for tracker detection |
 | JSoup 1.14.3 | Play Store HTML scraping |

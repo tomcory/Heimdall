@@ -47,7 +47,6 @@ Heimdall/
     ├── database/           Room database: entities, DAOs, migrations
     ├── scanner/             PermissionScanner, LibraryScanner, Exodus API client
     ├── vpn/                VPN service components, packet pipeline, MitM engine
-    ├── proxy/              LittleProxy-based HTTP proxy (alternative interception path)
     ├── util/               Trie, AppFinder, file/network utilities
     ├── export/             CSV, TeX export logic
     ├── datastore/          DataStore preferences (type-safe wrappers)
@@ -148,7 +147,7 @@ Device apps
 **Tracker detection**: Hostnames matched against a Trie built from Steven Black's unified hosts file.
 **Monitoring scope**: Configurable — all apps, non-system only, whitelist, or blacklist.
 
-An alternative interception path exists in `core/proxy` — a LittleProxy-mitm-derived HTTP proxy (`HeimdallHttpProxyServer`), selectable via the `VpnMode` enum (`BASE`, `MITM_VPN`, `MITM_PROXY`) in `TrafficScannerViewModel`, backed by the `vpnUseProxy` DataStore preference.
+Earlier versions also offered an alternative interception path via a LittleProxy-mitm-derived HTTP proxy (`core/proxy`). That module has been removed; the VPN/TUN-based MitM engine above is now the sole interception mechanism, selectable via the `VpnMode` enum (`BASE`, `MITM_VPN`) in `TrafficScannerViewModel`.
 
 For the full component-by-component breakdown of this pipeline (threading model, TLS MitM deep dive, configuration), see [`core/vpn/README.md`](../core/vpn/README.md).
 
@@ -236,7 +235,7 @@ All DAO methods are `suspend` functions; relationships are expressed with Room `
 | DataStore + Protobuf | 1.1.6 | Type-safe preferences |
 | Retrofit + OkHttp | 2.9.0 / 5.0.0-alpha.2 | HTTP networking (Exodus API) |
 | Pcap4j | 1.7.6 | IP/TCP/UDP packet parsing |
-| Netty | 4.1.58 | Proxy TCP networking |
+| Netty | 4.1.58 | TCP/TLS handling in the VPN's MitM engine |
 | BouncyCastle | 1.69 | TLS certificate generation |
 | multidexlib2 | — | APK/DEX parsing |
 | JSoup | 1.14.3 | HTML scraping (Play Store privacy policy) |

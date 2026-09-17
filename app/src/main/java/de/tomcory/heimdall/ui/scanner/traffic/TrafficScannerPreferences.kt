@@ -77,20 +77,6 @@ fun VpnPreferences(
             valueVerifier = { value -> InetAddressUtils.isValidInetAddressWithPort(value) },
             onValueChange = { value -> viewModel.preferences.setVpnRoute(value) }
         )
-
-        BooleanPreference(
-            text = "Use proxy",
-            value = viewModel.preferences.vpnUseProxy.collectAsState(initial = viewModel.prefInit.vpnUseProxyInitial).value,
-            onValueChange = { value -> viewModel.preferences.setVpnUseProxy(value) }
-        )
-
-        StringPreference(
-            text = "Proxy address",
-            dialogText = "Proxy address",
-            value = viewModel.preferences.vpnProxyAddress.collectAsState(initial = viewModel.prefInit.vpnProxyAddressInitial).value,
-            valueVerifier = { value -> InetAddressUtils.isValidInetAddressWithPort(value) },
-            onValueChange = { value -> viewModel.preferences.setVpnProxyAddress(value) }
-        )
     }
 }
 

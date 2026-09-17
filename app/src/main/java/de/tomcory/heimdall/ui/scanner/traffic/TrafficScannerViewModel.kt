@@ -13,9 +13,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.database.entity.Session
-import de.tomcory.heimdall.core.proxy.HeimdallHttpProxyServer
-import de.tomcory.heimdall.core.proxy.littleshoot.mitm.CertificateSniffingMitmManager
-import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.service.HeimdallVpnService
 import de.tomcory.heimdall.ui.scanner.ScannerRepository
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +33,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.io.File
 import javax.inject.Inject
 
 data class SessionStats(
@@ -57,8 +53,6 @@ class TrafficScannerViewModel @Inject constructor(
     val scanSetupInitial = false
     val lastUpdatedInitial = 0L
 
-    private var proxyServer: HeimdallHttpProxyServer? = null
-
     val preferences = repository.preferences
     val prefInit = repository.preferences.initialValues
 
@@ -75,7 +69,7 @@ class TrafficScannerViewModel @Inject constructor(
     private val _vpnPermissionRequestEvent = MutableSharedFlow<Unit>()
     val vpnPermissionRequestEvent = _vpnPermissionRequestEvent.asSharedFlow()
 
-    enum class VpnMode { BASE, MITM_VPN, MITM_PROXY }
+    enum class VpnMode { BASE, MITM_VPN }
 
     private val _vpnMode = MutableStateFlow(VpnMode.BASE)
     val vpnMode = _vpnMode.asStateFlow()
@@ -99,14 +93,8 @@ class TrafficScannerViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val useProxy = repository.preferences.vpnUseProxy.first()
             val mitmEnabled = repository.preferences.mitmEnable.first()
-            _vpnMode.value = when {
-                !useProxy && !mitmEnabled -> VpnMode.BASE
-                useProxy && mitmEnabled  -> VpnMode.MITM_PROXY
-                !useProxy && mitmEnabled -> VpnMode.MITM_VPN
-                else                    -> VpnMode.BASE
-            }
+            _vpnMode.value = if (mitmEnabled) VpnMode.MITM_VPN else VpnMode.BASE
             loadLastSessionStats()
         }
     }
@@ -130,18 +118,15 @@ class TrafficScannerViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             if (!scanSetup.first()) {
                 _scanSetup.emit(true)
-                val useProxy = repository.preferences.vpnUseProxy.first()
-                if ((!repository.preferences.proxyActive.first() || !useProxy) &&
-                    !repository.preferences.vpnActive.first()
-                ) {
+                if (!repository.preferences.vpnActive.first()) {
                     val vpnIntent = VpnService.prepare(context)
                     if (vpnIntent != null) {
                         _vpnPermissionRequestEvent.emit(Unit)
                     } else {
-                        startVpnStack(useProxy, onShowSnackbar)
+                        startVpnStack(onShowSnackbar)
                     }
                 } else {
-                    stopProxyAndVpn(context, proxyServer)
+                    stopVpn(context)
                     onShowSnackbar("VPN setup failed")
                 }
             }
@@ -149,7 +134,7 @@ class TrafficScannerViewModel @Inject constructor(
     }
 
     fun onScanCancel() {
-        viewModelScope.launch { stopProxyAndVpn(context, proxyServer) }
+        viewModelScope.launch { stopVpn(context) }
     }
 
     fun onShowDetails() = Unit
@@ -159,9 +144,8 @@ class TrafficScannerViewModel @Inject constructor(
         viewModelScope.launch {
             _vpnMode.value = mode
             when (mode) {
-                VpnMode.BASE       -> { repository.preferences.setVpnUseProxy(false); repository.preferences.setMitmEnable(false) }
-                VpnMode.MITM_VPN   -> { repository.preferences.setVpnUseProxy(false); repository.preferences.setMitmEnable(true) }
-                VpnMode.MITM_PROXY -> { repository.preferences.setVpnUseProxy(true);  repository.preferences.setMitmEnable(true) }
+                VpnMode.BASE     -> repository.preferences.setMitmEnable(false)
+                VpnMode.MITM_VPN -> repository.preferences.setMitmEnable(true)
             }
         }
     }
@@ -169,8 +153,7 @@ class TrafficScannerViewModel @Inject constructor(
     fun onVpnPermissionResult(resultCode: Int, onShowSnackbar: (String) -> Unit) {
         viewModelScope.launch {
             if (resultCode == Activity.RESULT_OK) {
-                val useProxy = repository.preferences.vpnUseProxy.first()
-                startVpnStack(useProxy, onShowSnackbar)
+                startVpnStack(onShowSnackbar)
             } else {
                 Timber.e("VPN permission denied: %s", resultCode)
                 onShowSnackbar("VPN permission denied")
@@ -181,61 +164,28 @@ class TrafficScannerViewModel @Inject constructor(
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private suspend fun startVpnStack(useProxy: Boolean, onShowSnackbar: (String) -> Unit) {
+    private suspend fun startVpnStack(onShowSnackbar: (String) -> Unit) {
         val doMitm = repository.preferences.mitmEnable.first()
-        if (useProxy) {
-            proxyServer = try { launchProxy(context) } catch (e: Exception) { null }
-            repository.preferences.setProxyActive(proxyServer != null)
-        }
-        if (!useProxy || repository.preferences.proxyActive.first()) {
-            val sessionId = persistSession(System.currentTimeMillis())
-            _currentSessionId.value = sessionId
-            if (launchVpn(context, useProxy) != null) {
-                repository.preferences.setVpnActive(true)
-                repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
-                _scanActive.emit(true)
-                val mitmString = if (doMitm) " with MitM" else ""
-                onShowSnackbar("Traffic scanner enabled$mitmString")
-            } else {
-                onShowSnackbar("VPN setup failed")
-            }
+        val sessionId = persistSession(System.currentTimeMillis())
+        _currentSessionId.value = sessionId
+        if (launchVpn(context) != null) {
+            repository.preferences.setVpnActive(true)
+            repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
+            _scanActive.emit(true)
+            val mitmString = if (doMitm) " with MitM" else ""
+            onShowSnackbar("Traffic scanner enabled$mitmString")
         } else {
-            onShowSnackbar("Proxy setup failed")
+            onShowSnackbar("VPN setup failed")
         }
         delay(500)
         _scanSetup.emit(false)
     }
 
-    private fun launchVpn(context: Context, useProxy: Boolean): ComponentName? {
+    private fun launchVpn(context: Context): ComponentName? {
         return context.startService(
             Intent(context, HeimdallVpnService::class.java)
                 .putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.START_SERVICE)
         )
-    }
-
-    private suspend fun launchProxy(context: Context): HeimdallHttpProxyServer {
-        return withContext(Dispatchers.IO) {
-            val oldAuth = de.tomcory.heimdall.core.proxy.littleshoot.mitm.Authority(
-                File(context.filesDir, "keystore"),
-                repository.preferences.certAlias.first(),
-                repository.preferences.certPassword.first().toCharArray(),
-                repository.preferences.certIssuerCn.first(),
-                repository.preferences.certIssuerO.first(),
-                repository.preferences.certIssuerOu.first(),
-                repository.preferences.certSubjectO.first(),
-                repository.preferences.certSubjectOu.first()
-            )
-            val server = HeimdallHttpProxyServer(
-                InetAddressUtils.stringToInetSocketAddress(repository.preferences.vpnProxyAddress.first()),
-                CertificateSniffingMitmManager(oldAuth),
-                context,
-                database,
-            )
-            val sessionId = persistSession(System.currentTimeMillis())
-            _currentSessionId.value = sessionId
-            server.start(sessionId)
-            server
-        }
     }
 
     private suspend fun persistSession(startTime: Long): Int {
@@ -248,15 +198,13 @@ class TrafficScannerViewModel @Inject constructor(
         return if (ids.isNotEmpty()) ids.first().toInt() else -1
     }
 
-    private suspend fun stopProxyAndVpn(context: Context, proxyServer: HeimdallHttpProxyServer?) {
+    private suspend fun stopVpn(context: Context) {
         _scanSetup.emit(true)
         context.startService(
             Intent(context, HeimdallVpnService::class.java)
                 .putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.STOP_SERVICE)
         )
-        withContext(Dispatchers.IO) { proxyServer?.stop() }
 
-        repository.preferences.setProxyActive(false)
         repository.preferences.setVpnActive(false)
         repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
 

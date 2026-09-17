@@ -194,7 +194,6 @@ fun TrafficScannerCardContent(
                             val options = listOf(
                                 Pair(VpnMode.BASE, "Off"),
                                 Pair(VpnMode.MITM_VPN, "VPN"),
-                                Pair(VpnMode.MITM_PROXY, "Proxy")
                             )
 
                             // Iterate over the options
@@ -349,7 +348,6 @@ fun ActiveModeIndicator(vpnMode: VpnMode, lastUpdated: Long) {
             val modeText = when (vpnMode) {
                 VpnMode.BASE -> "MitM disabled"
                 VpnMode.MITM_VPN -> "MitM-VPN enabled"
-                VpnMode.MITM_PROXY -> "MitM-Proxy enabled"
             }
 
             Text(
@@ -547,9 +545,9 @@ fun TrafficScannerCardActivePreview() {
 }
 
 /**
- * Preview for the TrafficScannerCard with dark theme and MitM-Proxy mode.
+ * Preview for the TrafficScannerCard with dark theme and MitM-VPN mode.
  */
-@Preview(showBackground = true, name = "Traffic Scanner with MitM-Proxy Mode and Dark Mode UI")
+@Preview(showBackground = true, name = "Traffic Scanner with MitM-VPN Mode and Dark Mode UI")
 @Composable
 fun TrafficScannerCardDarkPreview() {
     HeimdallTheme(useDarkTheme = true) {
@@ -561,7 +559,7 @@ fun TrafficScannerCardDarkPreview() {
                 scanActive = false,
                 scanSetup = false,
                 lastUpdated = System.currentTimeMillis(),
-                vpnMode = VpnMode.MITM_PROXY
+                vpnMode = VpnMode.MITM_VPN
             )
         }
     }
@@ -582,7 +580,7 @@ fun TrafficScannerCardActiveDarkPreview() {
                 scanActive = true,
                 scanSetup = false,
                 lastUpdated = System.currentTimeMillis() - 7200000, // Show 2 hours of elapsed time
-                vpnMode = VpnMode.MITM_PROXY
+                vpnMode = VpnMode.MITM_VPN
             )
         }
     }

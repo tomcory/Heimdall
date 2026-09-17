@@ -102,7 +102,7 @@ If you use this toolkit in your academic research, please be so kind as to cite 
 
 Heimdall is being developed by a team of researchers and students lead by Thomas Cory at the [Service-centric Networking](https://www.tu.berlin/snet) chair at Technische Universität Berlin.
 
-Early versions of the TrafficScanner employed [LittleProxy-mitm](https://github.com/ganskef/LittleProxy-mitm) to decrypt HTTPS traffic - and the proxy remains an optional feature to supplement the MitM-VPN layer.
+Early versions of the TrafficScanner employed [LittleProxy-mitm](https://github.com/ganskef/LittleProxy-mitm) to decrypt HTTPS traffic; this proxy-based interception path has since been superseded by the in-house VPN/TUN-based MitM engine and was removed.
 
 Identification of third-party tracking hosts is based on the [unified hosts](https://github.com/StevenBlack/hosts) file curated by Steven Black. Similarly, third-party tracking library identification is based on the database curated by the [Exodus Privacy Project](https://exodus-privacy.eu.org/).
 ## License

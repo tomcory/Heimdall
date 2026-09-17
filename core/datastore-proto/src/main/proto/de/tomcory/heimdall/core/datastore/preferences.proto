@@ -26,8 +26,8 @@ message Preferences {
   string vpn_dns_server = 4;
   string vpn_base_address = 5;
   string vpn_route = 6;
-  bool vpn_use_proxy = 7;
-  string vpn_proxy_address = 8;
+  bool vpn_use_proxy = 7 [deprecated = true];       // core:proxy removed; no producer/consumer remains
+  string vpn_proxy_address = 8 [deprecated = true]; // core:proxy removed; no producer/consumer remains
   MonitoringScopeApps vpn_monitoringScope = 9;
   repeated string vpn_whitelist_apps = 10;
   repeated string vpn_blacklist_apps = 11;
@@ -60,18 +60,18 @@ message Preferences {
   repeated string permission_whitelist = 32;
   repeated string permission_blacklist = 33;
 
-  // ---- CERTIFICATE PREFERENCES
-  string cert_alias = 34;
-  string cert_password = 35;
-  string cert_issuer_cn = 36;
-  string cert_issuer_o = 37;
-  string cert_issuer_ou = 38;
-  string cert_subject_cn = 39;
-  string cert_subject_o = 40;
-  string cert_subject_ou = 41;
+  // ---- CERTIFICATE PREFERENCES (deprecated: only ever consumed by core:proxy, now removed)
+  string cert_alias = 34 [deprecated = true];
+  string cert_password = 35 [deprecated = true];
+  string cert_issuer_cn = 36 [deprecated = true];
+  string cert_issuer_o = 37 [deprecated = true];
+  string cert_issuer_ou = 38 [deprecated = true];
+  string cert_subject_cn = 39 [deprecated = true];
+  string cert_subject_o = 40 [deprecated = true];
+  string cert_subject_ou = 41 [deprecated = true];
 
   // ---- PROXY PREFERENCES
-  bool proxy_active = 42;
+  bool proxy_active = 42 [deprecated = true]; // core:proxy removed; field kept for wire/schema compat only
 
   // ---- BOOT PREFERENCES
   bool boot_scan_service = 43;

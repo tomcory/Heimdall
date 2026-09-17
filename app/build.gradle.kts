@@ -155,7 +155,6 @@ dependencies {
     implementation (project(":core:database"))
     implementation (project(":core:datastore"))
     implementation (project(":core:export"))
-    implementation (project(":core:proxy"))
     implementation (project(":core:scanner"))
     implementation (project(":core:util"))
     implementation (project(":core:vpn"))

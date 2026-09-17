@@ -219,9 +219,8 @@ private fun VpnControlRow(
                 Spacer(modifier = Modifier.height(8.dp))
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     val options = listOf(
-                        VpnMode.BASE       to "Off",
-                        VpnMode.MITM_VPN   to "VPN",
-                        VpnMode.MITM_PROXY to "Proxy",
+                        VpnMode.BASE     to "Off",
+                        VpnMode.MITM_VPN to "VPN",
                     )
                     options.forEachIndexed { index, (mode, label) ->
                         SegmentedButton(
@@ -235,9 +234,8 @@ private fun VpnControlRow(
             } else {
                 // Active mode label
                 val modeText = when (vpnMode) {
-                    VpnMode.BASE       -> "VPN only"
-                    VpnMode.MITM_VPN   -> "MitM · VPN"
-                    VpnMode.MITM_PROXY -> "MitM · Proxy"
+                    VpnMode.BASE     -> "VPN only"
+                    VpnMode.MITM_VPN -> "MitM · VPN"
                 }
                 Text(
                     text = modeText,

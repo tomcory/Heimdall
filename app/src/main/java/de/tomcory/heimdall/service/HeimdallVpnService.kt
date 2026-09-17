@@ -5,7 +5,6 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -141,14 +140,7 @@ class HeimdallVpnService : VpnService() {
 
         runBlocking {
             val mitmEnabled = preferences.mitmEnable.first()
-            val useProxy = preferences.vpnUseProxy.first()
-
-            vpnModeText = when {
-                !useProxy && !mitmEnabled -> "BASE"
-                useProxy && mitmEnabled -> "MITM-Proxy"
-                !useProxy && mitmEnabled -> "MITM-VPN"
-                else -> "BASE"
-            }
+            vpnModeText = if (mitmEnabled) "MITM-VPN" else "BASE"
         }
 
         return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
@@ -214,18 +206,8 @@ class HeimdallVpnService : VpnService() {
 
         Timber.d("MitM mode: $doMitm")
 
-        // determine whether to use the proxy - this is only possible if MitM mode is disabled
-        val useProxy = preferences.vpnUseProxy.first().let {
-            if(doMitm && it) {
-                Timber.w("Proxy cannot be used in MitM mode, disabling proxy")
-                false
-            } else {
-                it
-            }
-        }
-
         // establish the VPN interface
-        if (!establishInterface(doMitm, useProxy)) {
+        if (!establishInterface(doMitm)) {
             // shut down the VPN components if the interface could not be established
             stopSelf()
             return
@@ -259,11 +241,10 @@ class HeimdallVpnService : VpnService() {
     /**
      * Configures the [VpnService.Builder] based on the configuration stored in the datastore
      * and establishes the VPN interface.
-     * @param useProxy Whether to use the proxy or not.
      * @return Whether the VPN interface was established successfully.
      * @see [launchServiceComponents]
      */
-    private suspend fun establishInterface(doMitm: Boolean, useProxy: Boolean): Boolean {
+    private suspend fun establishInterface(doMitm: Boolean): Boolean {
 
         // only establish the VPN interface if it is not already established
         if (vpnInterface != null) {
@@ -348,24 +329,7 @@ class HeimdallVpnService : VpnService() {
             .addAddress(subnetBaseAddress, subnetPrefix)
             .addRoute(routeBaseAddress, routePrefix)
 
-        // if a proxy is to be used, set it for the VPN interface
-        if(useProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            Timber.d("VPN in proxy mode")
-            // validate and parse the proxy address
-            val proxyAddress = InetAddressUtils.stringToInetSocketAddress(preferences.vpnProxyAddress.first()).let {
-                if(it != null) {
-                    it
-                } else {
-                    Timber.w("Invalid proxy address, using default")
-                    InetAddressUtils.stringToInetSocketAddress(preferences.initialValues.vpnProxyAddressInitial)!!
-                }
-            }
-            // set the proxy for the VPN interface
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy(proxyAddress.address.hostAddress,proxyAddress.port))
-            Timber.d("VPN attached to Proxy at ${proxyAddress.address.hostAddress}:${proxyAddress.port}")
-        } else {
-            Timber.d("VPN in standalone mode")
-        }
+        Timber.d("VPN in standalone mode")
 
         // get the VPN monitoring scope from the preferences
         val monitoringScope = preferences.vpnMonitoringScope.first()
@@ -435,7 +399,6 @@ class HeimdallVpnService : VpnService() {
         debugString.append("subnetPrefix: $subnetPrefix\n")
         debugString.append("routeBaseAddress: ${routeBaseAddress.hostAddress}\n")
         debugString.append("routePrefix: $routePrefix\n")
-        debugString.append("useProxy: $useProxy\n")
         debugString.append("monitoringScope: $monitoringScope\n")
         debugString.append("blacklist:\n - ${blacklist.joinToString("\n - ")}\n")
         debugString.append("whitelist:\n - ${whitelist.joinToString("\n - ")}\n")
