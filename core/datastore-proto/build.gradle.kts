@@ -4,12 +4,7 @@ import com.google.protobuf.gradle.proto
 
 plugins {
     id ("com.android.library")
-    id ("org.jetbrains.kotlin.android")
     alias (libs.plugins.protobuf)
-}
-
-kotlin {
-    jvmToolchain (11)
 }
 
 android {
@@ -20,9 +15,14 @@ android {
         compileSdk = 36
     }
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
     sourceSets {
         getByName("main") {
-            java.srcDirs("src/main/proto")
+            java.directories += "src/main/proto"
         }
     }
 }

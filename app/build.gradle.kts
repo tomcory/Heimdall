@@ -1,16 +1,11 @@
 @Suppress("DSL_SCOPE_VIOLATION") // TODO: Remove once KTIJ-19369 is fixed
 plugins {
     id ("com.android.application")
-    id ("org.jetbrains.kotlin.android")
     alias (libs.plugins.protobuf)
     alias (libs.plugins.ksp)
     alias (libs.plugins.kotlin.serialization)
     alias (libs.plugins.hilt)
     alias(libs.plugins.compose.compiler)
-}
-
-kotlin {
-    jvmToolchain (11)
 }
 
 android {
@@ -46,10 +41,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = "11"
     }
 
     testOptions {
