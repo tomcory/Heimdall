@@ -238,15 +238,16 @@ class HttpConnection(
     }
 
     private fun parseHeaders(message: String): Map<String, String>? {
-        val headersIndex = message.indexOf("\r\n") + 2
+        val rawHeadersIndex = message.indexOf("\r\n")
         val bodyIndex = message.indexOf("\r\n\r\n")
 
-        if(headersIndex < 0 || bodyIndex < 0 || headersIndex >= bodyIndex) {
+        if(rawHeadersIndex < 0 || bodyIndex < 0 || rawHeadersIndex + 2 >= bodyIndex) {
             Timber.e("http$id parseHeaders: Invalid HTTP message, no headers found")
             Timber.w("http$id $message")
             return emptyMap()
         }
 
+        val headersIndex = rawHeadersIndex + 2
         val headerBlock = message.substring(headersIndex, bodyIndex)
 
         val headerLines = headerBlock.split("\r\n")
@@ -263,32 +264,33 @@ class HttpConnection(
     }
 
     private fun parseBody(message: String): String? {
-        val bodyIndex = message.indexOf("\r\n\r\n") + 4
+        val rawBodyIndex = message.indexOf("\r\n\r\n")
 
-        if(bodyIndex < 0) {
+        if(rawBodyIndex < 0) {
             Timber.e("http$id parseBody: Invalid HTTP message, no chunks found")
             return null
         }
 
-        return message.substring(bodyIndex)
+        return message.substring(rawBodyIndex + 4)
     }
 
     private fun dechunkHttpMessage(chunkedMessage: ByteArray): String {
         val chunkedMessageStr = String(chunkedMessage, Charsets.UTF_8)
 
-        val headersIndex = chunkedMessageStr.indexOf("\r\n") + 2
-        val chunkedBodyIndex = chunkedMessageStr.indexOf("\r\n\r\n") + 4
+        val rawHeadersIndex = chunkedMessageStr.indexOf("\r\n")
+        val rawChunkedBodyIndex = chunkedMessageStr.indexOf("\r\n\r\n")
 
-        if(headersIndex < 0) {
+        if(rawHeadersIndex < 0) {
             Timber.e("http$id dechunkHttpMessage Invalid HTTP message, no headers found")
             return ""
         }
 
-        if(chunkedBodyIndex < 0) {
+        if(rawChunkedBodyIndex < 0) {
             Timber.e("http$id dechunkHttpMessage Invalid HTTP message, no chunks found")
             return ""
         }
 
+        val chunkedBodyIndex = rawChunkedBodyIndex + 4
         val statusAndHeaders = chunkedMessageStr.substring(0, chunkedBodyIndex)
         val chunkedBody = chunkedMessageStr.substring(chunkedBodyIndex)
 
@@ -298,9 +300,17 @@ class HttpConnection(
         var i = 0
         while (i < chunks.size) {
             // Chunks are in format: <chunk size in hex>\r\n<chunk data>\r\n
-            val chunkSize = chunks[i++].toInt(16)
+            val chunkSize = chunks[i++].toIntOrNull(16)
+            if (chunkSize == null) {
+                Timber.e("http$id dechunkHttpMessage: invalid chunk size '${chunks[i - 1]}'")
+                break
+            }
             if (chunkSize == 0) {
                 // This is the last chunk
+                break
+            }
+            if (i >= chunks.size) {
+                Timber.e("http$id dechunkHttpMessage: missing chunk data after size header")
                 break
             }
 

@@ -91,23 +91,22 @@ class Authority (
         private fun getStringFromFile(filePath: String): String {
             Timber.d("getStringFromFile")
             val fl = File(filePath)
-            val fin = FileInputStream(fl)
-            val ret = convertStreamToString(fin)
-            fin.close()
-            return ret
+            return FileInputStream(fl).use { fin ->
+                convertStreamToString(fin)
+            }
         }
 
         @Throws(Exception::class)
         private fun convertStreamToString(`is`: InputStream): String {
             Timber.d("convertStreamToString")
-            val reader = BufferedReader(InputStreamReader(`is`))
-            val sb = StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                sb.append(line).append("\n")
+            return BufferedReader(InputStreamReader(`is`)).use { reader ->
+                val sb = StringBuilder()
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    sb.append(line).append("\n")
+                }
+                sb.toString()
             }
-            reader.close()
-            return sb.toString()
         }
     }
 }

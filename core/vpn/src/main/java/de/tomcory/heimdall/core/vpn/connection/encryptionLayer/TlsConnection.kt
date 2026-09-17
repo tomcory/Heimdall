@@ -362,10 +362,24 @@ class TlsConnection(
                 }
             }
 
-            // the SSLEngine is not currently handshaking, something went wrong, close the connection
+            // NOT_HANDSHAKING can legitimately arrive here under TLS 1.3 when the final unwrap()
+            // call transitions the engine out of handshake mode instead of returning FINISHED (this
+            // occurs when multi-message TLS records are coalesced into a single TCP segment). Treat
+            // it as FINISHED if a cipher suite has been negotiated; close on a bare/null session.
             SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING -> {
-                Timber.e("tls$id continueHandshake ($direction) failure, handshakeStatus is NOT_HANDSHAKING")
-                closeConnection()
+                val engine = if (isClientFacing) clientSSLEngine else serverSSLEngine
+                val cipherSuite = engine?.session?.cipherSuite
+                if (cipherSuite != null && cipherSuite != "SSL_NULL_WITH_NULL_NULL") {
+                    if (isClientFacing) {
+                        switchState(ConnectionState.CLIENT_ESTABLISHED)
+                    } else {
+                        switchState(ConnectionState.SERVER_ESTABLISHED)
+                        initiateClientHandshake()
+                    }
+                } else {
+                    Timber.e("tls$id continueHandshake ($direction) failure, handshakeStatus is NOT_HANDSHAKING")
+                    closeConnection()
+                }
             }
 
             // TLS session established, advance connection state accordingly
@@ -379,17 +393,33 @@ class TlsConnection(
             }
 
             // the SSLEngine needs to perform a task to continue the handshake, handle it and continue the handshake based on the resulting handshakeStatus
+            // Drain ALL pending delegated tasks into a single coroutine. The JSSE engine can queue
+            // multiple tasks per handshake step (e.g. key schedule + certificate verification under
+            // TLS 1.3). Multi-record flights from the server trigger this branch once per record,
+            // but all tasks were already queued by the first unwrap() call. Subsequent calls find
+            // an empty queue — if we called closeConnection() there (as before) the handshake
+            // would fail. Instead, only launch the coroutine on the first call (when tasks != empty).
             SSLEngineResult.HandshakeStatus.NEED_TASK -> {
-                val task = if(isClientFacing) clientSSLEngine?.delegatedTask else serverSSLEngine?.delegatedTask
-                if(task != null) {
+                val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
+                val tasks = generateSequence { engine?.delegatedTask }.toList()
+                if(tasks.isNotEmpty()) {
                     CoroutineScope(Dispatchers.IO).launch {
-                        if(log) Timber.d("tls$id continueHandshake ($direction) delegated task: $task")
-                        task.run()
-                        continueHandshake(handshakeStatus = if(isClientFacing) clientSSLEngine?.handshakeStatus ?: handshakeStatus else serverSSLEngine?.handshakeStatus ?: handshakeStatus, isClientFacing = isClientFacing)
+                        if(log) Timber.d("tls$id continueHandshake ($direction) running ${tasks.size} delegated tasks")
+                        try {
+                            tasks.forEach { it.run() }
+                        } catch (e: Exception) {
+                            System.err.println("DBG-PROD NEED_TASK coroutine task threw: $e")
+                            closeConnection()
+                            return@launch
+                        }
+                        val nextStatus = engine?.handshakeStatus ?: handshakeStatus
+                        System.err.println("DBG-PROD NEED_TASK coroutine done, nextStatus=$nextStatus thread=${Thread.currentThread().name}")
+                        continueHandshake(handshakeStatus = nextStatus, isClientFacing = isClientFacing)
                     }
                 } else {
-                    Timber.e("tls$id continueHandshake ($direction) failure, handshakeStatus is NEED_TASK but task is NULL")
-                    closeConnection()
+                    // Tasks already consumed by a prior call for this handshake step; that coroutine
+                    // will continue the handshake once the tasks have run.
+                    if(log) Timber.d("tls$id continueHandshake ($direction) NEED_TASK with no tasks — prior coroutine is handling")
                 }
             }
         }
@@ -404,6 +434,8 @@ class TlsConnection(
      */
     private fun closeConnection() {
         if(log) Timber.d("tls$id closeConnection in state $state")
+        System.err.println("DBG-CC closeConnection in state=$state")
+        Thread.currentThread().stackTrace.take(12).forEach { System.err.println("  $it") }
 
         switchState(ConnectionState.CLOSED)
 
@@ -675,6 +707,7 @@ class TlsConnection(
         val res = try {
             sslEngine?.unwrap(netBuffer, appBuffer)
         } catch (sslException: SSLException) {
+            System.err.println("DBG-UNWRAP SSLException dir=$direction state=$state hs=${sslEngine?.handshakeStatus}: ${sslException.message}")
             Timber.e("tls$id handleUnwrap ($direction) SSLException in state $state\n${sslException.message}")
             Timber.e("tls$id ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
             null
@@ -789,7 +822,7 @@ class TlsConnection(
      * @param rawPayload The raw transport-layer payload to be processed.
      * @param isOutbound Whether the payload is outbound (true) or inbound (false).
      */
-    private fun prepareRecords(rawPayload: ByteArray, isOutbound: Boolean) {
+    internal fun prepareRecords(rawPayload: ByteArray, isOutbound: Boolean) {
         val direction = if(isOutbound) "outbound" else "inbound"
 
         val payload = checkForSnippets(rawPayload, isOutbound)
@@ -919,7 +952,7 @@ class TlsConnection(
      *
      * @return The [RecordType] of the record.
      */
-    private fun parseRecordType(payload: ByteArray): RecordType {
+    internal fun parseRecordType(payload: ByteArray): RecordType {
         return when (payload[0].toInt()) {
             0x14 -> RecordType.CHANGE_CIPHER_SPEC
             0x15 -> RecordType.ALERT
@@ -960,33 +993,38 @@ class TlsConnection(
      *
      * @return The SNI, or null if the SNI could not be extracted.
      */
-    private fun findSni(clientHello: ByteArray): String? {
-        val msg = clientHello.map { x -> x.toUByte().toInt() }.toIntArray()
-        var i = 43
+    internal fun findSni(clientHello: ByteArray): String? {
+        return try {
+            val msg = clientHello.map { x -> x.toUByte().toInt() }.toIntArray()
+            var i = 43
 
-        val sessionLength = msg[i++]
-        i += sessionLength
+            val sessionLength = msg[i++]
+            i += sessionLength
 
-        val cipherLength = msg[i++] shl 8 or msg[i++]
-        i += cipherLength
+            val cipherLength = msg[i++] shl 8 or msg[i++]
+            i += cipherLength
 
-        val compressionLength = msg[i++]
-        i += compressionLength
+            val compressionLength = msg[i++]
+            i += compressionLength
 
-        val totalExtensionsLength = msg[i++] shl 8 or msg[i++]
+            val totalExtensionsLength = msg[i++] shl 8 or msg[i++]
 
-        var j = 0
-        while(j < totalExtensionsLength) {
-            val extensionValue = msg[i + j++] shl 8 or msg[i + j++]
-            val extensionLength = msg[i + j++] shl 8 or msg[i + j++]
-            if(extensionValue == 0) {
-                val entryLength = msg[i + j] shl 8 or msg[i + j + 1]
-                return String(msg.copyOfRange(i + j + 5, i + j + 2 + entryLength).map { x -> x.toChar() }.toCharArray())
+            var j = 0
+            while(j < totalExtensionsLength) {
+                val extensionValue = msg[i + j++] shl 8 or msg[i + j++]
+                val extensionLength = msg[i + j++] shl 8 or msg[i + j++]
+                if(extensionValue == 0) {
+                    val entryLength = msg[i + j] shl 8 or msg[i + j + 1]
+                    return String(msg.copyOfRange(i + j + 5, i + j + 2 + entryLength).map { x -> x.toChar() }.toCharArray())
+                }
+                j += extensionLength
             }
-            j += extensionLength
-        }
 
-        return null
+            null
+        } catch (e: ArrayIndexOutOfBoundsException) {
+            Timber.w("tls$id findSni: malformed ClientHello, could not extract SNI")
+            null
+        }
     }
 
     private fun switchState(newState: ConnectionState) {
@@ -1035,7 +1073,7 @@ class TlsConnection(
     /**
      * Enum to represent the type of a TLS record.
      */
-    private enum class RecordType {
+    internal enum class RecordType {
         HANDSHAKE_CLIENT_HELLO,
         HANDSHAKE_SERVER_HELLO,
         HANDSHAKE_SERVER_CERT,

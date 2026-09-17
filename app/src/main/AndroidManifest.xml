@@ -36,7 +36,8 @@
         tools:ignore="GoogleAppIndexingWarning">
         <activity
             android:name=".ui.main.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/Theme.Heimdall.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -56,11 +57,6 @@
                 android:value="VPN service for traffic monitoring"/>
         </service>
 
-        <service
-            android:name=".service.NotificationIntentService"
-            android:exported="false">
-        </service>
-
         <receiver android:name=".service.HeimdallBroadcastReceiver"
             android:exported="true">
             <intent-filter>
@@ -68,6 +64,10 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false"></receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

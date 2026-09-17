@@ -55,7 +55,8 @@ class CertificateSniffingMitmManager(authority: Authority?) {
             val commonName = getCommonName(upstreamCert)
             val san = SubjectAlternativeNameHolder()
             san.addAll(upstreamCert.subjectAlternativeNames)
-            sslEngineSource!!.createCertForHost(commonName, san)
+            sslEngineSource?.createCertForHost(commonName, san)
+                ?: throw IllegalStateException("sslEngineSource is null")
         } catch (e: Exception) {
             throw FakeCertificateException("Creation dynamic certificate failed", e)
         }
@@ -68,6 +69,9 @@ class CertificateSniffingMitmManager(authority: Authority?) {
     @Throws(SSLPeerUnverifiedException::class)
     private fun getCertificateFromSession(sslSession: SSLSession): X509Certificate {
         val peerCerts = sslSession.peerCertificates
+        if (peerCerts.isEmpty()) {
+            throw SSLPeerUnverifiedException("No peer certificates found")
+        }
         val peerCert = peerCerts[0]
         if (peerCert is X509Certificate) {
             return peerCert
@@ -90,6 +94,7 @@ class CertificateSniffingMitmManager(authority: Authority?) {
 
     //TODO: singleton isn't ideal here; it would be better to attach it to the VpnService lifecycle
     companion object {
+        @Volatile
         private var singleton: CertificateSniffingMitmManager? = null
 
         @JvmStatic

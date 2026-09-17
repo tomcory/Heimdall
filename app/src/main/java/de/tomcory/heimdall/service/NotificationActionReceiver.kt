@@ -1,17 +1,17 @@
 package de.tomcory.heimdall.service
 
-import android.app.IntentService
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import timber.log.Timber
 
-class NotificationIntentService : IntentService(NotificationIntentService::class.java.simpleName) {
-    @Deprecated("Deprecated in Java")
-    override fun onHandleIntent(intent: Intent?) {
+class NotificationActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
         if (intent != null) {
             val action = intent.action
             if (STOP_VPN == action) {
                 Timber.d("Handling intent: %s", action)
-                stopVpn()
+                stopVpn(context)
             } else {
                 Timber.d("Unknown intent action: %s", action)
             }
@@ -20,10 +20,10 @@ class NotificationIntentService : IntentService(NotificationIntentService::class
         }
     }
 
-    private fun stopVpn() {
-        val serviceIntent = Intent(this, HeimdallVpnService::class.java)
+    private fun stopVpn(context: Context) {
+        val serviceIntent = Intent(context, HeimdallVpnService::class.java)
         serviceIntent.putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.STOP_SERVICE)
-        startService(serviceIntent)
+        context.startService(serviceIntent)
     }
 
     companion object {

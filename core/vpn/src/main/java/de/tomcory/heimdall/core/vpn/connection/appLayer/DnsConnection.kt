@@ -35,7 +35,13 @@ class DnsConnection(
 
     override fun unwrapInbound(payload: ByteArray) {
         val dnsPacket = DnsPacket.newPacket(payload, 0, payload.size)
-        val hostname = dnsPacket.header.questions.first().qName.name
+        val hostname = dnsPacket.header.questions.firstOrNull()?.qName?.name
+
+        if (hostname == null) {
+            Timber.w("dns$id Received DNS response with no questions, dropping")
+            encryptionLayer.wrapInbound(dnsPacket.rawData)
+            return
+        }
 
         dnsPacket.header.answers.forEach {
             val ip = when(it.rData) {

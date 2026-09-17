@@ -14,12 +14,13 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import de.tomcory.heimdall.ui.theme.HeimdallTheme
 
 @Composable
 fun BottomNavigationBar(navController: NavHostController) {
     NavigationBar(
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 0.dp,
     ) {
         val navBackStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = navBackStackEntry?.destination?.route
@@ -28,38 +29,32 @@ fun BottomNavigationBar(navController: NavHostController) {
             val selected = currentRoute == item.route
             NavigationBarItem(
                 icon = {
-                    if (selected)
-                        Icon(painterResource(id = item.selectedIcon), contentDescription = item.title)
-                    else
-                        Icon(painterResource(id = item.unselectedIcon), contentDescription = item.title)
+                    Icon(
+                        painter = painterResource(
+                            id = if (selected) item.selectedIcon else item.unselectedIcon
+                        ),
+                        contentDescription = item.title,
+                    )
                 },
-                label = { Text(text = item.title) },
+                label = { Text(text = item.title, style = MaterialTheme.typography.labelMedium) },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
-                    selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 ),
                 alwaysShowLabel = true,
                 selected = selected,
                 onClick = {
                     navController.navigate(item.route) {
-                        // Pop up to the start destination of the graph to
-                        // avoid building up a large stack of destinations
-                        // on the back stack as users select items
                         navController.graph.startDestinationRoute?.let { route ->
-                            popUpTo(route) {
-                                saveState = true
-                            }
+                            popUpTo(route) { saveState = true }
                         }
-                        // Avoid multiple copies of the same destination when
-                        // reselecting the same item
                         launchSingleTop = true
-                        // Restore state when reselecting a previously selected item
                         restoreState = true
                     }
-                }
+                },
             )
         }
     }
@@ -68,6 +63,7 @@ fun BottomNavigationBar(navController: NavHostController) {
 @Preview(showBackground = true)
 @Composable
 fun BottomNavigationBarPreview() {
-    val navController = rememberNavController()
-    BottomNavigationBar(navController)
+    HeimdallTheme {
+        BottomNavigationBar(rememberNavController())
+    }
 }

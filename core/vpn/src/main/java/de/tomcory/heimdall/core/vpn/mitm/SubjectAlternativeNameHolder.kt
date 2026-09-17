@@ -15,11 +15,11 @@ class SubjectAlternativeNameHolder {
     private val sans: MutableList<ASN1Encodable> = ArrayList()
 
     fun addIpAddress(ipAddress: String?) {
-        sans.add(GeneralName(GeneralName.iPAddress, ipAddress))
+        ipAddress?.let { sans.add(GeneralName(GeneralName.iPAddress, ipAddress)) }
     }
 
     fun addDomainName(subjectAlternativeName: String?) {
-        sans.add(GeneralName(GeneralName.dNSName, subjectAlternativeName))
+        subjectAlternativeName?.let { sans.add(GeneralName(GeneralName.dNSName, subjectAlternativeName)) }
     }
 
     @Throws(CertIOException::class)

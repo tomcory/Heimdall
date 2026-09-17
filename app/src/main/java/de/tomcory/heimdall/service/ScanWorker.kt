@@ -18,7 +18,6 @@ import de.tomcory.heimdall.core.database.entity.App
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.scanner.LibraryScanner
 import de.tomcory.heimdall.core.scanner.PermissionScanner
-import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.util.UUID
 
@@ -49,13 +48,28 @@ class ScanWorker(
     }
 
     private val database by lazy { entryPoint.database() }
-    private val preferences by lazy { entryPoint.preferences() }
     private val permissionScanner by lazy { entryPoint.permissionScanner() }
     private val libraryScanner by lazy { entryPoint.libraryScanner() }
 
+    /**
+     * Main worker execution method that handles scanning tasks.
+     * Retrieves the optional packageName parameter and either performs
+     * a scan of a specific package or a full scan of all installed packages.
+     *
+     * @return Result indicating success or failure of the worker task
+     */
     override suspend fun doWork(): Result {
         return try {
-            performFullScan()
+            val packageName = inputData.getString(KEY_PACKAGE_NAME) ?: ""
+            val scanLibraries = inputData.getBoolean(KEY_SCAN_LIBRARIES, true)
+            val scanPermissions = inputData.getBoolean(KEY_SCAN_PERMISSIONS, true)
+
+            if (packageName.isNotEmpty()) {
+                scanSinglePackage(packageName, scanLibraries, scanPermissions)
+            } else {
+                performFullScan(scanLibraries, scanPermissions)
+            }
+
             Result.success()
         } catch (t: Throwable) {
             Timber.e(t, "Initial scan failed")
@@ -63,12 +77,62 @@ class ScanWorker(
         }
     }
 
-    private suspend fun performFullScan() {
-        val scanPermissions = preferences.permissionOnInstall.first()
-        val scanLibraries = preferences.libraryOnInstall.first()
-
+    /**
+     * Scans a single app package based on user preferences.
+     * Updates the app information in the database and performs permission
+     * and/or library scanning if enabled in preferences.
+     *
+     * @param packageName The package identifier of the app to scan
+     */
+    private suspend fun scanSinglePackage(packageName: String, scanLibraries: Boolean, scanPermissions: Boolean) {
         val pm = context.packageManager
-        val packages = pm.getInstalledPackages(PackageManager.GET_META_DATA)
+
+        val pkgInfo = try {
+            context.packageManager.getPackageInfo(packageName, PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS)
+        } catch (e: PackageManager.NameNotFoundException) {
+            Timber.e(e, "Package $packageName not found")
+            return
+        }
+
+        val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            pkgInfo.longVersionCode
+        } else {
+            pkgInfo.versionCode.toLong()
+        }
+        val versionName = pkgInfo.versionName ?: ""
+
+        val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
+
+        // Always update the app entry in database to ensure current data
+        database.appDao().insertApps(
+            App(
+                packageName = packageName,
+                label = label,
+                versionCode = versionCode,
+                versionName = versionName,
+                isSystem = ((pkgInfo.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
+                flags = pkgInfo.applicationInfo?.flags ?: 0
+            )
+        )
+
+        Timber.d("Scanning $packageName...")
+        if (scanPermissions) {
+            permissionScanner.scanApp(pkgInfo)
+        }
+        if (scanLibraries) {
+            libraryScanner.scanApp(pkgInfo)
+        }
+    }
+
+    /**
+     * Performs a full scan of all installed packages on the device.
+     * Updates app information in the database and performs permission and/or library
+     * scanning for new or updated apps based on user preferences.
+     * Reports progress during the scan operation.
+     */
+    private suspend fun performFullScan(scanLibraries: Boolean, scanPermissions: Boolean) {
+        val pm = context.packageManager
+        val packages = pm.getInstalledPackages(PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS)
         val total = packages.size
 
         // Get all existing apps from database
@@ -106,7 +170,7 @@ class ScanWorker(
 
             // Only scan if the app is new or has changed
             if (isAppChanged) {
-                Timber.d("Scanning $packageName (new or updated)...")
+                Timber.d("Scanning $packageName...")
 
                 if (scanPermissions) {
                     permissionScanner.scanApp(pkgInfo)
@@ -123,18 +187,33 @@ class ScanWorker(
 
     companion object {
         const val KEY_PROGRESS  = "progress"
-        private const val UNIQUE_WORK_NAME = "initial-scan"
+        const val KEY_PACKAGE_NAME = "packageName"
+        const val KEY_SCAN_LIBRARIES = "scanLibraries"
+        const val KEY_SCAN_PERMISSIONS = "scanPermissions"
+        const val UNIQUE_WORK_NAME = "initial-scan"
 
         /**
-         * Enqueue a one‑time worker. Call from BootCompleted or Package change receivers.
-         * The work is marked as expedited when quota permits; otherwise it runs as
-         * non‑expedited but still starts promptly.
+         * Enqueues a one-time worker to perform app scanning.
+         * Can be triggered after boot completion or when packages change.
+         *
+         * @param context The application context
+         * @param packageName Optional package name to scan a specific app; if empty, all apps are scanned
+         * @return UUID of the enqueued work request
          */
-        fun enqueue(context: Context): UUID {
-            val work = OneTimeWorkRequestBuilder<ScanWorker>()
+        fun enqueue(context: Context, scanLibraries: Boolean, scanPermissions: Boolean, packageName: String = ""): UUID {
+            val workRequestBuilder = OneTimeWorkRequestBuilder<ScanWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                .build()
 
+            if (packageName.isNotEmpty()) {
+                val inputData = workDataOf(
+                    KEY_PACKAGE_NAME to packageName,
+                    KEY_SCAN_LIBRARIES to scanLibraries,
+                    KEY_SCAN_PERMISSIONS to scanPermissions
+                )
+                workRequestBuilder.setInputData(inputData)
+            }
+            
+            val work = workRequestBuilder.build()
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(UNIQUE_WORK_NAME, ExistingWorkPolicy.REPLACE, work)
 

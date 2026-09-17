@@ -61,7 +61,7 @@ class UdpConnection internal constructor(
         selectableChannel = try {
             openChannel(ipPacketBuilder.remoteAddress)
         } catch (e: Exception) {
-            Timber.e("tcp$id Error while creating UDP connection: ${e.message}")
+            Timber.e("udp$id Error while creating UDP connection: ${e.message}")
             state = TransportLayerState.ABORTED
             deleteDatabaseEntity()
             DatagramChannel.open()
@@ -70,9 +70,14 @@ class UdpConnection internal constructor(
             try {
                 connectChannel(componentManager.selector)
             } catch (e: Exception) {
-                Timber.e("tcp$id Error while creating UDP connection: ${e.message}")
+                Timber.e("udp$id Error while creating UDP connection: ${e.message}")
                 state = TransportLayerState.ABORTED
                 deleteDatabaseEntity()
+                try {
+                    selectableChannel.close()
+                } catch (closeException: Exception) {
+                    Timber.e("udp$id Error while closing leaked DatagramChannel: ${closeException.message}")
+                }
                 null
             }
         } else {

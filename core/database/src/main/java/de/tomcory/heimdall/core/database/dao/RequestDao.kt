@@ -28,4 +28,7 @@ interface RequestDao {
 
     @Query("Select * FROM Request")
     fun getAllObservable(): Flow<List<Request>>
+
+    @Query("SELECT * FROM Request WHERE connectionId = :connectionId ORDER BY timestamp ASC")
+    fun getForConnectionObservable(connectionId: Int): Flow<List<Request>>
 }

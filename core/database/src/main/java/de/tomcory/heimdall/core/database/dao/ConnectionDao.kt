@@ -29,4 +29,19 @@ interface ConnectionDao {
 
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>
+
+    @Query("SELECT * FROM Connection ORDER BY initialTimestamp DESC")
+    fun getAllObservable(): kotlinx.coroutines.flow.Flow<List<Connection>>
+
+    @Query("SELECT * FROM Connection WHERE sessionId = :sessionId ORDER BY initialTimestamp ASC")
+    fun getForSessionObservable(sessionId: Int): kotlinx.coroutines.flow.Flow<List<Connection>>
+
+    @Query("SELECT COUNT(*) FROM Connection WHERE sessionId = :sessionId")
+    suspend fun countForSession(sessionId: Int): Int
+
+    @Query("SELECT COUNT(DISTINCT remoteHost) FROM Connection WHERE sessionId = :sessionId")
+    suspend fun countUniqueHostsForSession(sessionId: Int): Int
+
+    @Query("SELECT COUNT(*) FROM Connection WHERE sessionId = :sessionId AND isTracker = 1")
+    suspend fun countTrackerConnectionsForSession(sessionId: Int): Int
 }

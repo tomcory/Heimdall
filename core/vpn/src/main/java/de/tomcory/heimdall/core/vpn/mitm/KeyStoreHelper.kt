@@ -240,6 +240,43 @@ object KeyStoreHelper {
         }
     }
 
+    /**
+     * Exports just the X509 root CA certificate of Heimdall as a PEM-encoded `.crt` file written to
+     * the app's internal cache directory.
+     *
+     * Unlike [createMagiskModuleWithCertificate], this produces a plain certificate file that the user
+     * can install through Android's settings as a *User-installed* CA (Settings → Security → Encryption
+     * & credentials → Install a certificate → CA certificate). This works on non-rooted devices, but
+     * note that apps targeting Android 7+ (API 24) do not trust user-installed CAs by default unless they
+     * opt in via a network security configuration.
+     *
+     * @return the name of the created file within the cache directory, or `null` if the export failed.
+     */
+    suspend fun exportRootCertificate(
+        context: Context,
+        keyStore: KeyStore,
+        authority: Authority
+    ): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                // get the certificate from the keystore
+                val x509Certificate = keyStore.getCertificate(authority.alias) as X509Certificate
+
+                // export the root CA certificate to a PEM-encoded .crt file in the cache directory
+                val certFileName = "${authority.alias}.crt"
+                val certFile = File(context.cacheDir, certFileName)
+                exportPem(certFile, x509Certificate)
+
+                Timber.d("Exported root CA certificate to %s", certFile.absolutePath)
+
+                certFileName
+            } catch (e: Exception) {
+                Timber.e(e, "Error exporting root CA certificate")
+                null
+            }
+        }
+    }
+
     private suspend fun fetchUrlContent(urlString: String, default: String = ""): String =
         withContext(Dispatchers.IO) {
             try {

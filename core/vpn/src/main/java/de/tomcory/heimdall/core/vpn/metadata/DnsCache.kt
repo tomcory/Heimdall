@@ -32,7 +32,7 @@ class DnsCache(
     }
 
     fun get(ip: String): String? {
-        return lock.read {
+        return lock.write {
             cache[ip]?.let {
                 if (it.expiry < System.currentTimeMillis()) {
                     cache.remove(ip)?.hostname

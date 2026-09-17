@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startActivity
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import de.tomcory.heimdall.core.database.HeimdallDatabase
@@ -18,39 +19,119 @@ import de.tomcory.heimdall.evaluator.Evaluator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
 
-/**
- * ViewModel for the [AppScoreScreen] Composable.
- * Holds the UI State and performance heavy operations.
- */
+enum class ScoreFilter { NONE, TRACKERS, DANGEROUS_PERMS }
+
+data class DeviceStats(
+    val totalApps: Int = 0,
+    val highRiskCount: Int = 0,
+    val mediumRiskCount: Int = 0,
+    val lowRiskCount: Int = 0,
+    val unknownCount: Int = 0,
+    val appsWithTrackers: Int = 0,
+    val appsWithDangerousPerms: Int = 0,
+    val lastScannedTimestamp: Long? = null,
+)
+
 @HiltViewModel
-class ScoreViewModel @Inject constructor (
+class ScoreViewModel @Inject constructor(
     private val database: HeimdallDatabase,
     private val evaluator: Evaluator,
-    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context
+    @SuppressLint("StaticFieldLeak") @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     val evaluatorModules = evaluator.modules
 
-    // flow of apps from the database
-    val apps: Flow<List<AppWithReportsAndSubReports>> = database.reportDao().getAllAppsWithReportsAndSubReports()
+    private val allApps: Flow<List<AppWithReportsAndSubReports>> =
+        database.reportDao().getAllAppsWithReportsAndSubReports()
 
-    // cached app icons
+    private val _activeFilter = MutableStateFlow(ScoreFilter.NONE)
+    val activeFilter: StateFlow<ScoreFilter> = _activeFilter.asStateFlow()
+
+    val apps: StateFlow<List<AppWithReportsAndSubReports>> =
+        combine(allApps, _activeFilter) { apps, filter ->
+            when (filter) {
+                ScoreFilter.NONE -> apps
+                ScoreFilter.TRACKERS -> apps.filter { app ->
+                    app.getLatestReport()?.subReports
+                        ?.any { it.module == "TrackerScore" && it.score < 1f } == true
+                }
+                ScoreFilter.DANGEROUS_PERMS -> apps.filter { app ->
+                    app.getLatestReport()?.subReports
+                        ?.any { it.module == "StaticPermissionScore" && it.score < 1f } == true
+                }
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val deviceStats: StateFlow<DeviceStats> = allApps.map { appList ->
+        var high = 0; var medium = 0; var low = 0; var unknown = 0
+        var withTrackers = 0; var withDangerousPerms = 0
+        var latestTimestamp: Long? = null
+
+        appList.forEach { app ->
+            val report = app.getLatestReport()
+            val score = report?.report?.mainScore
+            when (score.toRiskLevel()) {
+                RiskLevel.HIGH    -> high++
+                RiskLevel.MEDIUM  -> medium++
+                RiskLevel.LOW     -> low++
+                RiskLevel.UNKNOWN -> unknown++
+            }
+            report?.subReports?.forEach { sub ->
+                if (sub.module == "TrackerScore" && sub.score < 1f) withTrackers++
+                if (sub.module == "StaticPermissionScore" && sub.score < 1f) withDangerousPerms++
+            }
+            val ts = report?.report?.timestamp
+            if (ts != null && (latestTimestamp == null || ts > latestTimestamp!!)) {
+                latestTimestamp = ts
+            }
+        }
+
+        DeviceStats(
+            totalApps = appList.size,
+            highRiskCount = high,
+            mediumRiskCount = medium,
+            lowRiskCount = low,
+            unknownCount = unknown,
+            appsWithTrackers = withTrackers,
+            appsWithDangerousPerms = withDangerousPerms,
+            lastScannedTimestamp = latestTimestamp,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DeviceStats())
+
+    fun setFilter(filter: ScoreFilter) {
+        _activeFilter.value = if (_activeFilter.value == filter) ScoreFilter.NONE else filter
+    }
+
+    // ── App icon cache ─────────────────────────────────────────────────────────
+
     private val appIcons: MutableMap<String, Drawable> = mutableMapOf()
 
-    // state variables
+    suspend fun getAppIcon(packageName: String): Drawable {
+        return withContext(Dispatchers.IO) {
+            appIcons[packageName] ?: try {
+                context.packageManager.getApplicationIcon(packageName).also {
+                    appIcons[packageName] = it
+                }
+            } catch (e: NameNotFoundException) {
+                ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon)!!
+            }
+        }
+    }
 
-    private val _loading = MutableStateFlow(true)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+    // ── Selected app state ─────────────────────────────────────────────────────
 
-    // state for selected app
     private val _selectedAppPackageName = MutableStateFlow("")
     val selectedAppPackageName: StateFlow<String> = _selectedAppPackageName.asStateFlow()
 
@@ -66,25 +147,6 @@ class ScoreViewModel @Inject constructor (
     private val _selectedAppLatestReport: MutableStateFlow<ReportWithSubReports?> = MutableStateFlow(null)
     val selectedAppLatestReport: StateFlow<ReportWithSubReports?> = _selectedAppLatestReport.asStateFlow()
 
-    /**
-     * Get the cached icon for the app with [packageName] or load it from the system if not cached yet.
-     * Returns the default icon if the app is not installed.
-     */
-    suspend fun getAppIcon(packageName: String): Drawable {
-        return withContext(Dispatchers.IO) {
-            appIcons[packageName]
-                ?: try {
-                    context.packageManager.getApplicationIcon(packageName).also {
-                        appIcons[packageName] = it
-                    }
-                } catch (e: NameNotFoundException) {
-                    // default icon
-                    //TODO: replace with custom icon
-                    ContextCompat.getDrawable(context, android.R.drawable.sym_def_app_icon)!!
-                }
-        }
-    }
-
     suspend fun selectApp(app: AppWithReportsAndSubReports) {
         _selectedAppPackageName.value = app.app.packageName
         _selectedAppPackageLabel.value = app.app.label
@@ -93,27 +155,15 @@ class ScoreViewModel @Inject constructor (
         _selectedAppLatestReport.value = app.reports.firstOrNull()
     }
 
-    /**
-     * Scan currently selected app and expose the new report to the UI. Calls [scoreApp].
-     */
+    // ── Scoring actions ────────────────────────────────────────────────────────
+
     suspend fun scoreSelectedApp() {
         withContext(Dispatchers.IO) {
-            // trigger rescan
             val report = scoreApp(selectedAppPackageName.value)
-            if (report != null) {
-                // update state - does nothing if report remains unchanged
-                _selectedAppLatestReport.update { report }
-                Timber.d("Updated UI with new report")
-            } else {
-                Timber.d("No new report")
-            }
+            if (report != null) _selectedAppLatestReport.update { report }
         }
     }
 
-    /**
-     * Scan app with [packageName] and return the new report.
-     * Returns null if no new report was generated due to an error.
-     */
     suspend fun scoreApp(packageName: String): ReportWithSubReports? {
         return withContext(Dispatchers.IO) {
             Timber.d("Scoring $packageName...")
@@ -121,41 +171,27 @@ class ScoreViewModel @Inject constructor (
         }
     }
 
-    /**
-     * Scan all apps. Calls [scoreApp] for each app.
-     */
     suspend fun scoreAllApps() {
         withContext(Dispatchers.IO) {
-            apps.first().forEach { app ->
-                scoreApp(app.app.packageName)
-            }
+            allApps.first().forEach { app -> scoreApp(app.app.packageName) }
         }
     }
 
-    /**
-     *  Triggers operating system uninstall flow for the current app.
-     */
     fun uninstallApp(composableContext: Context) {
-        val uri: Uri = Uri.fromParts("package", selectedAppPackageName.value, null)
-        val uninstallIntent = Intent(Intent.ACTION_DELETE, uri)
-
-        startActivity(composableContext, uninstallIntent, null)
+        val uri = Uri.fromParts("package", selectedAppPackageName.value, null)
+        startActivity(composableContext, Intent(Intent.ACTION_DELETE, uri), null)
     }
 
-    /**
-     *  trigger export of report for the current app
-     */
     suspend fun exportToJson() {
         withContext(Dispatchers.IO) {
             val json = evaluator.exportReportToJson(selectedAppLatestReport.value)
-
-            val sendIntent: Intent = Intent().apply {
-                action = Intent.ACTION_SEND
-                putExtra(Intent.EXTRA_TEXT, json)
-                type = "text/json"
-            }
-
-            val shareIntent = Intent.createChooser(sendIntent, null)
+            val shareIntent = Intent.createChooser(
+                Intent().apply {
+                    action = Intent.ACTION_SEND
+                    putExtra(Intent.EXTRA_TEXT, json)
+                    type = "text/json"
+                }, null
+            )
             startActivity(context, shareIntent, null)
         }
     }

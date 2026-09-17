@@ -8,8 +8,11 @@ import android.content.pm.PackageManager
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.AndroidEntryPoint
 import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.R
@@ -26,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -45,6 +49,9 @@ class HeimdallVpnService : VpnService() {
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
     private var componentManager: ComponentManager? = null
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var startTime: Long = 0
+    private var notificationUpdateHandler: Handler? = null
+    private var notificationUpdateRunnable: Runnable? = null
 
     private var componentsActive = false
 
@@ -76,9 +83,11 @@ class HeimdallVpnService : VpnService() {
         return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
             START_SERVICE -> {
+                startTime = System.currentTimeMillis()
 
                 // promote this service to the foreground to prevent it from being put to sleep
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
+                startNotificationUpdates()
 
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
@@ -119,19 +128,77 @@ class HeimdallVpnService : VpnService() {
     private fun createForegroundNotification(): Notification {
 
         val notificationIntent = Intent(this, MainActivity::class.java)
-        val stopVpnIntent = Intent(this, NotificationIntentService::class.java)
-        stopVpnIntent.action = NotificationIntentService.STOP_VPN
+        val stopVpnIntent = Intent(this, NotificationActionReceiver::class.java)
+        stopVpnIntent.action = NotificationActionReceiver.STOP_VPN
         val activityPendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE)
-        val stopVpnPendingIntent = PendingIntent.getService(this, 0, stopVpnIntent, PendingIntent.FLAG_IMMUTABLE)
+        val stopVpnPendingIntent =
+            PendingIntent.getBroadcast(this, 0, stopVpnIntent, PendingIntent.FLAG_IMMUTABLE)
+
+        val elapsedTime = System.currentTimeMillis() - startTime
+        val formattedTime = formatElapsedTime(elapsedTime)
+
+        var vpnModeText = ""
+
+        runBlocking {
+            val mitmEnabled = preferences.mitmEnable.first()
+            val useProxy = preferences.vpnUseProxy.first()
+
+            vpnModeText = when {
+                !useProxy && !mitmEnabled -> "BASE"
+                useProxy && mitmEnabled -> "MITM-Proxy"
+                !useProxy && mitmEnabled -> "MITM-VPN"
+                else -> "BASE"
+            }
+        }
 
         return NotificationCompat.Builder(this, HeimdallApplication.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_scan_active)
-            .setContentTitle(getString(R.string.notification_title_vpn))
-            .setContentText(getString(R.string.notification_text_vpn))
+            .setContentTitle(getString(R.string.notification_title_vpn) + " ($vpnModeText)")
+            .setContentText(getString(R.string.notification_text_vpn) + " ($formattedTime)")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setOngoing(true)
             .addAction(R.drawable.ic_cancel, getString(R.string.notification_stop_vpn), stopVpnPendingIntent)
             .setContentIntent(activityPendingIntent)
             .build()
+    }
+
+    private fun formatElapsedTime(elapsedTime: Long): String {
+        val hours = java.util.concurrent.TimeUnit.MILLISECONDS.toHours(elapsedTime)
+        val minutes = java.util.concurrent.TimeUnit.MILLISECONDS.toMinutes(elapsedTime) % 60
+        val seconds = java.util.concurrent.TimeUnit.MILLISECONDS.toSeconds(elapsedTime) % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    private fun startNotificationUpdates() {
+        notificationUpdateHandler = Handler(Looper.getMainLooper())
+        notificationUpdateRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    val notification = createForegroundNotification()
+                    val notificationManager =
+                        NotificationManagerCompat.from(this@HeimdallVpnService)
+
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                        checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationManager.notify(ONGOING_NOTIFICATION_ID, notification)
+                    }
+
+                    notificationUpdateHandler?.postDelayed(this, NOTIFICATION_UPDATE_INTERVAL)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error updating notification")
+                }
+            }
+        }
+        notificationUpdateHandler?.post(notificationUpdateRunnable!!)
+    }
+
+    private fun stopNotificationUpdates() {
+        notificationUpdateRunnable?.let {
+            notificationUpdateHandler?.removeCallbacks(it)
+        }
+        notificationUpdateHandler = null
+        notificationUpdateRunnable = null
     }
 
     /**
@@ -395,6 +462,7 @@ class HeimdallVpnService : VpnService() {
         if(componentsActive) {
             Timber.d("Shutting down VpnService")
             stopVpnComponents()
+            stopNotificationUpdates()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             preferences.setVpnActive(false)
@@ -429,6 +497,7 @@ class HeimdallVpnService : VpnService() {
      */
     override fun onDestroy() {
         stopForeground(STOP_FOREGROUND_REMOVE)
+        stopNotificationUpdates()
         Timber.d("VpnService onDestroy called")
         coroutineScope.launch {
             shutDown()
@@ -457,5 +526,10 @@ class HeimdallVpnService : VpnService() {
          * Notification ID for the foreground notification.
          */
         private const val ONGOING_NOTIFICATION_ID = 235
+
+        /**
+         * Interval for updating the foreground notification.
+         */
+        private const val NOTIFICATION_UPDATE_INTERVAL = 1000L
     }
 }

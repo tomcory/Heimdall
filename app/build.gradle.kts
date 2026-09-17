@@ -71,6 +71,9 @@ android {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
 
+    // Splash screen
+    implementation(libs.androidx.core.splashscreen)
+
     // AndroidX compatibility library
     implementation (libs.androidx.legacy.support.v4)
     implementation (libs.androidx.appcompat)
@@ -97,6 +100,7 @@ dependencies {
     // Jetpack Compose Material 3
     implementation (libs.androidx.compose.material3)
     implementation (libs.androidx.compose.material3.windowsizeclass)
+    implementation(libs.androidx.compose.material.icons.core)
 
     // Jetpack Compose Addons
     implementation (libs.accompanist.drawablepainter)

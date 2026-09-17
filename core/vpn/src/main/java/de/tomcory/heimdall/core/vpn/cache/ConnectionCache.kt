@@ -5,9 +5,10 @@ import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.TransportPacket
 import timber.log.Timber
 import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
 
 class ConnectionCache {
-    private val connections = HashMap<Int, TransportLayerConnection>()
+    private val connections = ConcurrentHashMap<Int, TransportLayerConnection>()
 
     companion object {
         private val cache = ConnectionCache()

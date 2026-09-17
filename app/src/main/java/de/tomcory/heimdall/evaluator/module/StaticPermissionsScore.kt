@@ -194,19 +194,16 @@ class StaticPermissionsScore(
                 Spacer(modifier = Modifier.height(8.dp))
                 // when permission info is set, display donut chart
                 permissionCountInfo?.let {
+                    val rc = de.tomcory.heimdall.ui.theme.LocalRiskColors.current
                     DonutChart(
                         values = listOf(
                             it.dangerousPermissionCount.toFloat(),
                             it.signaturePermissionCount.toFloat(),
                             it.normalPermissionCount.toFloat()
                         ),
-                        legend = listOf("Dangerous", "Normal", "Signature"),
+                        legend = listOf("Dangerous", "Signature", "Normal"),
                         size = 150.dp,
-                        colors = listOf(
-                            Color.Red,
-                            Color.Yellow,
-                            Color.Green
-                        )
+                        colors = listOf(rc.high, rc.medium, rc.low)
                     )
                 }
             }
@@ -246,14 +243,14 @@ class StaticPermissionsScore(
 @Preview
 @Composable
 fun DonutChartPreview() {
-    DonutChart(
-        values = listOf(30f, 70f, 20f),
-        colors = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.secondary,
-            MaterialTheme.colorScheme.tertiary),
-        legend = listOf("Dangerous", "Normal", "Signature"),
-    )
+    de.tomcory.heimdall.ui.theme.HeimdallTheme {
+        val rc = de.tomcory.heimdall.ui.theme.LocalRiskColors.current
+        DonutChart(
+            values = listOf(30f, 20f, 70f),
+            colors = listOf(rc.high, rc.medium, rc.low),
+            legend = listOf("Dangerous", "Signature", "Normal"),
+        )
+    }
 }
 
 @Composable

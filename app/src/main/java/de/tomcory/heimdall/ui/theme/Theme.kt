@@ -2,10 +2,13 @@ package de.tomcory.heimdall.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
 
 private val lightColors = lightColorScheme(
     primary = md_theme_light_primary,
@@ -39,7 +42,6 @@ private val lightColors = lightColorScheme(
     scrim = md_theme_light_scrim,
 )
 
-
 private val darkColors = darkColorScheme(
     primary = md_theme_dark_primary,
     onPrimary = md_theme_dark_onPrimary,
@@ -72,19 +74,73 @@ private val darkColors = darkColorScheme(
     scrim = md_theme_dark_scrim,
 )
 
+// ── Semantic risk color bundle ────────────────────────────────────────────────
+
+@Immutable
+data class RiskColors(
+    val high: Color,
+    val highContainer: Color,
+    val onHighContainer: Color,
+    val medium: Color,
+    val mediumContainer: Color,
+    val onMediumContainer: Color,
+    val low: Color,
+    val lowContainer: Color,
+    val onLowContainer: Color,
+    val unknown: Color,
+    val unknownContainer: Color,
+    val onUnknownContainer: Color,
+)
+
+private val lightRiskColors = RiskColors(
+    high = RiskHigh,
+    highContainer = RiskHighContainer,
+    onHighContainer = OnRiskHighContainer,
+    medium = RiskMedium,
+    mediumContainer = RiskMediumContainer,
+    onMediumContainer = OnRiskMediumContainer,
+    low = RiskLow,
+    lowContainer = RiskLowContainer,
+    onLowContainer = OnRiskLowContainer,
+    unknown = RiskUnknown,
+    unknownContainer = RiskUnknownContainer,
+    onUnknownContainer = OnRiskUnknownContainer,
+)
+
+private val darkRiskColors = RiskColors(
+    high = RiskHighDark,
+    highContainer = RiskHighContainerDark,
+    onHighContainer = OnRiskHighContainerDark,
+    medium = RiskMediumDark,
+    mediumContainer = RiskMediumContainerDark,
+    onMediumContainer = OnRiskMediumContainerDark,
+    low = RiskLowDark,
+    lowContainer = RiskLowContainerDark,
+    onLowContainer = OnRiskLowContainerDark,
+    unknown = RiskUnknownDark,
+    unknownContainer = RiskUnknownContainerDark,
+    onUnknownContainer = OnRiskUnknownContainerDark,
+)
+
+val LocalRiskColors = staticCompositionLocalOf { lightRiskColors }
+
+// Convenience accessor — use MaterialTheme.riskColors in composables
+val MaterialTheme.riskColors: RiskColors
+    @Composable get() = LocalRiskColors.current
+
 @Composable
 fun HeimdallTheme(
-  useDarkTheme: Boolean = isSystemInDarkTheme(),
-  content: @Composable () -> Unit
+    useDarkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
 ) {
-  val colors = if (!useDarkTheme) {
-    lightColors
-  } else {
-    darkColors
-  }
+    val colorScheme = if (useDarkTheme) darkColors else lightColors
+    val riskColors = if (useDarkTheme) darkRiskColors else lightRiskColors
 
-  MaterialTheme(
-    colorScheme = colors,
-    content = content
-  )
+    CompositionLocalProvider(LocalRiskColors provides riskColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = HeimdallTypography,
+            content = content,
+        )
+    }
 }

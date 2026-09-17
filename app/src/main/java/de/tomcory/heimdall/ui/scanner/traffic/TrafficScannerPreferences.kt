@@ -8,6 +8,7 @@ import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.ui.settings.ActionPreference
 import de.tomcory.heimdall.ui.settings.BooleanPreference
 import de.tomcory.heimdall.ui.settings.CategoryHeadline
+import de.tomcory.heimdall.ui.settings.CACertExportPreference
 import de.tomcory.heimdall.ui.settings.MagiskExportPreference
 import de.tomcory.heimdall.ui.settings.MonitoringScopePreference
 import de.tomcory.heimdall.ui.settings.StringPreference
@@ -128,6 +129,8 @@ fun MitMPreferences(
         )
 
         MagiskExportPreference(onShowSnackbar = onShowSnackbar)
+
+        CACertExportPreference(onShowSnackbar = onShowSnackbar)
     }
 }
 

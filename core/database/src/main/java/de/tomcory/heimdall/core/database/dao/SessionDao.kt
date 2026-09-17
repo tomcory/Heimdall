@@ -37,4 +37,7 @@ interface SessionDao {
 
     @Query("Select * FROM Session")
     fun getAllObservable(): Flow<List<Session>>
+
+    @Query("SELECT * FROM Session ORDER BY startTime DESC LIMIT 1")
+    suspend fun getLatestSession(): Session?
 }

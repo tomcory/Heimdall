@@ -96,3 +96,72 @@ private suspend fun generateMagiskModule(context: Context): String {
     Timber.d("Building Magisk module...")
     return KeyStoreHelper.createMagiskModuleWithCertificate(context, keyStore, authority) ?: ""
 }
+
+@Composable
+fun CACertExportPreference(onShowSnackbar: (String) -> Unit) {
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    var isGenerating by remember { mutableStateOf(false) }
+
+    val headlineText = "User CA certificate"
+    val supportingText = "Export root CA certificate for manual installation"
+
+    var filename by remember {
+        mutableStateOf("")
+    }
+
+    val startForResult = rememberLauncherForActivityResult(contract = ActivityResultContracts.CreateDocument("application/x-x509-ca-cert")) {
+        coroutineScope.launch {
+            val success = it != null && FileUtils.copyFile(context, File(context.cacheDir, filename), it)
+            isGenerating = false
+
+            if (success) {
+                Timber.d("Successfully copied root CA certificate")
+                onShowSnackbar("Root CA certificate exported")
+            } else {
+                Timber.e("Error copying root CA certificate")
+                onShowSnackbar("Could not export root CA certificate")
+            }
+        }
+    }
+
+    ListItem(
+        headlineContent = { Text(headlineText, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = {
+            Text(supportingText, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        },
+        modifier = Modifier.clickable(enabled = !isGenerating) {
+            isGenerating = true
+            coroutineScope.launch {
+                withContext(Dispatchers.IO) {
+                    filename = generateRootCertificate(context)
+                    if (filename.isEmpty()) {
+                        Timber.e("Root CA certificate export failed")
+                        onShowSnackbar("Could not export root CA certificate")
+                        isGenerating = false
+                    } else {
+                        Timber.d("Root CA certificate export successful")
+                    }
+                    startForResult.launch(filename)
+                }
+            }
+        }
+    )
+
+    if (isGenerating) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+}
+
+/**
+ * Exports just the root CA certificate based on the default Authority credentials and writes it to the app's internal cache directory.
+ */
+private suspend fun generateRootCertificate(context: Context): String {
+    Timber.d("Generating authority...")
+    val authority = Authority.getDefaultInstance(File(context.filesDir, "keystore"))
+    Timber.d("Loading KeyStore...")
+    val keyStore = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+    Timber.d("Exporting root CA certificate...")
+    return KeyStoreHelper.exportRootCertificate(context, keyStore, authority) ?: ""
+}

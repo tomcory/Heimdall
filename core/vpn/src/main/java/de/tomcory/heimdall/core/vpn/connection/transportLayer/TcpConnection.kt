@@ -83,6 +83,11 @@ class TcpConnection internal constructor(
                 Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
                 state = TransportLayerState.ABORTED
                 deleteDatabaseEntity()
+                try {
+                    selectableChannel.close()
+                } catch (closeException: Exception) {
+                    Timber.e("tcp$id Error while closing leaked SocketChannel: ${closeException.message}")
+                }
                 null
             }
         } else {

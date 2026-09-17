@@ -139,13 +139,13 @@ abstract class EncryptionLayerConnection(
             return getInstance(id, transportLayer, componentManager, packet.rawData, isInbound)
         }
 
-        private fun detectTls(rawPayload: ByteArray): Boolean {
+        internal fun detectTls(rawPayload: ByteArray): Boolean {
             return rawPayload[0].toInt() == 0x16
                     && rawPayload.size > 6
                     && rawPayload[5].toInt() == 1
         }
 
-        private fun detectQuic(rawPayload: ByteArray): Boolean {
+        internal fun detectQuic(rawPayload: ByteArray): Boolean {
             if(rawPayload.isNotEmpty()) {
                 val firstByte = rawPayload[0].toUByte().toInt()
                 if((firstByte and 0x80) != 0 && (firstByte and 0x40) != 0 && rawPayload.size >= 5) {

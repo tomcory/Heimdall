@@ -13,13 +13,14 @@ Feel free to use the [issue tracker](https://github.com/tomcory/Heimdall/issues)
 - **Permission Analysis:** Heimdall helps you to view and analyze the permissions used by installed apps, providing a detailed breakdown of what resources an app may access.
 - **Library Detection:** Easily detect embedded third-party libraries and SDKs that may be collecting user data.
 - **Network Traffic Monitoring:** Real-time inspection of network traffic to help you identify potential data leakages or suspicious connections.
+- **Privacy Scoring:** Computes a per-app privacy score from permissions, embedded trackers, and privacy-policy coverage, with a breakdown of the contributing factors.
 - **Fully on-device:** Heimdall requires no external infrastructure and does not transmit any data off the device, be it personal or any other kind of data.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Android SDK version 28 (Android 9) or higher. We're working on making Heimdall compatible with older Android versions.
+- Android SDK version 24 (Android 7) or higher.
 - Root access is required to decrypt HTTPS traffic of monitored apps. All other features work in standard user space. If you don't need to access the application-layer traffic of monitored apps, there's no need to modify your device in any way.
 
 ### Installation
@@ -35,21 +36,23 @@ Feel free to use the [issue tracker](https://github.com/tomcory/Heimdall/issues)
 
 ### Components
 
-Heimdall comprises three Scanners: 
+Heimdall comprises three scanning capabilities: 
 
 1. `PermissionScanner` - Queries the [`PackageManager`](https://developer.android.com/reference/android/content/pm/PackageManager) API for all permissions requested by (but not necessarily granted to) monitored apps.
 2. `LibraryScanner` - Parses the .dex files of monitored apps to extract their package signatures and matches them against the [Exodus Privacy Project](https://exodus-privacy.eu.org/)'s database of third-party tracker signatures to identify trackers embedded in monitored apps.
-3. `TrafficScanner` - Leverages the [`VpnService`](https://developer.android.com/reference/android/net/VpnService) API to intercept the network traffic of monitored apps. In standard user space, extracted information is limited to connection metadata, e.g. hostnames and geolocation of remote servers. On rooted devices, the `TrafficScanner` is capable of employing an on-device Man-in-the-Middle (MitM) VPN layer to decrypt HTTPS traffic, thereby granting access to the application-layer data transmitted by monitored apps.
+3. **Traffic Scanner** - Leverages the [`VpnService`](https://developer.android.com/reference/android/net/VpnService) API (via `HeimdallVpnService`) to intercept the network traffic of monitored apps. In standard user space, extracted information is limited to connection metadata, e.g. hostnames and geolocation of remote servers. On rooted devices, it is capable of employing an on-device Man-in-the-Middle (MitM) VPN layer to decrypt HTTPS traffic, thereby granting access to the application-layer data transmitted by monitored apps.
 
-The figure below shows how these scanners extract data from monitored apps, what label sources they employ to label the extracted data and what insights can be gained by analysing the data:
+The results of these scans feed into a fourth component, the **Evaluator**, which computes a per-app privacy score from a pluggable set of `Module`s - currently permission risk, tracker presence, and privacy-policy coverage - and displays the breakdown in the app's Score screen.
+
+The figure below shows how these scanners extract data from monitored apps, what label sources they employ to label the extracted data and what insights can be gained by analysing the data. Note: this diagram predates the privacy-scoring feature and may not reflect the current architecture in full.
 
 ![](assets/scanners.png "Heimdall's Scanners")
 
 ### Man-in-the-Middle VPN
 
-In modern versions of Android, HTTPS is enabled by default, which means that the vast majority of network traffic is TLS-encrypted as it passes through Heimdall's `TrafficScanner`.
+In modern versions of Android, HTTPS is enabled by default, which means that the vast majority of network traffic is TLS-encrypted as it passes through Heimdall's Traffic Scanner.
 Bypassing this encryption requires the use of a MitM attack to hijack the TLS sessions that monitored apps establish with remote hosts. 
-his capability is baked into the TrafficScanner in the form of a MitM-VPN layer and can be enabled via the _MitM_ preferences menu.
+This capability is baked into the Traffic Scanner in the form of a MitM-VPN layer and can be enabled via the **MitM-VPN preferences**, a subsection of the Traffic Scanner's preferences menu.
 
 To function correctly, the MitM-VPN requires a **custom root CA certificate** to be installed on the device.
 Since Android 7, user-installed CA certificates are no longer accepted by default, which means that in most cases, the custom CA certificate must be placed in the system CA store for apps to accept it. This generally requires **root access** on the device.
@@ -57,27 +60,26 @@ Since Android 7, user-installed CA certificates are no longer accepted by defaul
 Here's how to install Heimdall's custom CA on a rooted device using [Magisk](https://github.com/topjohnwu/Magisk/releases):
 
 1. Root your device and install Magisk
-2. Open Heimdall, navigate to the _MitM_ preferences and select `Generate Magisk Module`
+2. Open Heimdall, navigate to the Traffic Scanner's MitM-VPN preferences and select `Magisk` ("Generate Magisk module")
 3. Open Magisk and import the generated module
 4. Reboot your device and verify that the module is installed correctly
 
-If you are using a rooted device without Magisk, you need to generate Heimdall's CA certificate by navigating to the _MitM_ preferences and selecting `Generate CA certificate` and manually add it to the system CA store located at:
+If you are using a rooted device without Magisk, you need to generate Heimdall's CA certificate by navigating to the Traffic Scanner's MitM-VPN preferences and selecting `User CA certificate` ("Export root CA certificate for manual installation") and manually add it to the system CA store located at:
 ```
 system/etc/security/cacerts
 ```
 
-Once you have installed the custom CA certificate, simply enable the MitM VPN via the _MitM_ preferences and launch the `TrafficScanner`.
+Once you have installed the custom CA certificate, simply enable the MitM VPN via the MitM-VPN preferences and launch the Traffic Scanner.
 
 ### Data export
 
-All data collected by Heimdall is persisted in an on-device SQLite database and can be exported for external analysis in the following formats via the _Export_ screen:
-1. SQLite database
-2. CSV
-3. JSON
+All data collected by Heimdall is persisted in an on-device SQLite database. Export tooling for external analysis (CSV, LaTeX) already exists at the data layer and is being wired into the UI - track progress on the [issue tracker](https://github.com/tomcory/Heimdall/issues).
 
 ## Contributing
 
-Feel free to open a new [issue](https://github.com/tomcory/Heimdall/issues) for bug reports or feature requests. Pull requests for contributions are always welcome!
+Feel free to open a new [issue](https://github.com/tomcory/Heimdall/issues) for bug reports or feature requests. Pull requests for contributions are always welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
+
+For a deeper dive into Heimdall's architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the VPN/MitM engine specifically is documented in [core/vpn/README.md](core/vpn/README.md).
 
 ## Citations
 

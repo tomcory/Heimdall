@@ -11,8 +11,10 @@ import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
+import de.tomcory.heimdall.service.ScanWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
@@ -44,6 +46,18 @@ class HeimdallApplication : Application(), Configuration.Provider {
             preferences.setLibraryActive(false)
             preferences.setPermissionActive(false)
             preferences.setProxyActive(false)
+        }
+
+        // Start initial scan on app launch
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val scanLibraries = preferences.libraryOnInstall.first()
+                val scanPermissions = preferences.permissionOnInstall.first()
+                ScanWorker.enqueue(applicationContext, scanLibraries, scanPermissions)
+                Timber.d("Initial scan scheduled on app launch")
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to schedule initial scan")
+            }
         }
 
         // create notification channel

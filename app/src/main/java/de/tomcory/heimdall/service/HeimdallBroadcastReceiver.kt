@@ -3,7 +3,6 @@ package de.tomcory.heimdall.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import dagger.hilt.android.AndroidEntryPoint
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
@@ -42,10 +41,18 @@ class HeimdallBroadcastReceiver : BroadcastReceiver() {
      */
     private fun actionBootCompleted(context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
+            Timber.d("Boot completed")
+
+            // perform a scan of all installed packages on boot if enabled
             if(preferences.bootScanService.first()) {
-                ScanWorker.enqueue(context.applicationContext)
+                val scanLibraries = preferences.libraryOnInstall.first()
+                val scanPermissions = preferences.permissionOnInstall.first()
+                if (scanLibraries || scanPermissions) {
+                    ScanWorker.enqueue(context.applicationContext, scanLibraries, scanPermissions)
+                }
             }
 
+            // start the VPN service on boot if enabled
             if(preferences.bootVpnService.first()) {
                 val serviceIntent = Intent(context, HeimdallVpnService::class.java)
                 serviceIntent.putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.START_SERVICE)
@@ -58,34 +65,16 @@ class HeimdallBroadcastReceiver : BroadcastReceiver() {
      * Scans the newly installed app. Called when an app has been installed.
      */
     private fun actionPackageAdded(context: Context, packageName: String) {
-        Timber.d("App installed: $packageName")
         CoroutineScope(Dispatchers.IO).launch {
-            val scanPermissions = preferences.permissionOnInstall.first()
+            Timber.d("App installed: $packageName")
+
             val scanLibraries = preferences.libraryOnInstall.first()
-
-            val packageInfo = if(scanPermissions || scanLibraries) {
-                try {
-                    context.packageManager.getPackageInfo(
-                        packageName,
-                        PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS
-                    )
-                } catch (e: PackageManager.NameNotFoundException) {
-                    Timber.e("App $packageName not found, cannot scan it")
-                    return@launch
-                }
-            } else {
-                Timber.e("No scan scope set for $packageName")
-                return@launch
-            }
-
-            if(scanPermissions) {
-                permissionScanner.scanApp(packageInfo)
-            }
-
-            if(scanLibraries) {
-                libraryScanner.scanApp(packageInfo)
+            val scanPermissions = preferences.permissionOnInstall.first()
+            if (scanLibraries || scanPermissions) {
+                ScanWorker.enqueue(context.applicationContext, scanLibraries, scanPermissions, packageName)
             }
         }
+
     }
 
     /**

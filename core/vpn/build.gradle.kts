@@ -15,6 +15,13 @@ android {
         minSdk = 24
         compileSdk = 36
     }
+
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = false
+        }
+    }
 }
 
 dependencies {
@@ -34,4 +41,8 @@ dependencies {
 
     implementation (project(":core:database"))
     implementation (project(":core:util"))
+
+    testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
