@@ -69,10 +69,13 @@ class TrafficScannerViewModel @Inject constructor(
     private val _vpnPermissionRequestEvent = MutableSharedFlow<Unit>()
     val vpnPermissionRequestEvent = _vpnPermissionRequestEvent.asSharedFlow()
 
-    enum class VpnMode { BASE, MITM_VPN }
+    enum class VpnMode { OFF, PLAIN_VPN, MITM_VPN }
 
-    private val _vpnMode = MutableStateFlow(VpnMode.BASE)
+    private val _vpnMode = MutableStateFlow(VpnMode.OFF)
     val vpnMode = _vpnMode.asStateFlow()
+
+    // Mode requested via the mode selector while a VPN permission grant is pending.
+    private var pendingVpnMode: VpnMode = VpnMode.OFF
 
     // ── Session tracking ───────────────────────────────────────────────────────
 
@@ -93,8 +96,13 @@ class TrafficScannerViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            val active = repository.preferences.vpnActive.first()
             val mitmEnabled = repository.preferences.mitmEnable.first()
-            _vpnMode.value = if (mitmEnabled) VpnMode.MITM_VPN else VpnMode.BASE
+            _vpnMode.value = when {
+                !active     -> VpnMode.OFF
+                mitmEnabled -> VpnMode.MITM_VPN
+                else        -> VpnMode.PLAIN_VPN
+            }
             loadLastSessionStats()
         }
     }
@@ -113,39 +121,35 @@ class TrafficScannerViewModel @Inject constructor(
 
     // ── Event handlers ─────────────────────────────────────────────────────────
 
-    fun onScan(onShowSnackbar: (String) -> Unit) {
-        Timber.d("TrafficScannerViewModel.onScan()")
+    /**
+     * The VPN mode selector is the single control for the VPN's running state: selecting
+     * [VpnMode.OFF] stops the VPN, selecting [VpnMode.PLAIN_VPN] or [VpnMode.MITM_VPN] starts it
+     * (or restarts it, if it was already running in a different mode) with the corresponding
+     * MitM setting.
+     */
+    fun onVpnModeChanged(mode: VpnMode, onShowSnackbar: (String) -> Unit) {
+        if (scanSetup.value || mode == _vpnMode.value) return
+        Timber.d("TrafficScannerViewModel.onVpnModeChanged($mode)")
         viewModelScope.launch(Dispatchers.IO) {
-            if (!scanSetup.first()) {
-                _scanSetup.emit(true)
-                if (!repository.preferences.vpnActive.first()) {
+            _scanSetup.emit(true)
+            if (repository.preferences.vpnActive.first()) {
+                stopVpn()
+            }
+            when (mode) {
+                VpnMode.OFF -> {
+                    _vpnMode.value = VpnMode.OFF
+                    _scanSetup.emit(false)
+                }
+                VpnMode.PLAIN_VPN, VpnMode.MITM_VPN -> {
+                    repository.preferences.setMitmEnable(mode == VpnMode.MITM_VPN)
+                    pendingVpnMode = mode
                     val vpnIntent = VpnService.prepare(context)
                     if (vpnIntent != null) {
                         _vpnPermissionRequestEvent.emit(Unit)
                     } else {
-                        startVpnStack(onShowSnackbar)
+                        startVpnStack(mode, onShowSnackbar)
                     }
-                } else {
-                    stopVpn(context)
-                    onShowSnackbar("VPN setup failed")
                 }
-            }
-        }
-    }
-
-    fun onScanCancel() {
-        viewModelScope.launch { stopVpn(context) }
-    }
-
-    fun onShowDetails() = Unit
-    fun onShowHelp() = Unit
-
-    fun onVpnModeChanged(mode: VpnMode) {
-        viewModelScope.launch {
-            _vpnMode.value = mode
-            when (mode) {
-                VpnMode.BASE     -> repository.preferences.setMitmEnable(false)
-                VpnMode.MITM_VPN -> repository.preferences.setMitmEnable(true)
             }
         }
     }
@@ -153,28 +157,31 @@ class TrafficScannerViewModel @Inject constructor(
     fun onVpnPermissionResult(resultCode: Int, onShowSnackbar: (String) -> Unit) {
         viewModelScope.launch {
             if (resultCode == Activity.RESULT_OK) {
-                startVpnStack(onShowSnackbar)
+                startVpnStack(pendingVpnMode, onShowSnackbar)
             } else {
                 Timber.e("VPN permission denied: %s", resultCode)
                 onShowSnackbar("VPN permission denied")
+                _vpnMode.value = VpnMode.OFF
+                _scanSetup.emit(false)
             }
-            _scanSetup.emit(false)
         }
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    private suspend fun startVpnStack(onShowSnackbar: (String) -> Unit) {
-        val doMitm = repository.preferences.mitmEnable.first()
+    private suspend fun startVpnStack(mode: VpnMode, onShowSnackbar: (String) -> Unit) {
+        val doMitm = mode == VpnMode.MITM_VPN
         val sessionId = persistSession(System.currentTimeMillis())
         _currentSessionId.value = sessionId
         if (launchVpn(context) != null) {
             repository.preferences.setVpnActive(true)
             repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
+            _vpnMode.value = mode
             _scanActive.emit(true)
             val mitmString = if (doMitm) " with MitM" else ""
             onShowSnackbar("Traffic scanner enabled$mitmString")
         } else {
+            _vpnMode.value = VpnMode.OFF
             onShowSnackbar("VPN setup failed")
         }
         delay(500)
@@ -198,8 +205,7 @@ class TrafficScannerViewModel @Inject constructor(
         return if (ids.isNotEmpty()) ids.first().toInt() else -1
     }
 
-    private suspend fun stopVpn(context: Context) {
-        _scanSetup.emit(true)
+    private suspend fun stopVpn() {
         context.startService(
             Intent(context, HeimdallVpnService::class.java)
                 .putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.STOP_SERVICE)
@@ -211,9 +217,9 @@ class TrafficScannerViewModel @Inject constructor(
         // Refresh last session stats now that the session is ending
         loadLastSessionStats()
         _currentSessionId.value = null
-
-        delay(500)
-        _scanSetup.emit(false)
         _scanActive.emit(false)
+
+        // allow the service to release the TUN interface before any immediate restart
+        delay(500)
     }
 }

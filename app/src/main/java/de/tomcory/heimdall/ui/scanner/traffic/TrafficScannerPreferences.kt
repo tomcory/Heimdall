@@ -92,14 +92,6 @@ fun MitMPreferences(
         )
 
         BooleanPreference(
-            text = "Enable MitM-VPN",
-            value = viewModel.preferences.mitmEnable.collectAsState(initial = viewModel.prefInit.mitmEnableInitial).value,
-            onValueChange = { value ->
-                viewModel.preferences.setMitmEnable(value)
-            }
-        )
-
-        BooleanPreference(
             text = "App-layer passthrough",
             value = viewModel.preferences.mitmAppLayerPassthrough.collectAsState(initial = viewModel.prefInit.mitmAppLayerPassthroughInitial).value,
             onValueChange = { value -> viewModel.preferences.setMitmAppLayerPassthrough(value) }

@@ -8,9 +8,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -40,7 +37,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -103,9 +99,7 @@ fun ScannerControlStrip(
             scanSetup = scanSetup,
             lastUpdated = lastUpdated,
             vpnMode = vpnMode,
-            onStart = { trafficVm.onScan(onShowSnackbar) },
-            onStop = { trafficVm.onScanCancel() },
-            onVpnModeChanged = { trafficVm.onVpnModeChanged(it) },
+            onVpnModeChanged = { trafficVm.onVpnModeChanged(it, onShowSnackbar) },
             onShowPreferences = onShowPreferences,
         )
 
@@ -143,8 +137,6 @@ private fun VpnControlRow(
     scanSetup: Boolean,
     lastUpdated: Long,
     vpnMode: VpnMode,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
     onVpnModeChanged: (VpnMode) -> Unit,
     onShowPreferences: () -> Unit,
 ) {
@@ -165,14 +157,20 @@ private fun VpnControlRow(
                     style = MaterialTheme.typography.titleSmall,
                 )
                 AnimatedContent(
-                    targetState = scanSetup || scanActive,
+                    targetState = Triple(scanSetup, scanActive, vpnMode),
                     transitionSpec = { fadeIn() togetherWith fadeOut() },
                     label = "vpn-status",
-                ) { isRunning ->
-                    if (isRunning && scanActive) {
-                        ElapsedTimer(startTimestamp = lastUpdated)
-                    } else {
-                        Text(
+                ) { (isSetup, isActive, _) ->
+                    when {
+                        isSetup -> Text(
+                            text = if (isActive) "Stopping…" else "Starting…",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = MonoFont,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
+                        isActive -> ElapsedTimer(startTimestamp = lastUpdated)
+                        else -> Text(
                             text = if (lastUpdated > 0) "Last: ${relativeTimestamp(lastUpdated)}"
                                    else "Never run",
                             style = MaterialTheme.typography.bodySmall.copy(
@@ -184,13 +182,12 @@ private fun VpnControlRow(
                 }
             }
 
-            // Start/stop button
-            VpnToggleButton(
-                scanActive = scanActive,
-                scanSetup = scanSetup,
-                onStart = onStart,
-                onStop = onStop,
-            )
+            if (scanSetup) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
 
             // Settings — only tappable when idle to avoid mid-session config changes
             IconButton(
@@ -209,103 +206,21 @@ private fun VpnControlRow(
             }
         }
 
-        // Mode selector — only visible when idle
-        AnimatedContent(
-            targetState = scanActive || scanSetup,
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "vpn-mode-selector",
-        ) { isRunning ->
-            if (!isRunning) {
-                Spacer(modifier = Modifier.height(8.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    val options = listOf(
-                        VpnMode.BASE     to "Off",
-                        VpnMode.MITM_VPN to "VPN",
-                    )
-                    options.forEachIndexed { index, (mode, label) ->
-                        SegmentedButton(
-                            selected = mode == vpnMode,
-                            onClick = { onVpnModeChanged(mode) },
-                            enabled = !scanActive && !scanSetup,
-                            shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                        ) { Text(label, style = MaterialTheme.typography.labelMedium) }
-                    }
-                }
-            } else {
-                // Active mode label
-                val modeText = when (vpnMode) {
-                    VpnMode.BASE     -> "VPN only"
-                    VpnMode.MITM_VPN -> "MitM · VPN"
-                }
-                Text(
-                    text = modeText,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = MaterialTheme.colorScheme.primary,
-                    ),
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun VpnToggleButton(
-    scanActive: Boolean,
-    scanSetup: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-) {
-    val buttonSize = 56.dp
-
-    AnimatedContent(
-        targetState = when {
-            scanSetup  -> "SETUP"
-            scanActive -> "ACTIVE"
-            else       -> "IDLE"
-        },
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
-        label = "vpn-button",
-    ) { state ->
-        when (state) {
-            "SETUP" -> Box(
-                modifier = Modifier
-                    .size(buttonSize)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(buttonSize * 0.6f),
-                    strokeWidth = 3.dp,
-                )
-            }
-            "ACTIVE" -> IconButton(
-                onClick = onStop,
-                modifier = Modifier
-                    .size(buttonSize)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.errorContainer),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_pause_32),
-                    contentDescription = "Stop VPN",
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            else -> IconButton(
-                onClick = onStart,
-                modifier = Modifier
-                    .size(buttonSize)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_play_32),
-                    contentDescription = "Start VPN",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(24.dp),
-                )
+        // Mode selector — the single control for the VPN's running state
+        Spacer(modifier = Modifier.height(8.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            val options = listOf(
+                VpnMode.OFF       to "Off",
+                VpnMode.PLAIN_VPN to "Plain VPN",
+                VpnMode.MITM_VPN  to "MitM VPN",
+            )
+            options.forEachIndexed { index, (mode, label) ->
+                SegmentedButton(
+                    selected = mode == vpnMode,
+                    onClick = { onVpnModeChanged(mode) },
+                    enabled = !scanSetup,
+                    shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                ) { Text(label, style = MaterialTheme.typography.labelMedium) }
             }
         }
     }
