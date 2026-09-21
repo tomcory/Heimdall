@@ -65,4 +65,11 @@ interface SubReportDao {
      */
     @Query("Select * FROM SubReport")
     fun getAllObservable(): Flow<List<SubReport>>
+
+    /**
+     * Sub-reports for a bounded set of report ids (e.g. the "latest per app" set from
+     * [ReportDao.getLatestReportsObservable]), rather than every sub-report ever created.
+     */
+    @Query("SELECT * FROM SubReport WHERE reportId IN (:reportIds)")
+    fun getForReportIdsObservable(reportIds: List<Long>): Flow<List<SubReport>>
 }

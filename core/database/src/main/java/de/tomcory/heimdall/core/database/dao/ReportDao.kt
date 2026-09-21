@@ -46,8 +46,34 @@ interface ReportDao {
 
     /**
      * Returns a [Flow] of all observable [AppWithReportsAndSubReports].
+     *
+     * Note: loads every report and sub-report ever created for every app — unbounded. Prefer
+     * [getLatestReportsObservable] for anything that only needs current status per app (e.g. a live
+     * dashboard); this is kept for a future full-history view.
      */
     @Transaction
     @Query("SELECT * FROM App")
     fun getAllAppsWithReportsAndSubReports(): Flow<List<AppWithReportsAndSubReports>>
+
+    /**
+     * The most recent [Report] per [Report.appPackageName], computed in SQL rather than by loading
+     * every report ever created and reducing in Kotlin. Reactive: re-emits whenever the Report
+     * table changes.
+     */
+    @Query("""
+        SELECT r.* FROM Report r
+        INNER JOIN (
+            SELECT appPackageName, MAX(timestamp) AS maxTimestamp
+            FROM Report GROUP BY appPackageName
+        ) latest
+        ON r.appPackageName = latest.appPackageName AND r.timestamp = latest.maxTimestamp
+    """)
+    fun getLatestReportsObservable(): Flow<List<Report>>
+
+    /**
+     * Deletes all reports for [packageName] (used by the "latest only" report-retention mode before
+     * inserting a fresh report). [SubReport] rows cascade-delete via their foreign key to `Report`.
+     */
+    @Query("DELETE FROM Report WHERE appPackageName = :packageName")
+    suspend fun deleteAllForPackage(packageName: String)
 }

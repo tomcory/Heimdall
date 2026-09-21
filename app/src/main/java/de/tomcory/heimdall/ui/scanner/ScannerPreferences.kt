@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import de.tomcory.heimdall.ui.evaluator.ReportPreferences
 import de.tomcory.heimdall.ui.scanner.library.LibraryScannerPreferences
 import de.tomcory.heimdall.ui.scanner.permission.PermissionScannerPreferences
 import de.tomcory.heimdall.ui.scanner.traffic.TrafficScannerPreferences
@@ -90,6 +91,10 @@ fun ScannerPreferencesDialog(onDismiss: () -> Unit) {
                     TrafficScannerPreferences(onShowSnackbar = { message ->
                         showSnackbar(message)
                     })
+                }
+
+                item {
+                    ReportPreferences()
                 }
             }
         }

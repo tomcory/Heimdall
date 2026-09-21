@@ -1,19 +1,20 @@
 package de.tomcory.heimdall.core.vpn.integration.support
 
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 data class RecordedConnection(
-    val id: Int,
-    val sessionId: Int,
-    val protocol: String,
+    val id: Long,
+    val sessionId: Long,
+    val protocol: Protocol,
     val ipVersion: Int,
     val initialTimestamp: Long,
     val initiatorId: Int,
     val initiatorPkg: String,
     val localPort: Int,
-    val remoteHost: String,
+    val remoteHost: String?,
     val remoteIp: String,
     val remotePort: Int,
     val isTracker: Boolean,
@@ -21,8 +22,8 @@ data class RecordedConnection(
 )
 
 data class RecordedRequest(
-    val id: Int,
-    val connectionId: Int,
+    val id: Long,
+    val connectionId: Long,
     val timestamp: Long,
     val headers: Map<String, String>,
     val content: String,
@@ -39,8 +40,8 @@ data class RecordedRequest(
 )
 
 data class RecordedResponse(
-    val connectionId: Int,
-    val requestId: Int,
+    val connectionId: Long,
+    val requestId: Long,
     val timestamp: Long,
     val headers: Map<String, String>,
     val content: String,
@@ -62,8 +63,8 @@ data class RecordedResponse(
  */
 class RecordingDatabaseConnector : DatabaseConnector {
 
-    private val connectionIdCounter = AtomicInteger(1)
-    private val requestIdCounter = AtomicInteger(1)
+    private val connectionIdCounter = AtomicLong(1)
+    private val requestIdCounter = AtomicLong(1)
 
     val connections = CopyOnWriteArrayList<RecordedConnection>()
     val requests = CopyOnWriteArrayList<RecordedRequest>()
@@ -74,29 +75,29 @@ class RecordingDatabaseConnector : DatabaseConnector {
     @Volatile
     var sessionEnd: Long = -1
 
-    override suspend fun persistSession(startTime: Long): Int {
+    override suspend fun persistSession(startTime: Long): Long {
         sessionStart = startTime
         return 1
     }
 
-    override suspend fun updateSession(id: Int, endTime: Long): Int {
+    override suspend fun updateSession(id: Long, endTime: Long): Int {
         sessionEnd = endTime
-        return id
+        return id.toInt()
     }
 
     override suspend fun persistTransportLayerConnection(
-        sessionId: Int,
-        protocol: String,
+        sessionId: Long,
+        protocol: Protocol,
         ipVersion: Int,
         initialTimestamp: Long,
         initiatorId: Int,
         initiatorPkg: String,
         localPort: Int,
-        remoteHost: String,
+        remoteHost: String?,
         remoteIp: String,
         remotePort: Int,
         isTracker: Boolean
-    ): Int {
+    ): Long {
         val id = connectionIdCounter.getAndIncrement()
         connections.add(
             RecordedConnection(
@@ -117,13 +118,13 @@ class RecordingDatabaseConnector : DatabaseConnector {
         return id
     }
 
-    override suspend fun deleteTransportLayerConnection(id: Int): Int {
+    override suspend fun deleteTransportLayerConnection(id: Long): Int {
         connections.find { it.id == id }?.deleted = true
-        return id
+        return id.toInt()
     }
 
     override suspend fun persistHttpRequest(
-        connectionId: Int,
+        connectionId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -137,7 +138,7 @@ class RecordingDatabaseConnector : DatabaseConnector {
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int {
+    ): Long {
         val id = requestIdCounter.getAndIncrement()
         requests.add(
             RecordedRequest(
@@ -162,8 +163,8 @@ class RecordingDatabaseConnector : DatabaseConnector {
     }
 
     override suspend fun persistHttpResponse(
-        connectionId: Int,
-        requestId: Int,
+        connectionId: Long,
+        requestId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -177,7 +178,7 @@ class RecordingDatabaseConnector : DatabaseConnector {
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int {
+    ): Long {
         responses.add(
             RecordedResponse(
                 connectionId = connectionId,

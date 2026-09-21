@@ -2,6 +2,8 @@ package de.tomcory.heimdall.core.datastore
 
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeHosts
+import de.tomcory.heimdall.ReportRetentionMode
+import de.tomcory.heimdall.TrafficRetentionUnit
 
 data class PreferencesInitialValues(
     val vpnActiveInitial: Boolean = false,
@@ -51,5 +53,13 @@ data class PreferencesInitialValues(
     val proxyActiveInitial: Boolean = false,
 
     val bootScanServiceInitial: Boolean = true,
-    val bootVpnServiceInitial: Boolean = false
+    val bootVpnServiceInitial: Boolean = false,
+
+    val reportRetentionModeInitial: ReportRetentionMode = ReportRetentionMode.REPORT_RETENTION_ALL_TIME,
+
+    // disabled by default: preserves pre-PKT-07 behaviour (unbounded traffic history) for existing
+    // installs until the user opts in
+    val trafficRetentionEnabledInitial: Boolean = false,
+    val trafficRetentionUnitInitial: TrafficRetentionUnit = TrafficRetentionUnit.TRAFFIC_RETENTION_AGE_DAYS,
+    val trafficRetentionValueInitial: Int = 7
 )

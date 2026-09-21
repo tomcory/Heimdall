@@ -19,8 +19,8 @@ import androidx.room.PrimaryKey
 )
 data class Request(
     @PrimaryKey(autoGenerate = true)
-    val id: Int = 0,
-    val connectionId: Int,
+    val id: Long = 0,
+    val connectionId: Long,
     val timestamp: Long,
     val headers: String,
     val content: String,
@@ -33,6 +33,5 @@ data class Request(
     val localIp: String,
     val localPort: Int,
     val initiatorId: Int,
-    val initiatorPkg: String,
-    val isTracker: Boolean = false
+    val initiatorPkg: String
 )

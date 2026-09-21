@@ -11,7 +11,7 @@ package de.tomcory.heimdall.evaluator
  */
 data class ModuleResult(
     val moduleName: String,
-    val score: Float,
+    val score: Double,
     val weight: Double = 1.0,
     val additionalDetails: String = "",
     val timestamp: Long = System.currentTimeMillis()

@@ -1,14 +1,17 @@
 package de.tomcory.heimdall.evaluator
 
 import android.content.Context
+import de.tomcory.heimdall.ReportRetentionMode
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Report
 import de.tomcory.heimdall.core.database.entity.ReportWithSubReports
 import de.tomcory.heimdall.core.database.entity.SubReport
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.evaluator.module.Module
 import de.tomcory.heimdall.evaluator.module.PrivacyPolicyScore
 import de.tomcory.heimdall.evaluator.module.StaticPermissionsScore
 import de.tomcory.heimdall.evaluator.module.TrackerScore
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -25,7 +28,8 @@ import javax.inject.Inject
  * @constructor should not be manually constructed, use Hilt dependency injection instead.
  */
 class Evaluator @Inject constructor(
-    val database: HeimdallDatabase
+    val database: HeimdallDatabase,
+    private val preferences: PreferencesDataSource
 ) {
 
     /**
@@ -125,6 +129,12 @@ class Evaluator @Inject constructor(
     ): ReportWithSubReports {
         // logging
         Timber.d("writing Report and SubReports to Database")
+
+        // "latest only" retention: drop prior reports for this app before inserting the new one
+        // (their SubReports cascade-delete via the foreign key to Report)
+        if (preferences.reportRetentionMode.first() == ReportRetentionMode.REPORT_RETENTION_LATEST_ONLY) {
+            database.reportDao().deleteAllForPackage(packageName)
+        }
 
         // creating Report with current time as timestamp
         val report = Report(

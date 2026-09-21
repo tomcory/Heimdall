@@ -10,7 +10,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class HttpConnection(
-    id: Int,
+    id: Long,
     encryptionLayer: EncryptionLayerConnection,
     componentManager: ComponentManager
 ) : AppLayerConnection(
@@ -39,7 +39,7 @@ class HttpConnection(
     /**
      * Channel for passing the request ID from the HTTP request insertion coroutine to the HTTP response insertion coroutine.
      */
-    private val requestIdChannel = Channel<Int>()
+    private val requestIdChannel = Channel<Long>()
 
     init {
         if(id > 0) {

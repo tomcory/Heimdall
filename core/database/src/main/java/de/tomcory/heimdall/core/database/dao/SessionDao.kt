@@ -18,13 +18,13 @@ interface SessionDao {
     suspend fun update(vararg sessions: Session)
 
     @Query("UPDATE Session SET endTime = :endTime WHERE id = :id")
-    suspend fun updateEndTime(id: Int, endTime: Long): Int
+    suspend fun updateEndTime(id: Long, endTime: Long): Int
 
     @Delete
     suspend fun delete(session: Session)
 
     @Query("DELETE FROM Session WHERE id = :id")
-    suspend fun delete(id: Int)
+    suspend fun delete(id: Long)
 
     @Query("DELETE FROM Session")
     suspend fun deleteAll()
@@ -40,4 +40,15 @@ interface SessionDao {
 
     @Query("SELECT * FROM Session ORDER BY startTime DESC LIMIT 1")
     suspend fun getLatestSession(): Session?
+
+    /** Sessions whose [Session.endTime] has passed (i.e. finished) and started before [cutoff]. */
+    @Query("SELECT * FROM Session WHERE endTime >= 0 AND startTime < :cutoff")
+    suspend fun getEndedSessionsStartedBefore(cutoff: Long): List<Session>
+
+    /** Finished sessions beyond the newest [keepCount], oldest first. */
+    @Query("""
+        SELECT * FROM Session WHERE endTime >= 0 ORDER BY startTime DESC
+        LIMIT -1 OFFSET :keepCount
+    """)
+    suspend fun getEndedSessionsBeyondNewest(keepCount: Int): List<Session>
 }

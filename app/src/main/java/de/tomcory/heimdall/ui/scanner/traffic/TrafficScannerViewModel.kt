@@ -79,7 +79,7 @@ class TrafficScannerViewModel @Inject constructor(
 
     // ── Session tracking ───────────────────────────────────────────────────────
 
-    private val _currentSessionId = MutableStateFlow<Int?>(null)
+    private val _currentSessionId = MutableStateFlow<Long?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val liveConnections: StateFlow<List<Connection>> = _currentSessionId
@@ -195,14 +195,14 @@ class TrafficScannerViewModel @Inject constructor(
         )
     }
 
-    private suspend fun persistSession(startTime: Long): Int {
+    private suspend fun persistSession(startTime: Long): Long {
         val ids = try {
             database.sessionDao().insert(Session(startTime = startTime))
         } catch (e: Exception) {
             Timber.e(e, "Error persisting session")
             emptyList()
         }
-        return if (ids.isNotEmpty()) ids.first().toInt() else -1
+        return if (ids.isNotEmpty()) ids.first() else -1
     }
 
     private suspend fun stopVpn() {

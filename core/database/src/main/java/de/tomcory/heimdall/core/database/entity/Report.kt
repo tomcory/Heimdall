@@ -1,8 +1,9 @@
 package de.tomcory.heimdall.core.database.entity
 
-import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.Relation
 import kotlinx.serialization.Serializable
@@ -17,16 +18,22 @@ import kotlinx.serialization.Serializable
  * For querying together with app info or sub-reports, consider [de.tomcory.heimdall.persistence.database.dao.AppWithReports].or [de.tomcory.heimdall.persistence.database.dao.ReportWithSubReport].
  */
 @Serializable
-@Entity
+@Entity(
+    foreignKeys = [
+        ForeignKey(
+            entity = App::class,
+            parentColumns = ["packageName"],
+            childColumns = ["appPackageName"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["appPackageName"])]
+)
 data class Report(
     // auto generate id
     @PrimaryKey(autoGenerate = true)
-    @ColumnInfo(index = true)
     val reportId: Long = 0,
     val appPackageName: String,
-
-    // generate Timestamp from database if not set
-    @ColumnInfo(defaultValue = "CURRENT_TIMESTAMP")
     val timestamp: Long,
     val mainScore: Double
 ) {

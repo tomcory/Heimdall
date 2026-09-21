@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.components
 
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Connection
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.database.entity.Session
@@ -10,17 +11,17 @@ import timber.log.Timber
 class RoomDatabaseConnector(
     val database: HeimdallDatabase
 ): DatabaseConnector {
-    override suspend fun persistSession(startTime: Long): Int {
+    override suspend fun persistSession(startTime: Long): Long {
         val ids = try {
             database.sessionDao().insert(Session(startTime = startTime))
         } catch (e: Exception) {
             Timber.e(e, "Error while persisting session")
             emptyList()
         }
-        return if (ids.isNotEmpty()) ids.first().toInt() else -1
+        return if (ids.isNotEmpty()) ids.first() else -1
     }
 
-    override suspend fun updateSession(id: Int, endTime: Long): Int {
+    override suspend fun updateSession(id: Long, endTime: Long): Int {
         return try {
             database.sessionDao().updateEndTime(id, endTime)
         } catch (e: Exception) {
@@ -30,18 +31,18 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun persistTransportLayerConnection(
-        sessionId: Int,
-        protocol: String,
+        sessionId: Long,
+        protocol: Protocol,
         ipVersion: Int,
         initialTimestamp: Long,
         initiatorId: Int,
         initiatorPkg: String,
         localPort: Int,
-        remoteHost: String,
+        remoteHost: String?,
         remoteIp: String,
         remotePort: Int,
         isTracker: Boolean
-    ): Int {
+    ): Long {
         val ids = try {
             database.connectionDao().insert(
                 Connection(
@@ -62,10 +63,10 @@ class RoomDatabaseConnector(
             Timber.e(e, "Error while persisting transport layer connection (sID: $sessionId)")
             emptyList()
         }
-        return if (ids.isNotEmpty()) ids.first().toInt() else -1
+        return if (ids.isNotEmpty()) ids.first() else -1
     }
 
-    override suspend fun deleteTransportLayerConnection(id: Int): Int {
+    override suspend fun deleteTransportLayerConnection(id: Long): Int {
         return try {
             database.connectionDao().delete(id)
         } catch (e: Exception) {
@@ -75,7 +76,7 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun persistHttpRequest(
-        connectionId: Int,
+        connectionId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -89,7 +90,7 @@ class RoomDatabaseConnector(
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int {
+    ): Long {
         val ids = try {
             database.requestDao().insert(
                 Request(
@@ -113,12 +114,12 @@ class RoomDatabaseConnector(
             Timber.e(e, "Error while persisting http request (cID: $connectionId)")
             emptyList()
         }
-        return if (ids.isNotEmpty()) ids.first().toInt() else -1
+        return if (ids.isNotEmpty()) ids.first() else -1
     }
 
     override suspend fun persistHttpResponse(
-        connectionId: Int,
-        requestId: Int,
+        connectionId: Long,
+        requestId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -132,7 +133,7 @@ class RoomDatabaseConnector(
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int {
+    ): Long {
         val ids = try {
             database.responseDao().insert(
                 Response(
@@ -156,6 +157,6 @@ class RoomDatabaseConnector(
             Timber.e(e, "Error while persisting http response (cID: $connectionId, rID: $requestId)")
             emptyList()
         }
-        return if (ids.isNotEmpty()) ids.first().toInt() else -1
+        return if (ids.isNotEmpty()) ids.first() else -1
     }
 }

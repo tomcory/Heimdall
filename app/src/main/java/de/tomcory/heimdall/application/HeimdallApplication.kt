@@ -12,6 +12,7 @@ import dagger.hilt.android.HiltAndroidApp
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.service.ScanWorker
+import de.tomcory.heimdall.service.TrafficRetentionWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -59,6 +60,9 @@ class HeimdallApplication : Application(), Configuration.Provider {
                 Timber.e(e, "Failed to schedule initial scan")
             }
         }
+
+        // register the periodic traffic-retention check (no-ops until the user enables it)
+        TrafficRetentionWorker.enqueuePeriodic(applicationContext)
 
         // create notification channel
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

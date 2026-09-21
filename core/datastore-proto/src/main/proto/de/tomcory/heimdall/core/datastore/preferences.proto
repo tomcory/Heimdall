@@ -17,6 +17,18 @@ enum MonitoringScopeHosts {
   HOSTS_BLACKLIST = 2;
 }
 
+enum ReportRetentionMode {
+  // keep every report/sub-report ever created for an app (existing, pre-PKT-08 behaviour)
+  REPORT_RETENTION_ALL_TIME = 0;
+  // keep only the most recent report/sub-reports per app, replacing prior ones on re-scan
+  REPORT_RETENTION_LATEST_ONLY = 1;
+}
+
+enum TrafficRetentionUnit {
+  TRAFFIC_RETENTION_AGE_DAYS = 0;
+  TRAFFIC_RETENTION_SESSION_COUNT = 1;
+}
+
 message Preferences {
 
   // ---- VPN PREFERENCES
@@ -76,4 +88,12 @@ message Preferences {
   // ---- BOOT PREFERENCES
   bool boot_scan_service = 43;
   bool boot_vpn_service = 44;
+
+  // ---- REPORT RETENTION PREFERENCES
+  ReportRetentionMode report_retention_mode = 45;
+
+  // ---- TRAFFIC RETENTION PREFERENCES
+  bool traffic_retention_enabled = 46;
+  TrafficRetentionUnit traffic_retention_unit = 47;
+  int32 traffic_retention_value = 48;
 }

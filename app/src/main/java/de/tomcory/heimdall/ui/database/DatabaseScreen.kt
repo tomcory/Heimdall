@@ -182,7 +182,7 @@ private fun ConnectionLogRow(
                 modifier = Modifier.width(36.dp),
             ) {
                 Text(
-                    text = connection.protocol.take(3).uppercase(),
+                    text = connection.protocol.name.take(3).uppercase(),
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = MonoFont),
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     maxLines = 1,
@@ -194,7 +194,7 @@ private fun ConnectionLogRow(
             // Host + package
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = connection.remoteHost.ifEmpty { connection.remoteIp },
+                    text = connection.remoteHost?.ifEmpty { connection.remoteIp } ?: connection.remoteIp,
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = MonoFont),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -270,8 +270,8 @@ private fun ConnectionDetail(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             // Connection metadata
-            ConnectionMetadataRow("Remote", "${connection.remoteHost}:${connection.remotePort}")
-            ConnectionMetadataRow("Protocol", connection.protocol)
+            ConnectionMetadataRow("Remote", "${connection.remoteHost ?: "unresolved"}:${connection.remotePort}")
+            ConnectionMetadataRow("Protocol", connection.protocol.name)
             ConnectionMetadataRow("↑ Out", formatBytes(connection.bytesOut))
             ConnectionMetadataRow("↓ In", formatBytes(connection.bytesIn))
 

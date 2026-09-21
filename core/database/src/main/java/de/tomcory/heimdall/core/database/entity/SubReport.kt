@@ -1,9 +1,9 @@
 package de.tomcory.heimdall.core.database.entity
 
-import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.Relation
 import kotlinx.serialization.Serializable
 
@@ -23,15 +23,24 @@ import kotlinx.serialization.Serializable
  * @see Report
  */
 @Serializable
-@Entity(primaryKeys = ["reportId", "module"])
+@Entity(
+    primaryKeys = ["reportId", "module"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Report::class,
+            parentColumns = ["reportId"],
+            childColumns = ["reportId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["packageName"]), Index(value = ["module"])]
+)
 data class SubReport(
-    @ColumnInfo(index = true)
     val reportId: Long,
     val packageName: String,
     val module: String,
-    val score: Float,
-    @ColumnInfo(defaultValue = "CURRENT_TIMESTAMP")
-    val timestamp: Long?,
+    val score: Double,
+    val timestamp: Long,
     val weight: Double = 1.0,
     val additionalDetails: String = "",
 )

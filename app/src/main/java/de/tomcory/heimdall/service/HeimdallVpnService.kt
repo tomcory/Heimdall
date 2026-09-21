@@ -77,7 +77,7 @@ class HeimdallVpnService : VpnService() {
      * @see [STOP_SERVICE]
      */
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        val existingSessionId = intent.getIntExtra("de.tomcory.heimdall.core.vpn.SESSION_ID", -1)
+        val existingSessionId = intent.getLongExtra("de.tomcory.heimdall.core.vpn.SESSION_ID", -1)
 
         return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
@@ -199,7 +199,7 @@ class HeimdallVpnService : VpnService() {
      * @return Whether the VPN interface was established successfully.
      * @see [onStartCommand]
      */
-    private suspend fun launchServiceComponents(existingSessionId: Int) {
+    private suspend fun launchServiceComponents(existingSessionId: Long) {
 
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()

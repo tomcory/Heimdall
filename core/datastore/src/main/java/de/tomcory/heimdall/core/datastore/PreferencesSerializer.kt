@@ -60,6 +60,12 @@ object PreferencesSerializer : Serializer<Preferences> {
         .setBootScanService(initialValues.bootScanServiceInitial)
         .setBootVpnService(initialValues.bootVpnServiceInitial)
 
+        .setReportRetentionMode(initialValues.reportRetentionModeInitial)
+
+        .setTrafficRetentionEnabled(initialValues.trafficRetentionEnabledInitial)
+        .setTrafficRetentionUnit(initialValues.trafficRetentionUnitInitial)
+        .setTrafficRetentionValue(initialValues.trafficRetentionValueInitial)
+
         .build()
 
     override suspend fun readFrom(input: InputStream): Preferences {

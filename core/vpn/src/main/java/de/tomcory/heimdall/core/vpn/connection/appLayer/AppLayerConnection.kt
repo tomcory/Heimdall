@@ -6,7 +6,7 @@ import org.pcap4j.packet.DnsPacket
 import org.pcap4j.packet.Packet
 
 abstract class AppLayerConnection(
-    val id: Int,
+    val id: Long,
     val encryptionLayer: EncryptionLayerConnection,
     val componentManager: ComponentManager
 ) {
@@ -35,7 +35,7 @@ abstract class AppLayerConnection(
          * @param componentManager The [ComponentManager] instance to use for this connection.
          * @param isInbound Set to true if you need to create an instance based on inbound data. Created instances will be of type [RawConnection] if set to true.
          */
-        fun getInstance(payload: ByteArray, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
+        fun getInstance(payload: ByteArray, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
             return try {
                 if(isInbound) {
                     RawConnection(id, encryptionLayer, componentManager)
@@ -60,7 +60,7 @@ abstract class AppLayerConnection(
          * @param componentManager The [ComponentManager] instance to use for this connection.
          * @param isInbound Set to true if you need to create an instance based on inbound data. Created instances will be of type [RawConnection] if set to true.
          */
-        fun getInstance(packet: Packet, id: Int, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
+        fun getInstance(packet: Packet, id: Long, encryptionLayer: EncryptionLayerConnection, componentManager: ComponentManager, isInbound: Boolean = false): AppLayerConnection {
             return try {
                 if(isInbound) {
                     RawConnection(id, encryptionLayer, componentManager)

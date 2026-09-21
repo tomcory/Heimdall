@@ -50,8 +50,8 @@ class PrivacyPolicyScore(database: HeimdallDatabase) : Module(database) {
         val policyTextInfo = getPolicyText(context, app)
         val policyTrackerInfo = appMentionsTrackersInPolicy(context, app, policyTextInfo.policyText)
         val score =
-            if (policyTrackerInfo.allTrackers.size == 0 || policyTrackerInfo.fullyMentionedTrackers.size == 0) 0f
-            else policyTrackerInfo.fullyMentionedTrackers.size.toFloat() / policyTrackerInfo.allTrackers.size
+            if (policyTrackerInfo.allTrackers.size == 0 || policyTrackerInfo.fullyMentionedTrackers.size == 0) 0.0
+            else policyTrackerInfo.fullyMentionedTrackers.size.toDouble() / policyTrackerInfo.allTrackers.size
 
 
         val policyDetails = buildJsonObject {

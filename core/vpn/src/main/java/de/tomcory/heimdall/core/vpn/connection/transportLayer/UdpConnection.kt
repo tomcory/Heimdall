@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
 import android.os.Handler
 import android.system.OsConstants
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
@@ -41,10 +42,10 @@ class UdpConnection internal constructor(
     remoteHost = remoteHost,
     ipPacketBuilder = ipPacketBuilder
 ) {
-    override val protocol = "UDP"
+    override val protocol = Protocol.UDP
     override val appId: Int?
     override val appPackage: String?
-    override val id: Int
+    override val id: Long
     override val selectableChannel: DatagramChannel
     override val selectionKey: SelectionKey?
 

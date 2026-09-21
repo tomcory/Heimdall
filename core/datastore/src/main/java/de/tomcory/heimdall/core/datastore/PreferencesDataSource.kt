@@ -4,6 +4,8 @@ import androidx.datastore.core.DataStore
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeHosts
 import de.tomcory.heimdall.Preferences
+import de.tomcory.heimdall.ReportRetentionMode
+import de.tomcory.heimdall.TrafficRetentionUnit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -67,6 +69,12 @@ class PreferencesDataSource @Inject constructor(
 
     val bootScanService: Flow<Boolean> = datastore.data.map { it.bootScanService }
     val bootVpnService: Flow<Boolean> = datastore.data.map { it.bootVpnService }
+
+    val reportRetentionMode: Flow<ReportRetentionMode> = datastore.data.map { it.reportRetentionMode }
+
+    val trafficRetentionEnabled: Flow<Boolean> = datastore.data.map { it.trafficRetentionEnabled }
+    val trafficRetentionUnit: Flow<TrafficRetentionUnit> = datastore.data.map { it.trafficRetentionUnit }
+    val trafficRetentionValue: Flow<Int> = datastore.data.map { it.trafficRetentionValue }
 
     /*
      * Setters for every field of Preferences
@@ -333,6 +341,30 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setBootVpnService(bootVpnService: Boolean) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setBootVpnService(bootVpnService).build()
+        }
+    }
+
+    suspend fun setReportRetentionMode(reportRetentionMode: ReportRetentionMode) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setReportRetentionMode(reportRetentionMode).build()
+        }
+    }
+
+    suspend fun setTrafficRetentionEnabled(trafficRetentionEnabled: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setTrafficRetentionEnabled(trafficRetentionEnabled).build()
+        }
+    }
+
+    suspend fun setTrafficRetentionUnit(trafficRetentionUnit: TrafficRetentionUnit) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setTrafficRetentionUnit(trafficRetentionUnit).build()
+        }
+    }
+
+    suspend fun setTrafficRetentionValue(trafficRetentionValue: Int) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setTrafficRetentionValue(trafficRetentionValue).build()
         }
     }
 }

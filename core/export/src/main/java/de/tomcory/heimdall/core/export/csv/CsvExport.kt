@@ -2,7 +2,7 @@ package de.tomcory.heimdall.core.export.csv
 
 import android.content.Context
 import de.tomcory.heimdall.core.database.dao.RequestDao
-import de.tomcory.heimdall.core.database.entity.Request
+import de.tomcory.heimdall.core.database.dao.RequestWithConnectionIsTracker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -11,17 +11,17 @@ suspend fun exportRequestsToCSV(requestDao: RequestDao, context: Context, filena
     val csvFile = File(context.filesDir, filename)
     val limit = 1000
     var offset = 0
-    var requests: List<Request>
+    var requests: List<RequestWithConnectionIsTracker>
 
     withContext(Dispatchers.IO) {
         csvFile.bufferedWriter().use { out ->
             out.write("id,timestamp,reqResId,headers,content,contentLength,method,remoteHost,remotePath,remoteIp,remotePort,localIp,localPort,initiatorId,initiatorPkg,isTracker\n")
 
             do {
-                requests = requestDao.getAllPaginated(limit, offset)
+                requests = requestDao.getAllWithConnectionIsTrackerPaginated(limit, offset)
 
                 requests.forEach { request ->
-                    out.write("${request.id},${request.timestamp},${request.headers},${request.content},${request.contentLength},${request.method},${request.remoteHost},${request.remotePath},${request.remoteIp},${request.remotePort},${request.localIp},${request.localPort},${request.initiatorId},${request.initiatorPkg},${request.isTracker}\n")
+                    out.write("${request.id},${request.timestamp},${request.headers},${request.content},${request.contentLength},${request.method},${request.remoteHost},${request.remotePath},${request.remoteIp},${request.remotePort},${request.localIp},${request.localPort},${request.initiatorId},${request.initiatorPkg},${request.connectionIsTracker}\n")
                 }
 
                 offset += limit

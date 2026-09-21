@@ -16,16 +16,16 @@ interface ConnectionDao {
     suspend fun update(vararg connections: Connection)
 
     @Query("DELETE FROM Connection WHERE id = :id")
-    suspend fun delete(id: Int): Int
+    suspend fun delete(id: Long): Int
 
     @Query("DELETE FROM Connection WHERE initiatorPkg = :packageName")
     suspend fun deleteForApp(packageName: String): Int
 
-    @Query("UPDATE Connection SET bytesOut = bytesIn + :delta WHERE id = :id")
-    suspend fun updateBytesOut(id: Int, delta: Int)
+    @Query("UPDATE Connection SET bytesOut = bytesOut + :delta WHERE id = :id")
+    suspend fun updateBytesOut(id: Long, delta: Int)
 
     @Query("UPDATE Connection SET bytesIn = bytesIn + :delta WHERE id = :id")
-    suspend fun updateBytesIn(id: Int, delta: Int)
+    suspend fun updateBytesIn(id: Long, delta: Int)
 
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>
@@ -34,14 +34,20 @@ interface ConnectionDao {
     fun getAllObservable(): kotlinx.coroutines.flow.Flow<List<Connection>>
 
     @Query("SELECT * FROM Connection WHERE sessionId = :sessionId ORDER BY initialTimestamp ASC")
-    fun getForSessionObservable(sessionId: Int): kotlinx.coroutines.flow.Flow<List<Connection>>
+    fun getForSessionObservable(sessionId: Long): kotlinx.coroutines.flow.Flow<List<Connection>>
 
     @Query("SELECT COUNT(*) FROM Connection WHERE sessionId = :sessionId")
-    suspend fun countForSession(sessionId: Int): Int
+    suspend fun countForSession(sessionId: Long): Int
 
     @Query("SELECT COUNT(DISTINCT remoteHost) FROM Connection WHERE sessionId = :sessionId")
-    suspend fun countUniqueHostsForSession(sessionId: Int): Int
+    suspend fun countUniqueHostsForSession(sessionId: Long): Int
 
     @Query("SELECT COUNT(*) FROM Connection WHERE sessionId = :sessionId AND isTracker = 1")
-    suspend fun countTrackerConnectionsForSession(sessionId: Int): Int
+    suspend fun countTrackerConnectionsForSession(sessionId: Long): Int
+
+    @Query("SELECT COALESCE(SUM(bytesOut), 0) FROM Connection WHERE sessionId = :sessionId")
+    suspend fun sumBytesOutForSession(sessionId: Long): Long
+
+    @Query("SELECT COALESCE(SUM(bytesIn), 0) FROM Connection WHERE sessionId = :sessionId")
+    suspend fun sumBytesInForSession(sessionId: Long): Long
 }

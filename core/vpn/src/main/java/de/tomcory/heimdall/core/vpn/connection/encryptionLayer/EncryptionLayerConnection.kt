@@ -8,7 +8,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 abstract class EncryptionLayerConnection(
-    val id: Int,
+    val id: Long,
     val transportLayer: TransportLayerConnection,
     val componentManager: ComponentManager
 ) {
@@ -114,7 +114,7 @@ abstract class EncryptionLayerConnection(
          * @param componentManager The [ComponentManager] instance to use for this connection.
          * @param rawPayload The connection's first raw outbound transport-layer payload.
          */
-        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray, isInbound: Boolean = false): EncryptionLayerConnection {
+        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray, isInbound: Boolean = false): EncryptionLayerConnection {
             return if (isInbound) {
                 PlaintextConnection(id, transportLayer, componentManager)
             } else if (detectTls(rawPayload)) {
@@ -135,7 +135,7 @@ abstract class EncryptionLayerConnection(
          * @param componentManager The [ComponentManager] instance to use for this connection.
          * @param packet The connection's first outbound transport-layer [Packet].
          */
-        fun getInstance(id: Int, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet, isInbound: Boolean = false): EncryptionLayerConnection {
+        fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, packet: Packet, isInbound: Boolean = false): EncryptionLayerConnection {
             return getInstance(id, transportLayer, componentManager, packet.rawData, isInbound)
         }
 

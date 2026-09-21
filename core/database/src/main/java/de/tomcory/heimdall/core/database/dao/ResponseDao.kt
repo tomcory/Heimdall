@@ -30,5 +30,5 @@ interface ResponseDao {
     fun getAllObservable(): Flow<List<Response>>
 
     @Query("SELECT * FROM Response WHERE requestId = :requestId LIMIT 1")
-    suspend fun getForRequest(requestId: Int): Response?
+    suspend fun getForRequest(requestId: Long): Response?
 }

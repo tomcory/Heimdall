@@ -62,7 +62,7 @@ class TrackerScore(
         val trackers = database.appXTrackerDao().getAppWithTrackers(app.packageName).trackers
 
         // deduct 0.2 point per tracker - this is pretty arbitrarily chosen
-        val score = maxOf(1f - trackers.size * 0.2f, 0f)
+        val score = maxOf(1.0 - trackers.size * 0.2, 0.0)
         // encode tracker details to string
         val additionalDetails: String = Json.encodeToString(trackers)
         // return result

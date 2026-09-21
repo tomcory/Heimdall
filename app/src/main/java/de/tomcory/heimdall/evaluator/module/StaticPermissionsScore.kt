@@ -88,11 +88,11 @@ class StaticPermissionsScore(
         )
 
         // compute score - point subtraction for different types of permission is chosen arbitrarily
-        val score = maxOf(1f -
-                permissionCountInfo.dangerousPermissionCount * 0.4f -
-                permissionCountInfo.signaturePermissionCount * 0.02f -
-                permissionCountInfo.normalPermissionCount * 0.01f,
-            0f
+        val score = maxOf(1.0 -
+                permissionCountInfo.dangerousPermissionCount * 0.4 -
+                permissionCountInfo.signaturePermissionCount * 0.02 -
+                permissionCountInfo.normalPermissionCount * 0.01,
+            0.0
         )
 
         // parse permission counts into json for storing in db

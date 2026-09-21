@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Connection
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.database.entity.Request
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,8 +50,8 @@ class DatabaseViewModel @Inject constructor(
             when (filter) {
                 DbFilter.ALL           -> conns
                 DbFilter.TRACKERS_ONLY -> conns.filter { it.isTracker }
-                DbFilter.TCP           -> conns.filter { it.protocol.contains("TCP", ignoreCase = true) }
-                DbFilter.UDP           -> conns.filter { it.protocol.contains("UDP", ignoreCase = true) }
+                DbFilter.TCP           -> conns.filter { it.protocol == Protocol.TCP }
+                DbFilter.UDP           -> conns.filter { it.protocol == Protocol.UDP }
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -80,9 +81,9 @@ class DatabaseViewModel @Inject constructor(
             .take(5)
 
         // Top 5 tracker hosts
-        val topTrackerHosts = conns.filter { it.isTracker && it.remoteHost.isNotEmpty() }
+        val topTrackerHosts = conns.filter { it.isTracker && !it.remoteHost.isNullOrEmpty() }
             .groupBy { it.remoteHost }
-            .map { (host, list) -> host to list.size }
+            .map { (host, list) -> host!! to list.size }
             .sortedByDescending { it.second }
             .take(5)
 
@@ -91,18 +92,18 @@ class DatabaseViewModel @Inject constructor(
 
     // ── Request expansion ──────────────────────────────────────────────────────
 
-    private val _expandedConnectionId = MutableStateFlow<Int?>(null)
+    private val _expandedConnectionId = MutableStateFlow<Long?>(null)
 
-    fun expandConnection(connectionId: Int) {
+    fun expandConnection(connectionId: Long) {
         _expandedConnectionId.value =
             if (_expandedConnectionId.value == connectionId) null else connectionId
     }
 
-    fun isExpanded(connectionId: Int): Boolean = _expandedConnectionId.value == connectionId
+    fun isExpanded(connectionId: Long): Boolean = _expandedConnectionId.value == connectionId
 
-    fun requestsFor(connectionId: Int): Flow<List<Request>> =
+    fun requestsFor(connectionId: Long): Flow<List<Request>> =
         database.requestDao().getForConnectionObservable(connectionId)
 
-    suspend fun responseStatusFor(requestId: Int): Int? =
+    suspend fun responseStatusFor(requestId: Long): Int? =
         database.responseDao().getForRequest(requestId)?.statusCode
 }

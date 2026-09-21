@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
 import android.os.Handler
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
@@ -57,7 +58,7 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * The connection's unique identifier.
      */
-    protected abstract val id: Int
+    protected abstract val id: Long
 
     /**
      * Buffer used for write operations on the connection's [SelectableChannel].
@@ -74,7 +75,7 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * The connection's transport protocol's name.
      */
-    protected abstract val protocol: String
+    protected abstract val protocol: Protocol
 
     /**
      * The connection's [SelectableChannel]'s key as registered with the [Selector].
@@ -125,13 +126,13 @@ abstract class TransportLayerConnection protected constructor(
 
     protected fun passInboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
-            Timber.w("${protocol.lowercase()}$id Inbound data without an encryption layer instance, creating one...")
+            Timber.w("${protocol.name.lowercase()}$id Inbound data without an encryption layer instance, creating one...")
             encryptionLayer = EncryptionLayerConnection.getInstance(id, this, componentManager, payload, true)
         }
         encryptionLayer?.unwrapInbound(payload)
     }
 
-    protected fun createDatabaseEntity(): Int {
+    protected fun createDatabaseEntity(): Long {
         return if(remotePort == 53) {
             0
         } else {
@@ -144,7 +145,7 @@ abstract class TransportLayerConnection protected constructor(
                     initiatorId = appId ?: -1,
                     initiatorPkg = appPackage ?: appId.toString(),
                     localPort = localPort,
-                    remoteHost = remoteHost ?: "",
+                    remoteHost = remoteHost,
                     remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
                     remotePort = remotePort,
                     isTracker = isTracker
@@ -186,13 +187,13 @@ abstract class TransportLayerConnection protected constructor(
      * Closes the connection's outward-facing [SelectableChannel] but doesn't remove the connection from the [ConnectionCache]
      */
     fun closeSoft() {
-        Timber.d("${protocol.lowercase()}$id Closing transport-layer connection to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort (${remoteHost})...")
+        Timber.d("${protocol.name.lowercase()}$id Closing transport-layer connection to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort (${remoteHost})...")
         state = TransportLayerState.CLOSING
         try {
             selectionKey?.cancel()
             selectableChannel.close()
         } catch (e: Exception) {
-            Timber.e(e, "${protocol.lowercase()}${id} Error closing SelectableChannel")
+            Timber.e(e, "${protocol.name.lowercase()}${id} Error closing SelectableChannel")
         }
         closeClientSession()
         state = TransportLayerState.CLOSED

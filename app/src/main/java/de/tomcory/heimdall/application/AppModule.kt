@@ -24,8 +24,9 @@ object AppModule {
 
     @Provides
     fun provideEvaluator(
-        database: HeimdallDatabase
+        database: HeimdallDatabase,
+        preferences: PreferencesDataSource,
     ): Evaluator {
-        return Evaluator(database)
+        return Evaluator(database, preferences)
     }
 }

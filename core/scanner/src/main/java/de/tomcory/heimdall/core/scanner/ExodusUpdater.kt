@@ -34,27 +34,38 @@ class ExodusUpdater @Inject constructor(
             Timber.d("Successfully queried Exodus API.")
             val trackersRaw = result.body()
 
-            val trackerList = mutableListOf<Tracker>()
+            // the Exodus API's map key is the tracker's own stable id - keep it as our primary
+            // key so repeat fetches upsert existing rows instead of reassigning ids (which used to
+            // orphan AppXTracker associations on every refresh)
+            val trackersById = trackersRaw?.trackers
+                ?.mapNotNull { (key, raw) -> key.toLongOrNull()?.let { it to raw } }
+                ?.toMap()
+                ?: emptyMap()
 
             Timber.d("Updating database...")
 
-            trackersRaw?.trackers?.values?.forEach{
-                trackerList.add(
+            if (trackersById.isNotEmpty()) {
+                val trackersWithRaw = trackersById.map { (id, raw) ->
                     Tracker(
-                        name = it.name,
-                        categories = it.categories.joinToString(","),
-                        codeSignature = it.code_signature,
-                        networkSignature = it.network_signature,
-                        creationDate = it.creation_date,
-                        web = it.website
-                    )
-                )
-            }
+                        id = id,
+                        name = raw.name,
+                        codeSignature = raw.code_signature,
+                        networkSignature = raw.network_signature,
+                        creationDate = raw.creation_date,
+                        web = raw.website
+                    ) to raw
+                }
 
-            if(trackerList.isNotEmpty()) {
-                database.trackerDao().deleteAllTrackers()
-                database.trackerDao().insertTrackers(*trackerList.toTypedArray())
-                Timber.d("Database updated, ${trackerList.size} trackers added.")
+                database.trackerDao().insertTrackers(*trackersWithRaw.map { it.first }.toTypedArray())
+                // remove trackers no longer present upstream; AppXTracker rows for them
+                // cascade-delete via the foreign key
+                database.trackerDao().deleteTrackersNotIn(trackersWithRaw.map { it.first.id })
+
+                for ((tracker, raw) in trackersWithRaw) {
+                    database.categoryDao().setCategoriesForTracker(tracker, raw.categories)
+                }
+
+                Timber.d("Database updated, ${trackersWithRaw.size} trackers added.")
             } else {
                 Timber.w("Database not updated, no trackers found.")
             }

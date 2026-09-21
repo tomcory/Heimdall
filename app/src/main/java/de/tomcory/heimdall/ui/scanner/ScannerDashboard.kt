@@ -301,12 +301,12 @@ private fun ConnectionRow(conn: Connection, trackerColor: androidx.compose.ui.gr
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = conn.remoteHost.ifEmpty { conn.remoteIp },
+                text = conn.remoteHost?.ifEmpty { conn.remoteIp } ?: conn.remoteIp,
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = MonoFont),
                 maxLines = 1,
             )
             Text(
-                text = conn.protocol,
+                text = conn.protocol.name,
                 style = MaterialTheme.typography.labelSmall.copy(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = MonoFont,

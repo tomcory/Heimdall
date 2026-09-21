@@ -57,7 +57,7 @@ object ComponentManagerFixtures {
         appId: Int = 1000,
         appPackage: String = "com.example.test",
         labelAsTracker: Boolean = false,
-        sessionId: Int = 1,
+        sessionId: Long = 1,
         maxPacketSize: Int = 16413
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)

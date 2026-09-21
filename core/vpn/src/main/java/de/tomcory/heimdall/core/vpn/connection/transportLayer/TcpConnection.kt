@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 
 import android.os.Handler
 import android.system.OsConstants
+import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
@@ -51,10 +52,10 @@ class TcpConnection internal constructor(
     private var theirSeqNum = theirInitSeqNum + 1 // SYN packets increase the client's sequence number by 1
     private var ourSeqNum = ourInitSeqNum
 
-    override val protocol = "TCP"
+    override val protocol = Protocol.TCP
     override val appId: Int?
     override val appPackage: String?
-    override val id: Int
+    override val id: Long
     override val selectableChannel: SocketChannel
     override val selectionKey: SelectionKey?
 

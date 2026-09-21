@@ -14,7 +14,7 @@ import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLException
 
 class TlsConnection(
-    id: Int,
+    id: Long,
     transportLayer: TransportLayerConnection,
     componentManager: ComponentManager
 ) : EncryptionLayerConnection(

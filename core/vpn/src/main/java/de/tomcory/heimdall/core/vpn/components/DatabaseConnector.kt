@@ -1,36 +1,38 @@
 package de.tomcory.heimdall.core.vpn.components
 
+import de.tomcory.heimdall.core.database.entity.Protocol
+
 interface DatabaseConnector {
 
     suspend fun persistSession(
         startTime: Long
-    ): Int
+    ): Long
 
     suspend fun updateSession(
-        id: Int,
+        id: Long,
         endTime: Long
     ): Int
 
     suspend fun persistTransportLayerConnection(
-        sessionId : Int,
-        protocol: String,
+        sessionId : Long,
+        protocol: Protocol,
         ipVersion: Int,
         initialTimestamp: Long,
         initiatorId: Int,
         initiatorPkg: String,
         localPort: Int,
-        remoteHost: String,
+        remoteHost: String?,
         remoteIp: String,
         remotePort: Int,
         isTracker: Boolean
-    ): Int
+    ): Long
 
     suspend fun deleteTransportLayerConnection(
-        id: Int
+        id: Long
     ): Int
 
     suspend fun persistHttpRequest(
-        connectionId: Int,
+        connectionId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -44,11 +46,11 @@ interface DatabaseConnector {
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int
+    ): Long
 
     suspend fun persistHttpResponse(
-        connectionId: Int,
-        requestId: Int,
+        connectionId: Long,
+        requestId: Long,
         timestamp: Long,
         headers: Map<String, String>,
         content: String,
@@ -62,5 +64,5 @@ interface DatabaseConnector {
         localPort: Int,
         initiatorId: Int,
         initiatorPkg: String
-    ): Int
+    ): Long
 }

@@ -43,7 +43,7 @@ class ComponentManager(
     private val inboundStream: FileOutputStream,
     val databaseConnector: DatabaseConnector,
     val context: Context?,
-    existingSessionId: Int = -1,
+    existingSessionId: Long = -1,
     val doMitm: Boolean = false,
     keyStoreDir: File,
     val appFinder: AppFinder,
@@ -56,7 +56,7 @@ class ComponentManager(
     val protectDatagramSocket: (DatagramSocket) -> Unit = {},
     val protectSocket: (Socket) -> Unit = {}
 ) {
-    val sessionId: Int
+    val sessionId: Long
 
     // the traffic handling threads
     private var devicePollThread: DevicePollThread? = null
@@ -102,7 +102,7 @@ class ComponentManager(
         }
 
         // create a new entry in the database for the current session or use the existing one
-        sessionId = if(existingSessionId < 0) {
+        sessionId = if(existingSessionId < 0L) {
             runBlocking { return@runBlocking databaseConnector.persistSession(System.currentTimeMillis()) }
         } else {
             existingSessionId

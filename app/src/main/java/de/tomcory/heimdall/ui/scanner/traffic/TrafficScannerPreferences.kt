@@ -4,11 +4,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.hilt.navigation.compose.hiltViewModel
+import de.tomcory.heimdall.TrafficRetentionUnit
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.ui.settings.ActionPreference
 import de.tomcory.heimdall.ui.settings.BooleanPreference
 import de.tomcory.heimdall.ui.settings.CategoryHeadline
 import de.tomcory.heimdall.ui.settings.CACertExportPreference
+import de.tomcory.heimdall.ui.settings.IntPreference
 import de.tomcory.heimdall.ui.settings.MagiskExportPreference
 import de.tomcory.heimdall.ui.settings.MonitoringScopePreference
 import de.tomcory.heimdall.ui.settings.StringPreference
@@ -21,6 +23,7 @@ fun TrafficScannerPreferences(
     Column {
         VpnPreferences(onShowSnackbar = onShowSnackbar)
         MitMPreferences(onShowSnackbar = onShowSnackbar)
+        TrafficRetentionPreferences(onShowSnackbar = onShowSnackbar)
     }
 }
 
@@ -109,6 +112,56 @@ fun MitMPreferences(
         MagiskExportPreference(onShowSnackbar = onShowSnackbar)
 
         CACertExportPreference(onShowSnackbar = onShowSnackbar)
+    }
+}
+
+@Composable
+fun TrafficRetentionPreferences(
+    viewModel: TrafficScannerViewModel = hiltViewModel(),
+    onShowSnackbar: (String) -> Unit
+) {
+    Column {
+
+        CategoryHeadline(
+            text = "Traffic retention",
+            description = "Older captured traffic is rolled up into a summary and removed once it falls outside this window."
+        )
+
+        val retentionEnabled = viewModel.preferences.trafficRetentionEnabled
+            .collectAsState(initial = viewModel.prefInit.trafficRetentionEnabledInitial).value
+
+        BooleanPreference(
+            text = "Limit captured traffic history",
+            value = retentionEnabled,
+            onValueChange = { value -> viewModel.preferences.setTrafficRetentionEnabled(value) }
+        )
+
+        if (retentionEnabled) {
+            val unit = viewModel.preferences.trafficRetentionUnit
+                .collectAsState(initial = viewModel.prefInit.trafficRetentionUnitInitial).value
+
+            BooleanPreference(
+                text = "Limit by number of sessions instead of age",
+                value = unit == TrafficRetentionUnit.TRAFFIC_RETENTION_SESSION_COUNT,
+                onValueChange = { value ->
+                    viewModel.preferences.setTrafficRetentionUnit(
+                        if (value) TrafficRetentionUnit.TRAFFIC_RETENTION_SESSION_COUNT
+                        else TrafficRetentionUnit.TRAFFIC_RETENTION_AGE_DAYS
+                    )
+                }
+            )
+
+            IntPreference(
+                text = if (unit == TrafficRetentionUnit.TRAFFIC_RETENTION_SESSION_COUNT)
+                    "Sessions to keep" else "Days to keep",
+                dialogText = if (unit == TrafficRetentionUnit.TRAFFIC_RETENTION_SESSION_COUNT)
+                    "Number of most recent sessions to keep" else "Number of days of traffic to keep",
+                value = viewModel.preferences.trafficRetentionValue
+                    .collectAsState(initial = viewModel.prefInit.trafficRetentionValueInitial).value,
+                valueVerifier = { value -> value > 0 },
+                onValueChange = { value -> viewModel.preferences.setTrafficRetentionValue(value) }
+            )
+        }
     }
 }
 

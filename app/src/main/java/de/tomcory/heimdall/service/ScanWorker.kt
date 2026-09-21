@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.service
 
 import android.content.Context
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.work.CoroutineWorker
@@ -130,13 +131,19 @@ class ScanWorker(
     private suspend fun performFullScan(scanLibraries: Boolean, scanPermissions: Boolean) {
         val pm = context.packageManager
         val packages = pm.getInstalledPackages(PackageManager.GET_META_DATA or PackageManager.GET_PERMISSIONS)
-        val total = packages.size
 
         // Get all existing apps from database
         val existingApps = database.appDao().getAll().associateBy { it.packageName }
+        val seenPackageNames = mutableSetOf<String>()
+        val appsToUpsert = mutableListOf<App>()
+        val packagesToScan = mutableListOf<PackageInfo>()
 
-        packages.forEachIndexed { index, pkgInfo ->
+        // Pass 1: determine what changed and collect the App rows, but don't scan yet -
+        // AppXPermission/AppXTracker now carry a foreign key to App, so every App row must exist
+        // before permissionScanner/libraryScanner can insert rows referencing it.
+        packages.forEach { pkgInfo ->
             val packageName = pkgInfo.packageName
+            seenPackageNames.add(packageName)
             val versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
             val versionName = pkgInfo.versionName ?: ""
 
@@ -149,8 +156,7 @@ class ScanWorker(
 
             val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
 
-            // Always update the app entry in database to ensure current data
-            database.appDao().insertApps(
+            appsToUpsert.add(
                 App(
                     packageName = packageName,
                     label = label,
@@ -161,20 +167,35 @@ class ScanWorker(
                 )
             )
 
-            // Only scan if the app is new or has changed
             if (isAppChanged) {
-                Timber.d("Scanning $packageName...")
+                packagesToScan.add(pkgInfo)
+            }
+        }
 
-                if (scanPermissions) {
-                    permissionScanner.scanApp(pkgInfo)
-                }
-                if (scanLibraries) {
-                    libraryScanner.scanApp(pkgInfo)
-                }
+        if (appsToUpsert.isNotEmpty()) {
+            database.appDao().insertApps(*appsToUpsert.toTypedArray())
+        }
+
+        // Pass 2: now that every App row exists, scan only the apps that are new or changed
+        packagesToScan.forEachIndexed { index, pkgInfo ->
+            Timber.d("Scanning ${pkgInfo.packageName}...")
+
+            if (scanPermissions) {
+                permissionScanner.scanApp(pkgInfo)
+            }
+            if (scanLibraries) {
+                libraryScanner.scanApp(pkgInfo)
             }
 
-            val percent = ((index + 1) * 100) / total
+            val percent = ((index + 1) * 100) / packagesToScan.size.coerceAtLeast(1)
             setProgress(workDataOf(KEY_PROGRESS to percent))
+        }
+
+        // Reconcile: any app that was known but didn't turn up in this full sweep is no longer
+        // installed (catches removals the uninstall broadcast missed)
+        val missingPackageNames = existingApps.keys - seenPackageNames
+        if (missingPackageNames.isNotEmpty()) {
+            database.appDao().updateIsInstalled(missingPackageNames.toList())
         }
     }
 

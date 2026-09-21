@@ -3,12 +3,22 @@ package de.tomcory.heimdall.core.database.entity
 import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Junction
 import androidx.room.Relation
 
-@Entity(primaryKeys = ["packageName", "permissionName"])
+@Entity(
+    primaryKeys = ["packageName", "permissionName"],
+    foreignKeys = [
+        ForeignKey(
+            entity = App::class,
+            parentColumns = ["packageName"],
+            childColumns = ["packageName"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
+)
 data class AppXPermission(
-    @ColumnInfo(index = true)
     var packageName: String,
     @ColumnInfo(index = true)
     val permissionName: String

@@ -20,7 +20,7 @@ interface AppXTrackerDao {
 
     @Transaction
     @Query("SELECT * FROM Tracker WHERE id = :trackerId")
-    suspend fun getTrackerWithApps(trackerId: Int): TrackerWithApps
+    suspend fun getTrackerWithApps(trackerId: Long): TrackerWithApps
 
     @Transaction
     @Query("SELECT * FROM Tracker")

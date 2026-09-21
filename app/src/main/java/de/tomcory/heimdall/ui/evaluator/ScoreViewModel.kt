@@ -11,11 +11,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import de.tomcory.heimdall.ReportRetentionMode
 import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.AppWithReportsAndSubReports
 import de.tomcory.heimdall.core.database.entity.ReportWithSubReports
+import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.evaluator.Evaluator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,9 +26,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
@@ -47,13 +52,44 @@ data class DeviceStats(
 class ScoreViewModel @Inject constructor(
     private val database: HeimdallDatabase,
     private val evaluator: Evaluator,
+    private val preferences: PreferencesDataSource,
     @field:SuppressLint("StaticFieldLeak") @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     val evaluatorModules = evaluator.modules
 
+    val reportRetentionMode: Flow<ReportRetentionMode> = preferences.reportRetentionMode
+
+    fun setReportRetentionMode(mode: ReportRetentionMode) {
+        viewModelScope.launch { preferences.setReportRetentionMode(mode) }
+    }
+
+    /**
+     * Current status per app: the latest [de.tomcory.heimdall.core.database.entity.Report] (if
+     * any) for each app, with its [de.tomcory.heimdall.core.database.entity.SubReport]s — computed
+     * in SQL via [de.tomcory.heimdall.core.database.dao.ReportDao.getLatestReportsObservable]
+     * rather than loading every report ever created (see PKT-08 / F-10 / F-11).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val allApps: Flow<List<AppWithReportsAndSubReports>> =
-        database.reportDao().getAllAppsWithReportsAndSubReports()
+        combine(
+            database.appDao().getAllObservable(),
+            database.reportDao().getLatestReportsObservable()
+        ) { apps, reports -> apps to reports }
+            .flatMapLatest { (apps, reports) ->
+                val reportIds = reports.map { it.reportId }
+                database.subReportDao().getForReportIdsObservable(reportIds).map { subReports ->
+                    val subsByReportId = subReports.groupBy { it.reportId }
+                    val reportsByPackage = reports.associateBy { it.appPackageName }
+                    apps.map { app ->
+                        val report = reportsByPackage[app.packageName]
+                        val reportWithSubs = report?.let {
+                            ReportWithSubReports(it, subsByReportId[it.reportId] ?: emptyList())
+                        }
+                        AppWithReportsAndSubReports(app, listOfNotNull(reportWithSubs))
+                    }
+                }
+            }
 
     private val _activeFilter = MutableStateFlow(ScoreFilter.NONE)
     val activeFilter: StateFlow<ScoreFilter> = _activeFilter.asStateFlow()
@@ -172,7 +208,7 @@ class ScoreViewModel @Inject constructor(
 
     suspend fun scoreAllApps() {
         withContext(Dispatchers.IO) {
-            allApps.first().forEach { app -> scoreApp(app.app.packageName) }
+            database.appDao().getAllPackageNames().forEach { packageName -> scoreApp(packageName) }
         }
     }
 

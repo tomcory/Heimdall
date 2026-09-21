@@ -6,7 +6,7 @@ import org.pcap4j.packet.Packet
 import timber.log.Timber
 
 class RawConnection(
-    id: Int,
+    id: Long,
     encryptionLayer: EncryptionLayerConnection,
     componentManager: ComponentManager
 ) : AppLayerConnection(
