@@ -238,7 +238,7 @@ class TcpConnection internal constructor(
                     largeBuffer.get(temp)
                     Timber.d("tcp$id Writing split payload (${temp.size} bytes, ${largeBuffer.limit() - largeBuffer.position()} remaining)")
                     val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(temp))
-                    increaseOurSeqNum(payload.size)
+                    increaseOurSeqNum(temp.size)
                     writeToDevice(ackDataPacket)
                 }
             }
