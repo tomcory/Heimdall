@@ -39,7 +39,16 @@ class InboundTrafficHandler(
                             continue
                         }
                         if (attachment is TransportLayerConnection) {
-                            attachment.unwrapInbound()
+                            try {
+                                attachment.unwrapInbound()
+                            } catch (e: Throwable) {
+                                Timber.e(e, "Uncaught exception while processing inbound traffic, closing the connection")
+                                try {
+                                    attachment.closeHard()
+                                } catch (closeException: Throwable) {
+                                    Timber.e(closeException, "Error while closing connection after an uncaught exception")
+                                }
+                            }
                         } else {
                             Timber.e("Invalid attachment %s", attachment.javaClass)
                         }

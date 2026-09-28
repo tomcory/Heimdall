@@ -41,7 +41,24 @@ class OutboundTrafficHandler(
     private fun handleMessageImpl(msg: Message) {
         if((msg.what == 6 || msg.what == 17) && msg.obj is IpPacket) {
             val ipPacket = msg.obj as IpPacket
-            TransportLayerConnection.getInstance(ipPacket, componentManager, deviceWriter)?.unwrapOutbound(ipPacket.payload)
+
+            val connection = try {
+                TransportLayerConnection.getInstance(ipPacket, componentManager, deviceWriter)
+            } catch (e: Throwable) {
+                Timber.e(e, "Uncaught exception while creating a connection for outbound traffic, dropping the packet")
+                return
+            }
+
+            try {
+                connection?.unwrapOutbound(ipPacket.payload)
+            } catch (e: Throwable) {
+                Timber.e(e, "Uncaught exception while processing outbound traffic, closing the connection")
+                try {
+                    connection?.closeHard()
+                } catch (closeException: Throwable) {
+                    Timber.e(closeException, "Error while closing connection after an uncaught exception")
+                }
+            }
         }
     }
 }

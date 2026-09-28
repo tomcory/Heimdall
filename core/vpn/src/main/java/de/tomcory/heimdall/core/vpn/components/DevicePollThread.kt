@@ -96,7 +96,12 @@ class DevicePollThread internal constructor(
             }
 
             if(rawPacket.isNotEmpty()) {
-                val parsedPacket = parsePacket(rawPacket)
+                val parsedPacket = try {
+                    parsePacket(rawPacket)
+                } catch (e: Throwable) {
+                    Timber.e(e, "Uncaught exception while parsing a packet from the device, dropping it")
+                    null
+                }
 
                 // forward packet to traffic handler
                 if (parsedPacket != null) {

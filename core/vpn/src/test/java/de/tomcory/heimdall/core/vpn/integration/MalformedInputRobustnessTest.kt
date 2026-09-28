@@ -1,12 +1,21 @@
 package de.tomcory.heimdall.core.vpn.integration
 
+import android.os.Message
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
+import de.tomcory.heimdall.core.vpn.components.ComponentManager
+import de.tomcory.heimdall.core.vpn.components.InboundTrafficHandler
+import de.tomcory.heimdall.core.vpn.components.OutboundTrafficHandler
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.PacketFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.RecordingDatabaseConnector
 import de.tomcory.heimdall.core.vpn.integration.support.RecordingDeviceWriter
 import de.tomcory.heimdall.core.vpn.integration.support.SelectorPump
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -15,6 +24,7 @@ import org.junit.Before
 import org.junit.Test
 import org.pcap4j.packet.DnsPacket
 import org.pcap4j.packet.DnsQuestion
+import org.pcap4j.packet.Packet
 import org.pcap4j.packet.namednumber.DnsClass
 import org.pcap4j.packet.namednumber.DnsOpCode
 import org.pcap4j.packet.namednumber.DnsRCode
@@ -26,6 +36,11 @@ import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.nio.ByteBuffer
+import java.nio.channels.Pipe
+import java.nio.channels.Selector
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -260,5 +275,103 @@ class MalformedInputRobustnessTest {
         assertEquals(2, dbConnector.requests.size)
         assertEquals("GET", dbConnector.requests[1].method)
         assertEquals("/ok", dbConnector.requests[1].remotePath)
+    }
+
+    @Test
+    fun `an exception in one connection's unwrapInbound does not kill the shared InboundTrafficHandler thread`() {
+        val selector = Selector.open()
+        val componentManager: ComponentManager = mockk(relaxed = true)
+        every { componentManager.selector } returns selector
+
+        // a "connection" that blows up as soon as inbound data is processed for it
+        val poisonedPipe = Pipe.open()
+        poisonedPipe.source().configureBlocking(false)
+        val poisonedKey = poisonedPipe.source().register(selector, java.nio.channels.SelectionKey.OP_READ)
+        val poisonedConnection: TransportLayerConnection = mockk(relaxed = true)
+        every { poisonedConnection.unwrapInbound() } throws RuntimeException("boom")
+        // a real closeHard() would deregister the channel; replicate that so the poisoned key
+        // isn't selected forever and this test terminates deterministically
+        every { poisonedConnection.closeHard() } answers { poisonedKey.cancel() }
+        poisonedKey.attach(poisonedConnection)
+
+        // a second, unrelated, healthy connection registered on the same selector
+        val healthyPipe = Pipe.open()
+        healthyPipe.source().configureBlocking(false)
+        val healthyKey = healthyPipe.source().register(selector, java.nio.channels.SelectionKey.OP_READ)
+        val healthyConnection: TransportLayerConnection = mockk(relaxed = true)
+        val healthyProcessed = CountDownLatch(1)
+        every { healthyConnection.unwrapInbound() } answers { healthyProcessed.countDown() }
+        healthyKey.attach(healthyConnection)
+
+        val handler = InboundTrafficHandler("test-inbound-handler", componentManager)
+        handler.isDaemon = true
+        handler.start()
+
+        try {
+            // make both channels readable
+            poisonedPipe.sink().write(ByteBuffer.wrap(byteArrayOf(1)))
+            healthyPipe.sink().write(ByteBuffer.wrap(byteArrayOf(1)))
+
+            // the poisoned connection's exception must be caught and the connection torn down,
+            // rather than propagating out of the shared thread
+            verify(timeout = 5000) { poisonedConnection.closeHard() }
+
+            // the shared thread must still be alive and keep servicing the unrelated connection
+            assertTrue(
+                "healthy connection was never processed - the shared thread must have died",
+                healthyProcessed.await(5, TimeUnit.SECONDS)
+            )
+            assertTrue("InboundTrafficHandler thread must still be alive after the exception", handler.isAlive)
+        } finally {
+            handler.interrupt()
+            selector.wakeup()
+            handler.join(2000)
+            poisonedPipe.source().close()
+            poisonedPipe.sink().close()
+            healthyPipe.source().close()
+            healthyPipe.sink().close()
+            selector.close()
+        }
+    }
+
+    @Test
+    fun `an exception while creating or processing outbound traffic does not break handling of subsequent packets`() {
+        mockkObject(TransportLayerConnection.Companion)
+        try {
+            val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+            val deviceWriter = RecordingDeviceWriter()
+            val outboundHandler = OutboundTrafficHandler(
+                "test-outbound-handler",
+                deviceWriter.handler,
+                componentManager
+            ) { }
+
+            val handleMessageImpl = OutboundTrafficHandler::class.java.getDeclaredMethod("handleMessageImpl", Message::class.java)
+            handleMessageImpl.isAccessible = true
+
+            val localAddr = InetAddress.getByName("10.0.0.20") as Inet4Address
+            val remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
+            val synPacket = PacketFixtures.buildTcpSynPacket(localAddr, 44001, remoteAddr, 443)
+            val msg = Message().apply { what = 6; obj = synPacket }
+
+            // scenario 1: getInstance() itself throws while creating the connection
+            every { TransportLayerConnection.getInstance(any(), any(), any()) } throws RuntimeException("boom in getInstance")
+            handleMessageImpl.invoke(outboundHandler, msg) // must not throw out of the handler
+
+            // scenario 2: getInstance() succeeds, but the connection's own unwrapOutbound() throws
+            val poisonedConnection: TransportLayerConnection = mockk(relaxed = true)
+            every { poisonedConnection.unwrapOutbound(any<Packet>()) } throws RuntimeException("boom in unwrapOutbound")
+            every { TransportLayerConnection.getInstance(any(), any(), any()) } returns poisonedConnection
+            handleMessageImpl.invoke(outboundHandler, msg) // must not throw out of the handler
+            verify(timeout = 2000) { poisonedConnection.closeHard() }
+
+            // a subsequent, unrelated, healthy connection must still be processed normally afterward
+            val healthyConnection: TransportLayerConnection = mockk(relaxed = true)
+            every { TransportLayerConnection.getInstance(any(), any(), any()) } returns healthyConnection
+            handleMessageImpl.invoke(outboundHandler, msg)
+            verify(timeout = 2000) { healthyConnection.unwrapOutbound(any<Packet>()) }
+        } finally {
+            unmockkObject(TransportLayerConnection.Companion)
+        }
     }
 }
