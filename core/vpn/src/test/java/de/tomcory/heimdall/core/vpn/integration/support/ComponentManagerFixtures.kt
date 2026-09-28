@@ -64,7 +64,11 @@ object ComponentManagerFixtures {
 
         val selector = Selector.open()
         val authority = Authority.getDefaultInstance(keyStoreDir)
-        val mitmManager = CertificateSniffingMitmManager(authority)
+        // trustAllServers=true: these tests connect to FakeTlsServer/other test doubles whose
+        // certs are self-signed and not chained to any system-trusted CA - upstream cert
+        // validation is orthogonal to what these tests exercise (MITM interception logic), so
+        // this intentionally diverges from the strict production default (see PKT-07).
+        val mitmManager = CertificateSniffingMitmManager(authority, trustAllServers = true)
         val dnsCache = DnsCache()
         val tlsPassthroughCache = TlsPassthroughCache()
 

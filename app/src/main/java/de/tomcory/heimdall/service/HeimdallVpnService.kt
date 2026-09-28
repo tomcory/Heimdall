@@ -203,6 +203,7 @@ class HeimdallVpnService : VpnService() {
 
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
+        val trustAllUpstreamCertificates = preferences.mitmTrustAllUpstreamCerts.first()
 
         Timber.d("MitM mode: $doMitm")
 
@@ -222,6 +223,7 @@ class HeimdallVpnService : VpnService() {
                 context = this,
                 appFinder = AppFinder(this),
                 doMitm = doMitm,
+                trustAllUpstreamCertificates = trustAllUpstreamCertificates,
                 existingSessionId = existingSessionId,
                 keyStoreDir = File(this.filesDir, "keystore"),
                 protectDatagramSocket = { socket -> protect(socket) },

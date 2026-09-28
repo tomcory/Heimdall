@@ -40,6 +40,7 @@ class PreferencesDataSource @Inject constructor(
     val mitmBlacklistApps: Flow<List<String>> = datastore.data.map { it.mitmBlacklistAppsList }
     val mitmWhitelistHosts: Flow<List<String>> = datastore.data.map { it.mitmWhitelistHostsList }
     val mitmBlacklistHosts: Flow<List<String>> = datastore.data.map { it.mitmBlacklistHostsList }
+    val mitmTrustAllUpstreamCerts: Flow<Boolean> = datastore.data.map { it.mitmTrustAllUpstreamCerts }
 
     val libraryActive: Flow<Boolean> = datastore.data.map { it.libraryActive }
     val libraryOnInstall: Flow<Boolean> = datastore.data.map { it.libraryOnInstall }
@@ -161,6 +162,12 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setMitmCaCertPath(mitmCaCertPath: String) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setMitmCaCertPath(mitmCaCertPath).build()
+        }
+    }
+
+    suspend fun setMitmTrustAllUpstreamCerts(mitmTrustAllUpstreamCerts: Boolean) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setMitmTrustAllUpstreamCerts(mitmTrustAllUpstreamCerts).build()
         }
     }
 

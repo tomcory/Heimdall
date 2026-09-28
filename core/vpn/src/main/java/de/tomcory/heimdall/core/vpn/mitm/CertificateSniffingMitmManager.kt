@@ -10,11 +10,11 @@ import javax.net.ssl.SSLSocket
  * MitmManager that uses the common name and subject alternative names
  * from the upstream certificate to create a dynamic certificate with it.
  */
-class CertificateSniffingMitmManager(authority: Authority?) {
+class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boolean = false) {
 
     private var sslEngineSource: SSLEngineSource? = try {
         if (authority != null) {
-            SSLEngineSource(authority, trustAllServers = true, sendCerts = true)
+            SSLEngineSource(authority, trustAllServers = trustAllServers, sendCerts = true)
         } else {
             null
         }

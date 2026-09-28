@@ -96,4 +96,9 @@ message Preferences {
   bool traffic_retention_enabled = 46;
   TrafficRetentionUnit traffic_retention_unit = 47;
   int32 traffic_retention_value = 48;
+
+  // ---- MITM PREFERENCES (continued; see also fields 12-20 above)
+  // whether the MitM proxy validates the real upstream server's TLS certificate against the
+  // system/user trust store (false, the default) or trusts any certificate (true)
+  bool mitm_trust_all_upstream_certs = 49;
 }

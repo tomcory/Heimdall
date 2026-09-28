@@ -45,6 +45,7 @@ class ComponentManager(
     val context: Context?,
     existingSessionId: Long = -1,
     val doMitm: Boolean = false,
+    val trustAllUpstreamCertificates: Boolean = false,
     keyStoreDir: File,
     val appFinder: AppFinder,
     val maxPacketSize: Int = 16413,
@@ -74,7 +75,7 @@ class ComponentManager(
 
     // set up the man-in-the-middle manager
     private val authority = Authority.getDefaultInstance(keyStoreDir)
-    val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority)
+    val mitmManager: CertificateSniffingMitmManager = CertificateSniffingMitmManager(authority, trustAllUpstreamCertificates)
 
     // set up the NIO selector that is used to poll the outgoing sockets for incoming packets
     val selector: Selector = try {

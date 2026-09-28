@@ -32,6 +32,7 @@ object PreferencesSerializer : Serializer<Preferences> {
         .addAllMitmBlacklistApps(initialValues.mitmBlacklistAppsInitial)
         .addAllMitmWhitelistHosts(initialValues.mitmWhitelistHostsInitial)
         .addAllMitmBlacklistHosts(initialValues.mitmBlacklistHostsInitial)
+        .setMitmTrustAllUpstreamCerts(initialValues.mitmTrustAllUpstreamCertsInitial)
 
         .setLibraryActive(initialValues.libraryActiveInitial)
         .setLibraryOnInstall(initialValues.libraryOnInstallInitial)

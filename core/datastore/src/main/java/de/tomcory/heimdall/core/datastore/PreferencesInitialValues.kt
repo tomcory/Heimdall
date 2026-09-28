@@ -27,6 +27,9 @@ data class PreferencesInitialValues(
     val mitmBlacklistAppsInitial: List<String> = listOf(),
     val mitmWhitelistHostsInitial: List<String> = listOf(),
     val mitmBlacklistHostsInitial: List<String> = listOf(),
+    // strict by default: the MitM proxy validates the real upstream server's TLS certificate
+    // against the system/user trust store, rather than trusting any certificate
+    val mitmTrustAllUpstreamCertsInitial: Boolean = false,
 
     val libraryActiveInitial: Boolean = true,
     val libraryOnInstallInitial: Boolean = true,

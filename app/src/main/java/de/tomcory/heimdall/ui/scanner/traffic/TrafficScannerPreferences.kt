@@ -100,6 +100,12 @@ fun MitMPreferences(
             onValueChange = { value -> viewModel.preferences.setMitmAppLayerPassthrough(value) }
         )
 
+        BooleanPreference(
+            text = "Trust all upstream TLS certificates",
+            value = viewModel.preferences.mitmTrustAllUpstreamCerts.collectAsState(initial = viewModel.prefInit.mitmTrustAllUpstreamCertsInitial).value,
+            onValueChange = { value -> viewModel.preferences.setMitmTrustAllUpstreamCerts(value) }
+        )
+
         MonitoringScopePreference(
             text = "Monitoring scope (apps)",
             dialogText = "Monitoring scope (apps)",
