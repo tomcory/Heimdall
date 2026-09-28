@@ -6,6 +6,7 @@ import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerCo
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import io.mockk.*
+import kotlinx.coroutines.delay
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -239,6 +240,122 @@ class HttpParsingTest {
                 content = responseBody,
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-17 (V-18, V-20): per-direction reassembly state
+    // and request/response correlation
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `inbound response interleaved between two halves of an outbound request body does not corrupt either`() {
+        // a first, complete request/response pair establishes a pending request to correlate
+        // the interleaved response against (a response needs a request that was actually sent)
+        httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(200)
+
+        val requestBody = "name=Alice&age=30&extra=data"
+        val firstHalf = requestBody.substring(0, 10)
+        val secondHalf = requestBody.substring(10)
+
+        // headers + only the first half of a second request's body - Content-Length names the
+        // *full* body, so this leaves the outbound side mid-way through its overflow reassembly
+        httpConnection.unwrapOutbound(
+            "POST /submit HTTP/1.1\r\nHost: example.com\r\nContent-Length: ${requestBody.length}\r\n\r\n$firstHalf".toByteArray()
+        )
+        Thread.sleep(200)
+        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+
+        // the first request's response arrives while the second (POST) request is still
+        // mid-body - with shared reassembly state this used to be misread as a continuation of
+        // the outbound overflow instead of a brand new inbound message
+        val responseBody = "OK"
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: ${responseBody.length}\r\n\r\n$responseBody".toByteArray())
+        Thread.sleep(500)
+
+        coVerify {
+            connector.persistHttpResponse(
+                content = responseBody,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+
+        // complete the still-in-flight outbound request body - must still resolve to the full,
+        // uncorrupted body despite the inbound response that arrived in the middle of it
+        httpConnection.unwrapOutbound(secondHalf.toByteArray())
+        Thread.sleep(500)
+
+        coVerify {
+            connector.persistHttpRequest(
+                content = requestBody,
+                contentLength = requestBody.length,
+                method = "POST",
+                remotePath = "/submit",
+                connectionId = any(), timestamp = any(), headers = any(),
+                remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    @Test
+    fun `two pipelined requests correlate with responses in the right order`() {
+        // the first request's persist deliberately finishes *after* the second's, so a
+        // correlation scheme relying on persist-completion order instead of wire order would
+        // pair the responses with the wrong requests
+        coEvery {
+            connector.persistHttpRequest(
+                remotePath = "/first",
+                connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
+                method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        } coAnswers {
+            delay(300)
+            101L
+        }
+        coEvery {
+            connector.persistHttpRequest(
+                remotePath = "/second",
+                connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
+                method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        } returns 202L
+
+        // two requests pipelined back-to-back, before either response arrives
+        httpConnection.unwrapOutbound("GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        httpConnection.unwrapOutbound("GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(600)
+
+        coVerify(exactly = 2) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+
+        // responses arrive in the same order the requests were sent
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".toByteArray())
+        httpConnection.unwrapInbound("HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        coVerify {
+            connector.persistHttpResponse(
+                requestId = 101L,
+                statusCode = 200,
+                connectionId = any(), timestamp = any(), headers = any(), content = any(),
+                contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+        coVerify {
+            connector.persistHttpResponse(
+                requestId = 202L,
+                statusCode = 201,
+                connectionId = any(), timestamp = any(), headers = any(), content = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
                 remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
             )
