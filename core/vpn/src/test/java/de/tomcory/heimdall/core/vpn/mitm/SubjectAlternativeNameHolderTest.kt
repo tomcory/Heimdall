@@ -120,4 +120,79 @@ class SubjectAlternativeNameHolderTest {
         assertTrue(dnsNames.any { it.contains("www.example.com") })
         assertTrue(ipNames.isNotEmpty())
     }
+
+    // -----------------------------------------------------------------------
+    // addAll (docs/vpn-mitm-audit.md PKT-11, V-06): entries whose value the JDK returns as a
+    // byte[] (rather than a String) must be skipped, not forwarded as garbage via toString().
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `addAll skips a byte-array-valued entry (otherName) without throwing`() {
+        val builder = buildCertWithHolder {
+            addAll(listOf(
+                listOf(GeneralName.otherName, byteArrayOf(0x01, 0x02, 0x03)),
+                listOf(GeneralName.dNSName, "example.com")
+            ))
+        }
+        val sans = signAndExtractSANs(builder)
+
+        assertNotNull(sans)
+        // only the valid dNSName entry should have made it through
+        assertEquals(1, sans!!.size)
+        assertTrue(sans.any { it[0] == GeneralName.dNSName && (it[1] as String).contains("example.com") })
+    }
+
+    @Test
+    fun `addAll skips every documented byte-array-valued GeneralName type`() {
+        val byteArrayTaggedTypes = listOf(
+            GeneralName.otherName,
+            GeneralName.x400Address,
+            GeneralName.ediPartyName,
+            GeneralName.registeredID
+        )
+        val builder = buildCertWithHolder {
+            addAll(byteArrayTaggedTypes.map { tag -> listOf(tag, byteArrayOf(0x01, 0x02)) })
+        }
+        val sans = signAndExtractSANs(builder)
+
+        assertTrue("expected no SAN extension since every entry should have been skipped", sans.isNullOrEmpty())
+    }
+
+    @Test
+    fun `addAll skips directoryName even though the JDK returns it as a String`() {
+        val builder = buildCertWithHolder {
+            addAll(listOf(listOf(GeneralName.directoryName, "CN=Example,O=ExampleOrg")))
+        }
+        val sans = signAndExtractSANs(builder)
+
+        assertTrue(sans.isNullOrEmpty())
+    }
+
+    @Test
+    fun `addAll accepts the four String-typed GeneralName types it forwards`() {
+        val builder = buildCertWithHolder {
+            addAll(listOf(
+                listOf(GeneralName.rfc822Name, "user@example.com"),
+                listOf(GeneralName.dNSName, "example.com"),
+                listOf(GeneralName.uniformResourceIdentifier, "https://example.com"),
+                listOf(GeneralName.iPAddress, "1.2.3.4")
+            ))
+        }
+        val sans = signAndExtractSANs(builder)
+
+        assertNotNull(sans)
+        assertEquals(4, sans!!.size)
+        assertTrue(sans.any { it[0] == GeneralName.rfc822Name })
+        assertTrue(sans.any { it[0] == GeneralName.dNSName })
+        assertTrue(sans.any { it[0] == GeneralName.uniformResourceIdentifier })
+        assertTrue(sans.any { it[0] == GeneralName.iPAddress })
+    }
+
+    @Test
+    fun `addAll with null collection is silently ignored`() {
+        val builder = buildCertWithHolder { addAll(null) }
+        val sans = signAndExtractSANs(builder)
+
+        assertTrue(sans.isNullOrEmpty())
+    }
 }
