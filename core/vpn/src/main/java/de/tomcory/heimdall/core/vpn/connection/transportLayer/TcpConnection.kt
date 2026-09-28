@@ -22,6 +22,7 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
 import java.util.Arrays
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Represents a transport-layer connection using TCP.
@@ -49,8 +50,14 @@ class TcpConnection internal constructor(
     private val window = initialPacket.header.window
     private val theirInitSeqNum = initialPacket.header.sequenceNumberAsLong
     private val ourInitSeqNum = (Math.random() * 0xFFFFFFF).toLong()
-    private var theirSeqNum = theirInitSeqNum + 1 // SYN packets increase the client's sequence number by 1
-    private var ourSeqNum = ourInitSeqNum
+
+    // ourSeqNum is advanced both by the InboundTrafficHandler-driven data path (wrapInbound) and
+    // by the OutboundTrafficHandler-driven close path (handleFin, on a device-initiated close) -
+    // a genuine cross-thread read-modify-write, so a plain Long isn't safe here. theirSeqNum only
+    // has one writer thread in practice, but is read from both, so it gets the same treatment for
+    // consistency and to avoid relying on that asymmetry staying true.
+    private val theirSeqNum = AtomicLong(theirInitSeqNum + 1) // SYN packets increase the client's sequence number by 1
+    private val ourSeqNum = AtomicLong(ourInitSeqNum)
 
     /** The FIN-ACK segment sent to start our side of the closing handshake, cached so a retransmitted FIN from the device can be answered with the exact same segment instead of one built from an already-advanced sequence number. */
     private var pendingFinAck: IpPacket? = null
@@ -455,14 +462,14 @@ class TcpConnection internal constructor(
      * Increases the client-side sequence number by the supplied amount.
      */
     private fun increaseTheirSeqNum(increase: Int) {
-        theirSeqNum += increase.toLong()
+        theirSeqNum.addAndGet(increase.toLong())
     }
 
     /**
      * Increases the server-side sequence number by the supplied amount.
      */
     private fun increaseOurSeqNum(increase: Int) {
-        ourSeqNum += increase.toLong()
+        ourSeqNum.addAndGet(increase.toLong())
     }
 
     override fun buildPayload(rawPayload: ByteArray): TcpPacket.Builder {
@@ -478,8 +485,8 @@ class TcpConnection internal constructor(
             .dstAddr(ipPacketBuilder.localAddress)
             .srcPort(TcpPort(remotePort.toShort(), ""))
             .dstPort(TcpPort(localPort.toShort(), ""))
-            .sequenceNumber(ourSeqNum.toInt())
-            .acknowledgmentNumber(theirSeqNum.toInt())
+            .sequenceNumber(ourSeqNum.get().toInt())
+            .acknowledgmentNumber(theirSeqNum.get().toInt())
             .dataOffset(5.toByte())
             .reserved(0.toByte())
             .urg(urg)

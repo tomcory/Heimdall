@@ -101,8 +101,12 @@ abstract class TransportLayerConnection protected constructor(
     abstract val appPackage: String?
 
     /**
-     * Indicates the connection's state.
+     * Indicates the connection's state. Read and (for TCP) written from both the
+     * InboundTrafficHandler and OutboundTrafficHandler threads for the same connection (e.g. a
+     * remote-initiated close and a device-initiated close can race), so this needs to be
+     * [Volatile] for writes on one thread to be reliably visible to reads on the other.
      */
+    @Volatile
     var state: TransportLayerState = TransportLayerState.CONNECTING
         protected set
 
