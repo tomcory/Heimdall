@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Legacy (pre-Android 12 / API < 31) Auto Backup rules. Excludes the directory holding the
+    MitM CA keystore (context.filesDir/keystore/, see Authority.kt / HeimdallVpnService.kt) so
+    the CA's private key and its keystore password are never included in an adb/cloud backup.
+-->
+<full-backup-content>
+    <exclude domain="file" path="keystore/" />
+</full-backup-content>

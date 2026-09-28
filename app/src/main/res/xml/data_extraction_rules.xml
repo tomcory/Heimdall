@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 12+ (API 31+) backup/transfer rules. Excludes the directory holding the MitM CA
+    keystore (context.filesDir/keystore/, see Authority.kt / HeimdallVpnService.kt) from both
+    cloud backup and device-to-device transfer, so the CA's private key and its keystore
+    password never leave the device via these channels.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="keystore/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="keystore/" />
+    </device-transfer>
+</data-extraction-rules>
