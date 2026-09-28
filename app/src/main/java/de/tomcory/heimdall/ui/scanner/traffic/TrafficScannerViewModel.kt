@@ -173,7 +173,7 @@ class TrafficScannerViewModel @Inject constructor(
         val doMitm = mode == VpnMode.MITM_VPN
         val sessionId = persistSession(System.currentTimeMillis())
         _currentSessionId.value = sessionId
-        if (launchVpn(context) != null) {
+        if (launchVpn(context, sessionId) != null) {
             repository.preferences.setVpnActive(true)
             repository.preferences.setVpnLastUpdated(System.currentTimeMillis())
             _vpnMode.value = mode
@@ -188,10 +188,11 @@ class TrafficScannerViewModel @Inject constructor(
         _scanSetup.emit(false)
     }
 
-    private fun launchVpn(context: Context): ComponentName? {
+    private fun launchVpn(context: Context, sessionId: Long): ComponentName? {
         return context.startService(
             Intent(context, HeimdallVpnService::class.java)
                 .putExtra(HeimdallVpnService.VPN_ACTION, HeimdallVpnService.START_SERVICE)
+                .putExtra(HeimdallVpnService.SESSION_ID_EXTRA, sessionId)
         )
     }
 

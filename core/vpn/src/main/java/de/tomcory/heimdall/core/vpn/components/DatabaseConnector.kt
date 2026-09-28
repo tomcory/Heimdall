@@ -31,6 +31,16 @@ interface DatabaseConnector {
         id: Long
     ): Int
 
+    suspend fun updateConnectionBytesOut(
+        id: Long,
+        delta: Int
+    )
+
+    suspend fun updateConnectionBytesIn(
+        id: Long,
+        delta: Int
+    )
+
     suspend fun persistHttpRequest(
         connectionId: Long,
         timestamp: Long,

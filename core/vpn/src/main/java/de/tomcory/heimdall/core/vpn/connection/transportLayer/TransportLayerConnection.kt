@@ -6,6 +6,9 @@ import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
@@ -157,6 +160,30 @@ abstract class TransportLayerConnection protected constructor(
     protected fun deleteDatabaseEntity() {
         runBlocking {
             componentManager.databaseConnector.deleteTransportLayerConnection(id)
+        }
+    }
+
+    /**
+     * Records [delta] bytes sent from the device out to the remote host by asynchronously
+     * updating the connection's persisted bytesOut counter.
+     */
+    protected fun recordBytesOut(delta: Int) {
+        if (delta > 0 && id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.updateConnectionBytesOut(id, delta)
+            }
+        }
+    }
+
+    /**
+     * Records [delta] bytes received from the remote host by asynchronously updating the
+     * connection's persisted bytesIn counter.
+     */
+    protected fun recordBytesIn(delta: Int) {
+        if (delta > 0 && id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.updateConnectionBytesIn(id, delta)
+            }
         }
     }
 

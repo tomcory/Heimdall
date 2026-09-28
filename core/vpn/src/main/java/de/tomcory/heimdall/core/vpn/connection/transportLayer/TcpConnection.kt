@@ -184,23 +184,26 @@ class TcpConnection internal constructor(
                 outBuffer.put(payload)
                 outBuffer.flip()
 
+                var bytesWritten = 0
                 while (outBuffer.hasRemaining()) {
                     try {
-                        selectableChannel.write(outBuffer)
+                        bytesWritten += selectableChannel.write(outBuffer)
                     } catch (e: Exception) {
                         Timber.e("tcp$id Error writing to SocketChannel (${e.javaClass}, closing connection")
                         closeHard()
                         break
                     }
                 }
+                recordBytesOut(bytesWritten)
             } else {
 
                 //TODO: this is a dirty hack to prevent buffer overflows for stupidly large reassembled payloads
                 val largeBuffer = ByteBuffer.wrap(payload)
 
+                var bytesWritten = 0
                 while (largeBuffer.hasRemaining()) {
                     try {
-                        selectableChannel.write(largeBuffer)
+                        bytesWritten += selectableChannel.write(largeBuffer)
                     } catch (e: IOException) {
                         Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
                         Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
@@ -212,6 +215,7 @@ class TcpConnection internal constructor(
                         break
                     }
                 }
+                recordBytesOut(bytesWritten)
             }
         }
     }
@@ -319,12 +323,14 @@ class TcpConnection internal constructor(
     private fun unwrapInboundReadable() {
         // OP_READ event triggered
         var bytesRead: Int
+        var totalBytesRead = 0
         do {
             try {
                 // read and forward the incoming data chunk by chunk (i.e. loop as long as data is read)
                 inBuffer.clear()
                 bytesRead = selectableChannel.read(inBuffer)
                 if (bytesRead > 0) {
+                    totalBytesRead += bytesRead
                     inBuffer.flip()
                     val rawData = Arrays.copyOf(inBuffer.array(), bytesRead)
 
@@ -335,6 +341,8 @@ class TcpConnection internal constructor(
                 bytesRead = -1
             }
         } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
+
+        recordBytesIn(totalBytesRead)
 
         // SocketChannel is closed
         if (bytesRead == -1) {

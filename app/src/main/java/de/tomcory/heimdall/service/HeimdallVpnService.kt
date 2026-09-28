@@ -77,7 +77,7 @@ class HeimdallVpnService : VpnService() {
      * @see [STOP_SERVICE]
      */
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        val existingSessionId = intent.getLongExtra("de.tomcory.heimdall.core.vpn.SESSION_ID", -1)
+        val existingSessionId = intent.getLongExtra(SESSION_ID_EXTRA, -1)
 
         return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
 
@@ -484,6 +484,14 @@ class HeimdallVpnService : VpnService() {
          * Intent extra code for stopping the VPN service.
          */
         const val STOP_SERVICE = 1
+
+        /**
+         * Intent extra key carrying the id of the [de.tomcory.heimdall.core.database.entity.Session]
+         * row the caller already persisted (e.g. [de.tomcory.heimdall.ui.scanner.traffic.TrafficScannerViewModel]),
+         * so [ComponentManager][de.tomcory.heimdall.core.vpn.components.ComponentManager] reuses it
+         * instead of creating a second, disconnected session that nothing observes.
+         */
+        const val SESSION_ID_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_ID"
 
         /**
          * Notification ID for the foreground notification.

@@ -18,7 +18,9 @@ data class RecordedConnection(
     val remoteIp: String,
     val remotePort: Int,
     val isTracker: Boolean,
-    @Volatile var deleted: Boolean = false
+    @Volatile var deleted: Boolean = false,
+    @Volatile var bytesOut: Long = 0,
+    @Volatile var bytesIn: Long = 0
 )
 
 data class RecordedRequest(
@@ -121,6 +123,14 @@ class RecordingDatabaseConnector : DatabaseConnector {
     override suspend fun deleteTransportLayerConnection(id: Long): Int {
         connections.find { it.id == id }?.deleted = true
         return id.toInt()
+    }
+
+    override suspend fun updateConnectionBytesOut(id: Long, delta: Int) {
+        connections.find { it.id == id }?.let { it.bytesOut += delta }
+    }
+
+    override suspend fun updateConnectionBytesIn(id: Long, delta: Int) {
+        connections.find { it.id == id }?.let { it.bytesIn += delta }
     }
 
     override suspend fun persistHttpRequest(

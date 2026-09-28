@@ -75,6 +75,22 @@ class RoomDatabaseConnector(
         }
     }
 
+    override suspend fun updateConnectionBytesOut(id: Long, delta: Int) {
+        try {
+            database.connectionDao().updateBytesOut(id, delta)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while updating connection bytesOut (cID: $id)")
+        }
+    }
+
+    override suspend fun updateConnectionBytesIn(id: Long, delta: Int) {
+        try {
+            database.connectionDao().updateBytesIn(id, delta)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while updating connection bytesIn (cID: $id)")
+        }
+    }
+
     override suspend fun persistHttpRequest(
         connectionId: Long,
         timestamp: Long,

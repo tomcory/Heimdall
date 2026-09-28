@@ -138,9 +138,10 @@ class UdpConnection internal constructor(
             outBuffer.clear()
             outBuffer.put(payload)
             outBuffer.flip()
+            var bytesWritten = 0
             while (outBuffer.hasRemaining()) {
                 try {
-                    selectableChannel.write(outBuffer)
+                    bytesWritten += selectableChannel.write(outBuffer)
                 } catch (e: IOException) {
                     Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
                     closeHard()
@@ -151,6 +152,7 @@ class UdpConnection internal constructor(
                     break
                 }
             }
+            recordBytesOut(bytesWritten)
         }
     }
 
@@ -180,12 +182,14 @@ class UdpConnection internal constructor(
 
         if (selectionKey.isReadable) {
             var bytesRead: Int
+            var totalBytesRead = 0
             do {
                 try {
                     // read and forward the incoming data chunk by chunk
                     inBuffer.clear()
                     bytesRead = selectableChannel.read(inBuffer)
                     if (bytesRead > 0) {
+                        totalBytesRead += bytesRead
                         inBuffer.flip()
                         val rawData = Arrays.copyOf(inBuffer.array(), bytesRead)
 
@@ -197,6 +201,8 @@ class UdpConnection internal constructor(
                     bytesRead = -1
                 }
             } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
+
+            recordBytesIn(totalBytesRead)
 
             // no need to keep DNS connections open after the first and only packet
             if (remotePort == 53) {
