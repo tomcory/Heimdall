@@ -159,6 +159,34 @@ class HttpParsingTest {
         }
     }
 
+    @Test
+    fun `chunk data containing an embedded CRLF is dechunked without truncation`() {
+        // docs/vpn-mitm-audit.md PKT-18 (V-19): dechunkHttpMessage used to split the whole
+        // chunked body on every literal CRLF, desyncing as soon as a chunk's own data contained
+        // one - a multi-line body (e.g. JSON) is a routine case, not an edge case
+        val chunkData = "line1\r\nline2"
+        val chunkSizeHex = chunkData.toByteArray(Charsets.UTF_8).size.toString(16)
+
+        httpConnection.unwrapOutbound(
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n$chunkSizeHex\r\n$chunkData\r\n".toByteArray()
+        )
+        Thread.sleep(200)
+        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+
+        httpConnection.unwrapOutbound("0\r\n".toByteArray())
+        Thread.sleep(500)
+
+        coVerify {
+            connector.persistHttpRequest(
+                content = chunkData,
+                method = "POST",
+                connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
+                remoteHost = any(), remotePath = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Response parsing
     // -----------------------------------------------------------------------

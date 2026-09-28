@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.pcap4j.packet.Packet
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentLinkedDeque
 
 class HttpConnection(
@@ -330,10 +331,9 @@ class HttpConnection(
     }
 
     private fun dechunkHttpMessage(chunkedMessage: ByteArray): String {
-        val chunkedMessageStr = String(chunkedMessage, Charsets.UTF_8)
-
-        val rawHeadersIndex = chunkedMessageStr.indexOf("\r\n")
-        val rawChunkedBodyIndex = chunkedMessageStr.indexOf("\r\n\r\n")
+        // headers are plain ASCII, so locating the CRLF/double-CRLF markers byte-for-byte is safe
+        val rawHeadersIndex = indexOfBytes(chunkedMessage, CRLF)
+        val rawChunkedBodyIndex = indexOfBytes(chunkedMessage, DOUBLE_CRLF)
 
         if(rawHeadersIndex < 0) {
             Timber.e("http$id dechunkHttpMessage Invalid HTTP message, no headers found")
@@ -346,33 +346,66 @@ class HttpConnection(
         }
 
         val chunkedBodyIndex = rawChunkedBodyIndex + 4
-        val statusAndHeaders = chunkedMessageStr.substring(0, chunkedBodyIndex)
-        val chunkedBody = chunkedMessageStr.substring(chunkedBodyIndex)
+        val statusAndHeaders = String(chunkedMessage, 0, chunkedBodyIndex, Charsets.UTF_8)
 
-        val chunks = chunkedBody.split("\r\n")
-        val dechunkedBody = StringBuilder()
+        // walk the body using each chunk's *declared* byte count, rather than splitting the
+        // whole body on every CRLF - a chunk's data can legitimately contain its own CRLFs
+        // (e.g. a multi-line text/JSON chunk), which would otherwise desync the parser
+        val dechunkedBody = ByteArrayOutputStream()
+        var offset = chunkedBodyIndex
 
-        var i = 0
-        while (i < chunks.size) {
-            // Chunks are in format: <chunk size in hex>\r\n<chunk data>\r\n
-            val chunkSize = chunks[i++].toIntOrNull(16)
+        while (offset < chunkedMessage.size) {
+            val sizeLineEnd = indexOfBytes(chunkedMessage, CRLF, offset)
+            if (sizeLineEnd < 0) {
+                Timber.e("http$id dechunkHttpMessage: missing CRLF after chunk size")
+                break
+            }
+
+            // a chunk-size line may carry "; chunk-extension" after the size - ignore it
+            val sizeLine = String(chunkedMessage, offset, sizeLineEnd - offset, Charsets.US_ASCII)
+                .substringBefore(';').trim()
+            val chunkSize = sizeLine.toIntOrNull(16)
             if (chunkSize == null) {
-                Timber.e("http$id dechunkHttpMessage: invalid chunk size '${chunks[i - 1]}'")
+                Timber.e("http$id dechunkHttpMessage: invalid chunk size '$sizeLine'")
                 break
             }
             if (chunkSize == 0) {
-                // This is the last chunk
-                break
-            }
-            if (i >= chunks.size) {
-                Timber.e("http$id dechunkHttpMessage: missing chunk data after size header")
+                // this is the last chunk
                 break
             }
 
-            dechunkedBody.append(chunks[i++])
+            val dataStart = sizeLineEnd + 2
+            val dataEnd = dataStart + chunkSize
+            if (dataEnd > chunkedMessage.size) {
+                Timber.e("http$id dechunkHttpMessage: declared chunk size exceeds available data")
+                break
+            }
+
+            dechunkedBody.write(chunkedMessage, dataStart, chunkSize)
+
+            // each chunk's data is followed by its own trailing CRLF before the next chunk-size line
+            offset = dataEnd + 2
         }
 
-        return "$statusAndHeaders$dechunkedBody"
+        return statusAndHeaders + dechunkedBody.toByteArray().toString(Charsets.UTF_8)
+    }
+
+    /** Index of the first occurrence of [needle] in [haystack] at or after [from], or -1. */
+    private fun indexOfBytes(haystack: ByteArray, needle: ByteArray, from: Int = 0): Int {
+        val limit = haystack.size - needle.size
+        var i = from.coerceAtLeast(0)
+        while (i <= limit) {
+            var matched = true
+            for (j in needle.indices) {
+                if (haystack[i + j] != needle[j]) {
+                    matched = false
+                    break
+                }
+            }
+            if (matched) return i
+            i++
+        }
+        return -1
     }
 
     private fun combineChunks(state: ReassemblyState): ByteArray {
@@ -396,5 +429,8 @@ class HttpConnection(
          * can't leave a response coroutine suspended forever.
          */
         private const val REQUEST_CORRELATION_TIMEOUT_MS = 30_000L
+
+        private val CRLF = "\r\n".toByteArray(Charsets.US_ASCII)
+        private val DOUBLE_CRLF = "\r\n\r\n".toByteArray(Charsets.US_ASCII)
     }
 }
