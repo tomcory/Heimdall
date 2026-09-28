@@ -41,7 +41,7 @@ abstract class AppLayerConnection(
                     RawConnection(id, encryptionLayer, componentManager)
                 } else if(encryptionLayer.transportLayer.remotePort == 53) {
                     DnsConnection(id, encryptionLayer, componentManager)
-                } else if(payload.size > 7 && HTTP_KEYWORDS.any { String(payload.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
+                } else if(payload.size > 7 && HTTP_KEYWORDS.any { String(payload.sliceArray(0 until minOf(11, payload.size)), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)
                 } else {
                     RawConnection(id, encryptionLayer, componentManager)
@@ -66,7 +66,7 @@ abstract class AppLayerConnection(
                     RawConnection(id, encryptionLayer, componentManager)
                 } else if(packet is DnsPacket) {
                     DnsConnection(id, encryptionLayer, componentManager)
-                } else if(packet.rawData.size > 7 && HTTP_KEYWORDS.any { String(packet.rawData.sliceArray(0..10), Charsets.UTF_8).contains(it) }) {
+                } else if(packet.rawData.size > 7 && HTTP_KEYWORDS.any { String(packet.rawData.sliceArray(0 until minOf(11, packet.rawData.size)), Charsets.UTF_8).contains(it) }) {
                     HttpConnection(id, encryptionLayer, componentManager)
                 } else {
                     RawConnection(id, encryptionLayer, componentManager)

@@ -141,23 +141,24 @@ abstract class EncryptionLayerConnection(
 
         internal fun detectTls(rawPayload: ByteArray): Boolean {
             return rawPayload[0].toInt() == 0x16
-                    && rawPayload.size > 6
+                    && rawPayload.size > 5
                     && rawPayload[5].toInt() == 1
         }
 
         internal fun detectQuic(rawPayload: ByteArray): Boolean {
-            if(rawPayload.isNotEmpty()) {
+            if(rawPayload.size >= 5) {
                 val firstByte = rawPayload[0].toUByte().toInt()
-                if((firstByte and 0x80) != 0 && (firstByte and 0x40) != 0 && rawPayload.size >= 5) {
-                    // long header
-                    val version = rawPayload[1].toUByte().toInt() shl 24 or
-                            rawPayload[2].toUByte().toInt() shl 16 or
-                            rawPayload[3].toUByte().toInt() shl 8 or
-                            rawPayload[4].toUByte().toInt()
-                    if (version == 1 || version == 0) {
-                        return true
-                    }
-                }
+                // header form (0x80) + fixed bit (0x40) identify any QUIC long-header packet,
+                // regardless of version. QuicConnection never actually attempts MITM (doMitm is
+                // unconditionally false there and data is passed straight through unmodified), so
+                // there's nothing to gain from parsing the version field further - only from
+                // recognising the packet as QUIC instead of misclassifying it as plaintext.
+                // Requiring an exact version match (the previous behaviour) meant every QUIC
+                // version other than v1/version-negotiation fell through undetected, and the
+                // byte-combination expression that computed the version was itself broken:
+                // Kotlin's shl/or are equal-precedence, left-to-right infix operators, so
+                // "b1 shl 24 or b2 shl 16 or b3 shl 8 or b4" did not compute a real 32-bit value.
+                return (firstByte and 0x80) != 0 && (firstByte and 0x40) != 0
             }
             return false
         }
