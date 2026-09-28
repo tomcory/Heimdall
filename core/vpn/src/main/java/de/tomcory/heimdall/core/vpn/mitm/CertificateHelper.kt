@@ -312,14 +312,24 @@ object CertificateHelper {
         }
     }
 
+    /**
+     * Generates a 48-bit random certificate serial number using a CSPRNG. Deliberately not
+     * java.util.Random: a fresh instance seeded from System.currentTimeMillis() (as this used to
+     * do) is both guessable (an attacker who can estimate the issuance time can brute-force the
+     * millisecond-granularity seed of the underlying LCG) and collision-prone (two certs issued
+     * within the same millisecond - a realistic scenario when several HTTPS connections open
+     * concurrently - would get an identical serial, defeating the very purpose this method's
+     * comment describes).
+     */
     private fun initRandomSerial(): Long {
-        val rnd = Random()
-        rnd.setSeed(System.currentTimeMillis())
         // prevent browser certificate caches, cause of doubled serial numbers
         // using 48bit random number
-        var sl = rnd.nextInt().toLong() shl 32 or (rnd.nextInt().toLong() and 0xFFFFFFFFL)
-        // let reserve of 16 bit for increasing, serials have to be positive
-        sl = sl and 0x0000FFFFFFFFFFFFL
+        val bytes = ByteArray(6)
+        SecureRandom().nextBytes(bytes)
+        var sl = 0L
+        for (b in bytes) {
+            sl = (sl shl 8) or (b.toLong() and 0xFF)
+        }
         return sl
     }
 

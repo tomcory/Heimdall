@@ -150,4 +150,37 @@ class CertificateHelperTest {
         assertNotNull(ctx)
         dir.deleteRecursively()
     }
+
+    // -----------------------------------------------------------------------
+    // initRandomSerial (private; docs/vpn-mitm-audit.md PKT-08, V-03)
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `initRandomSerial produces distinct values across many rapid calls`() {
+        // regression guard: the old implementation seeded a fresh java.util.Random from
+        // System.currentTimeMillis() on every call, so calls made within the same millisecond
+        // (as these are) produced identical serial numbers
+        val method = CertificateHelper::class.java.getDeclaredMethod("initRandomSerial")
+        method.isAccessible = true
+
+        val serials = (1..10_000).map { method.invoke(CertificateHelper) as Long }
+
+        assertEquals(
+            "expected no duplicate serial numbers among rapidly-generated values",
+            serials.size,
+            serials.toSet().size
+        )
+    }
+
+    @Test
+    fun `initRandomSerial stays within the intended 48-bit, non-negative range`() {
+        val method = CertificateHelper::class.java.getDeclaredMethod("initRandomSerial")
+        method.isAccessible = true
+
+        repeat(1_000) {
+            val serial = method.invoke(CertificateHelper) as Long
+            assertTrue("serial must be non-negative: $serial", serial >= 0)
+            assertTrue("serial must fit in 48 bits: $serial", serial <= 0x0000FFFFFFFFFFFFL)
+        }
+    }
 }
