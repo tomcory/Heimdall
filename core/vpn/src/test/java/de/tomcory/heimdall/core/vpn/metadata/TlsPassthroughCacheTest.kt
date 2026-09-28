@@ -49,4 +49,33 @@ class TlsPassthroughCacheTest {
         assertTrue(cache.get(2000, "example.com"))
         assertFalse(cache.get(2000, "google.com"))
     }
+
+    @Test
+    fun `inserting more than maxSize evicts the oldest entries`() {
+        val bounded = TlsPassthroughCache(maxSize = 3)
+
+        bounded.put(1, "a.com")
+        bounded.put(2, "b.com")
+        bounded.put(3, "c.com")
+        bounded.put(4, "d.com")
+
+        assertFalse("oldest entry should have been evicted", bounded.get(1, "a.com"))
+        assertTrue(bounded.get(2, "b.com"))
+        assertTrue(bounded.get(3, "c.com"))
+        assertTrue(bounded.get(4, "d.com"))
+    }
+
+    @Test
+    fun `cache never grows past maxSize regardless of how many entries are inserted`() {
+        val bounded = TlsPassthroughCache(maxSize = 5)
+
+        for (i in 0 until 1000) {
+            bounded.put(i, "host$i.com")
+        }
+
+        val field = TlsPassthroughCache::class.java.getDeclaredField("cache")
+        field.isAccessible = true
+        val backingMap = field.get(bounded) as Map<*, *>
+        assertEquals(5, backingMap.size)
+    }
 }

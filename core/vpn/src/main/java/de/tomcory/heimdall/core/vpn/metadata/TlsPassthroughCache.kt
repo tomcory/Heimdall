@@ -5,25 +5,33 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
 
-class TlsPassthroughCache {
+class TlsPassthroughCache(
+    private val maxSize: Int = 1000
+) {
 
     init {
-        Timber.d("TlsPassthroughCache initialised")
+        Timber.d("TlsPassthroughCache initialised with maxSize=$maxSize")
     }
 
-    private val cache = HashSet<TlsPassthroughCacheEntry>()
+    private val cache = object : LinkedHashMap<TlsPassthroughCacheEntry, Boolean>(maxSize + 1, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<TlsPassthroughCacheEntry, Boolean>?): Boolean {
+            return size > maxSize
+        }
+    }
 
     private val lock = ReentrantReadWriteLock()
 
     fun put(initiator: Int, hostname: String) {
         lock.write {
-            cache.add(TlsPassthroughCacheEntry(initiator, hostname))
+            cache[TlsPassthroughCacheEntry(initiator, hostname)] = true
         }
     }
 
     fun get(initiator: Int, hostname: String): Boolean {
-        return lock.read {
-            cache.contains(TlsPassthroughCacheEntry(initiator, hostname))
+        // an access-order LinkedHashMap reorders its internal list on reads too (to track
+        // recency for eviction), so this needs the write lock just like put() does
+        return lock.write {
+            cache[TlsPassthroughCacheEntry(initiator, hostname)] != null
         }
     }
 }
