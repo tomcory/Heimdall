@@ -37,13 +37,18 @@ object KeyStoreHelper {
      * silently. Regeneration invalidates any copy of the CA certificate the user has already
      * installed on the device, so the caller should prompt them to reinstall it when this
      * happens (see [Timber.w] calls below for the specific condition).
+     *
+     * Reuse is decided from the `.p12` keystore alone - a missing `.pem` export (the keystore's
+     * certificate re-exported for the user to install) is *not* treated as a reason to
+     * regenerate; it's simply re-derived from the still-valid keystore instead, since the `.pem`
+     * is a derived artifact that can go missing independently of the keystore itself.
      */
     @Throws(GeneralSecurityException::class, OperatorCreationException::class, IOException::class)
     fun initialiseOrLoadKeyStore(
         authority: Authority
     ): KeyStore {
 
-        val existing = if (authority.aliasFile(KEY_STORE_FILE_EXTENSION).exists() && authority.aliasFile(".pem").exists()) {
+        val existing = if (authority.aliasFile(KEY_STORE_FILE_EXTENSION).exists()) {
             loadIfValid(authority)
         } else {
             null
@@ -92,6 +97,16 @@ object KeyStoreHelper {
         return try {
             cert.checkValidity(Date())
             Timber.d("Loaded existing root certificate authority key store")
+
+            // the .pem export is derived from the keystore and can go missing independently of
+            // it (e.g. storage cleanup, a partial write) - re-export it here instead of treating
+            // its absence as a reason to regenerate the whole CA, which would invalidate any copy
+            // of the CA certificate the user has already installed on the device
+            if (!authority.aliasFile(".pem").exists()) {
+                Timber.d("Root CA .pem export missing for alias ${authority.alias}, re-exporting it from the existing keystore")
+                exportPem(authority.aliasFile(".pem"), cert)
+            }
+
             keyStore
         } catch (e: CertificateExpiredException) {
             Timber.w(e, "Root CA certificate for alias ${authority.alias} expired on ${cert.notAfter} - regenerating. The user will need to reinstall the new CA certificate for MitM inspection to keep working.")

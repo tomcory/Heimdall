@@ -8,6 +8,7 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -150,6 +151,39 @@ class KeyStoreHelperTest {
             resultCert.checkValidity() // must not throw
             assertTrue("expected the keystore file to have been written", authority.aliasFile(keyStoreExtension).exists())
             assertTrue("expected the .pem export to have been written", authority.aliasFile(".pem").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a missing pem export is re-derived from the existing keystore, not treated as a reason to regenerate`() {
+        val dir = createTempDir()
+        try {
+            val authority = Authority.getDefaultInstance(dir)
+
+            // first call creates a fresh, valid keystore + its .pem export
+            val first = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+            val firstCert = first.getCertificate(authority.alias) as X509Certificate
+            assertTrue("expected the .pem export to exist after the first call", authority.aliasFile(".pem").exists())
+
+            // delete only the .pem export, leaving the .p12 keystore itself intact
+            assertTrue("failed to delete the .pem export for the test setup", authority.aliasFile(".pem").delete())
+
+            val second = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+            val secondCert = second.getCertificate(authority.alias) as X509Certificate
+
+            assertEquals(
+                "expected the same CA certificate (same serial) to be reused, not regenerated",
+                firstCert.serialNumber,
+                secondCert.serialNumber
+            )
+            assertArrayEquals(
+                "expected the same CA public key to be reused",
+                firstCert.publicKey.encoded,
+                secondCert.publicKey.encoded
+            )
+            assertTrue("expected the .pem export to have been re-created", authority.aliasFile(".pem").exists())
         } finally {
             dir.deleteRecursively()
         }
