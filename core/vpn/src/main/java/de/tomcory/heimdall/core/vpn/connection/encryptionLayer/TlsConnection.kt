@@ -43,6 +43,16 @@ class TlsConnection(
     private val inboundCache = mutableListOf<ByteArray>()
     private var remainingInboundBytes = 0
 
+    /**
+     * Outbound TLS records that arrived before the client-facing handshake was ready to accept
+     * them (i.e. while still in NEW/SERVER_HANDSHAKE/SERVER_ESTABLISHED) - for example a
+     * ClientHello handshake message split across multiple TLS records, or TLS 1.3 early (0-RTT)
+     * data sent right after the ClientHello. Replayed once the client-facing handshake starts
+     * (see [initiateClientHandshake]) instead of treating them as a protocol violation.
+     */
+    private val bufferedOutboundRecords = mutableListOf<ByteArray>()
+    private val maxBufferedOutboundRecords = 16
+
     private var outboundSnippet: ByteArray? = null
     private var inboundSnippet: ByteArray? = null
 
@@ -180,17 +190,20 @@ class TlsConnection(
                 if (recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
                     initiateServerHandshake(record)
                 } else {
-                    Timber.e("tls$id Invalid outbound record ($recordType in state $state)")
-                    Timber.e("tls$id ${ByteUtils.bytesToHex(record)}")
-                    closeConnection()
+                    // a second outbound record arriving before the server-facing handshake has
+                    // even started - e.g. a ClientHello whose handshake message spans multiple
+                    // TLS records, or TLS 1.3 early (0-RTT) data sent right after the ClientHello.
+                    // Buffer it and replay it once the client-facing handshake is ready, instead
+                    // of treating it as a protocol violation.
+                    bufferOutboundRecord(record, recordType)
                 }
             }
 
-            // server-facing handshake ongoing, any messages from the client are unexpected
+            // server-facing handshake ongoing, the client-facing engine isn't ready for more
+            // outbound data yet - buffer it (see the NEW branch above) rather than dropping the
+            // connection.
             ConnectionState.SERVER_HANDSHAKE, ConnectionState.SERVER_ESTABLISHED -> {
-                Timber.e("tls$id handleOutboundRecord Invalid outbound record ($recordType in state $state)")
-                Timber.e("tls$id ${ByteUtils.bytesToHex(record)}")
-                closeConnection()
+                bufferOutboundRecord(record, recordType)
             }
 
             // client-facing handshake ongoing, use the record to advance it
@@ -219,6 +232,35 @@ class TlsConnection(
                 closeConnection()
             }
         }
+    }
+
+    /**
+     * Buffers an outbound record that arrived before the client-facing handshake was ready to
+     * accept it, to be replayed once it is (see [replayBufferedOutboundRecords]). Bounded so a
+     * client that never lets the handshake progress can't grow this without limit.
+     */
+    private fun bufferOutboundRecord(record: ByteArray, recordType: RecordType) {
+        if(bufferedOutboundRecords.size >= maxBufferedOutboundRecords) {
+            Timber.e("tls$id handleOutboundRecord too many records buffered before the handshake was ready ($recordType in state $state), closing connection")
+            closeConnection()
+            return
+        }
+        if(log) Timber.d("tls$id handleOutboundRecord buffering $recordType received in state $state")
+        bufferedOutboundRecords.add(record)
+    }
+
+    /**
+     * Replays outbound records buffered by [bufferOutboundRecord] once the client-facing
+     * handshake is ready to accept live records again, in their original arrival order.
+     */
+    private fun replayBufferedOutboundRecords() {
+        if(bufferedOutboundRecords.isEmpty()) {
+            return
+        }
+        val toReplay = bufferedOutboundRecords.toList()
+        bufferedOutboundRecords.clear()
+        if(log) Timber.d("tls$id replaying ${toReplay.size} outbound record(s) buffered before the handshake was ready")
+        toReplay.forEach { processRecord(it, true) }
     }
 
     /**
@@ -334,6 +376,9 @@ class TlsConnection(
             try {
                 setupClientSSLEngine()
                 continueHandshake(originalClientHello, RecordType.HANDSHAKE_CLIENT_HELLO, true, SSLEngineResult.HandshakeStatus.NEED_UNWRAP)
+                // now that the client-facing handshake has started, replay (in order) any outbound
+                // records that arrived earlier, before it was ready for them
+                replayBufferedOutboundRecords()
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id initiateClientHandshake failed, closing connection")
                 closeConnection()

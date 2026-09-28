@@ -335,4 +335,67 @@ class TlsRecordHandlingTest {
 
         verify(timeout = 5000) { transportLayer.closeHard() }
     }
+
+    // -----------------------------------------------------------------------
+    // PKT-05 (docs/vpn-mitm-audit.md V-12): outbound records arriving before the
+    // client-facing handshake is ready (e.g. a ClientHello split across multiple TLS
+    // records) are buffered and replayed, not treated as a protocol violation.
+    // `state` and `bufferedOutboundRecords` are private, and ConnectionState is a
+    // private nested enum, so they're read via reflection, comparing by enum name.
+    // -----------------------------------------------------------------------
+
+    private fun readStateName(target: TlsConnection): String {
+        val field = TlsConnection::class.java.getDeclaredField("state")
+        field.isAccessible = true
+        return (field.get(target) as Enum<*>).name
+    }
+
+    private fun readBufferedOutboundRecordCount(target: TlsConnection): Int {
+        val field = TlsConnection::class.java.getDeclaredField("bufferedOutboundRecords")
+        field.isAccessible = true
+        return (field.get(target) as List<*>).size
+    }
+
+    private fun handshakeRecord(handshakeType: Byte, bodySize: Int = 32): ByteArray {
+        val body = byteArrayOf(handshakeType) + ByteArray(bodySize) { it.toByte() }
+        val header = byteArrayOf(0x16, 0x03, 0x03, (body.size shr 8).toByte(), (body.size and 0xFF).toByte())
+        return header + body
+    }
+
+    @Test
+    fun `a ClientHello split across two TLS records is buffered and reaches SERVER_HANDSHAKE instead of being closed`() {
+        val mitmComponentManager: ComponentManager = mockk(relaxed = true)
+        every { mitmComponentManager.doMitm } returns true
+        every { mitmComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+
+        val mitmTransportLayer: TransportLayerConnection = mockk(relaxed = true)
+        every { mitmTransportLayer.remoteHost } returns null
+        every { mitmTransportLayer.remotePort } returns 443
+        every { mitmTransportLayer.appId } returns null
+
+        val mitmConnection = TlsConnection(0, mitmTransportLayer, mitmComponentManager)
+
+        // record #1: a complete, well-framed TLS record containing a ClientHello (handshake type 0x01)
+        val record1 = handshakeRecord(0x01)
+        // record #2: a second, independently-framed TLS record - as if it were a continuation of
+        // the same (oversized) ClientHello handshake message, or TLS 1.3 early data sent right
+        // after it. Its handshake-type byte (0xAB) isn't a recognized fresh message type.
+        val record2 = handshakeRecord(0xAB.toByte())
+
+        mitmConnection.unwrapOutbound(record1)
+
+        // initiateServerHandshake() runs on a launched coroutine
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && readStateName(mitmConnection) == "NEW") {
+            Thread.sleep(20)
+        }
+        assertEquals("SERVER_HANDSHAKE", readStateName(mitmConnection))
+
+        mitmConnection.unwrapOutbound(record2)
+
+        // the second record must be buffered for later replay, not close the connection
+        assertEquals("SERVER_HANDSHAKE", readStateName(mitmConnection))
+        assertEquals(1, readBufferedOutboundRecordCount(mitmConnection))
+        verify(exactly = 0) { mitmTransportLayer.closeHard() }
+    }
 }
