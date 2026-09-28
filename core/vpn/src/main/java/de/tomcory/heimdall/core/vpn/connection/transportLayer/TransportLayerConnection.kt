@@ -204,16 +204,32 @@ abstract class TransportLayerConnection protected constructor(
 
     /**
      * Closes the connection's outward-facing [SelectableChannel], performs protocol-specific steps to close the client-side session and removes the connection from the [ConnectionCache]
+     *
+     * @param abortClientSession Whether to additionally perform a protocol-specific abrupt teardown
+     * of the client-facing session (e.g. sending a TCP RST). Pass `false` when the client-facing
+     * side is already being closed gracefully through its own handshake (e.g. a FIN/FIN-ACK
+     * exchange), so as not to also signal an abrupt abort for a clean close.
      */
-    fun closeHard() {
-        closeSoft()
+    fun closeHard(abortClientSession: Boolean = true) {
+        closeSoft(abortClientSession)
         ConnectionCache.removeConnection(this)
     }
 
     /**
      * Closes the connection's outward-facing [SelectableChannel] but doesn't remove the connection from the [ConnectionCache]
+     *
+     * @param abortClientSession Whether to additionally perform a protocol-specific abrupt teardown
+     * of the client-facing session (e.g. sending a TCP RST). Pass `false` when the client-facing
+     * side is already being closed gracefully through its own handshake (e.g. a FIN/FIN-ACK
+     * exchange), so as not to also signal an abrupt abort for a clean close.
+     * @param finalizeState Whether to leave the connection in [TransportLayerState.CLOSED] once the
+     * outward-facing channel is closed. Pass `false` when the client-facing side's own closing
+     * handshake is still in flight (e.g. awaiting the device's final ACK to our FIN-ACK), so the
+     * connection stays [TransportLayerState.CLOSING] and whatever handles that handshake's
+     * completion is the one that finalizes the state and removes the connection from the
+     * [ConnectionCache].
      */
-    fun closeSoft() {
+    fun closeSoft(abortClientSession: Boolean = true, finalizeState: Boolean = true) {
         Timber.d("${protocol.name.lowercase()}$id Closing transport-layer connection to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort (${remoteHost})...")
         state = TransportLayerState.CLOSING
         try {
@@ -222,8 +238,12 @@ abstract class TransportLayerConnection protected constructor(
         } catch (e: Exception) {
             Timber.e(e, "${protocol.name.lowercase()}${id} Error closing SelectableChannel")
         }
-        closeClientSession()
-        state = TransportLayerState.CLOSED
+        if (abortClientSession) {
+            closeClientSession()
+        }
+        if (finalizeState) {
+            state = TransportLayerState.CLOSED
+        }
     }
 
     companion object {

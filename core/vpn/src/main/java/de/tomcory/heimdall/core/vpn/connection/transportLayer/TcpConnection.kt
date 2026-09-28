@@ -52,6 +52,9 @@ class TcpConnection internal constructor(
     private var theirSeqNum = theirInitSeqNum + 1 // SYN packets increase the client's sequence number by 1
     private var ourSeqNum = ourInitSeqNum
 
+    /** The FIN-ACK segment sent to start our side of the closing handshake, cached so a retransmitted FIN from the device can be answered with the exact same segment instead of one built from an already-advanced sequence number. */
+    private var pendingFinAck: IpPacket? = null
+
     override val protocol = Protocol.TCP
     override val appId: Int?
     override val appPackage: String?
@@ -139,7 +142,10 @@ class TcpConnection internal constructor(
             return
         }
         val tcpHeader = outgoingPacket.header as TcpPacket.TcpHeader
-        if (tcpHeader.ack) {
+        if (tcpHeader.rst) {
+            // RST takes precedence over any other flags that may also be set (e.g. RST+ACK)
+            handleRst() // the client aborted the connection
+        } else if (tcpHeader.ack) {
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
                 handleAckData(outgoingPacket) // data was sent and needs to be forwarded
             } else if (!tcpHeader.syn && !tcpHeader.fin) {
@@ -291,12 +297,23 @@ class TcpConnection internal constructor(
         closeHard()
     }
 
+    /**
+     * Handles a client-initiated RST by tearing down the connection immediately. No RST is echoed
+     * back to the device: the client already knows the connection is gone, since it's the one that
+     * sent the RST.
+     */
+    private fun handleRst() {
+        Timber.d("tcp$id Got RST from client, closing connection")
+        closeHard(abortClientSession = false)
+    }
+
     private fun handleFinAck() {
         if (state == TransportLayerState.CLOSING) {
-            // connection is closing, so this must be an actual FIN ACK - acknowledge it and close the connection for good
-            increaseTheirSeqNum(1)
-            val ackResponse = ipPacketBuilder.buildPacket(buildEmptyAck())
-            writeToDevice(ackResponse)
+            // we already sent our FIN-ACK and are awaiting the device's final (plain) ACK; a
+            // FIN(+ACK) arriving in this state is a retransmission of the device's original
+            // closing FIN, not a new event - resend our cached FIN-ACK rather than advancing
+            // sequence numbers again for something we've already accounted for.
+            pendingFinAck?.let { writeToDevice(it) }
         } else {
             // we're not expecting a FIN ACK, so we treat it like a normal FIN packet and start closing the connection
             handleFin()
@@ -304,16 +321,32 @@ class TcpConnection internal constructor(
     }
 
     private fun handleFin() {
-        if (state == TransportLayerState.CLOSED || state == TransportLayerState.ABORTED) {
-            // the connection is already closed, abort
-            closeHard()
-        } else {
-            // close asynchronously
-            closeSoft()
-            increaseTheirSeqNum(1)
-            val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())
-            increaseOurSeqNum(1)
-            writeToDevice(finAckResponse)
+        when (state) {
+            TransportLayerState.CLOSED, TransportLayerState.ABORTED -> {
+                // the connection is already closed, abort
+                closeHard()
+            }
+            TransportLayerState.CLOSING -> {
+                // a duplicate/retransmitted FIN while we're already waiting for the device's final
+                // ACK to our own FIN-ACK (e.g. the original FIN-ACK was lost) - the outward-facing
+                // channel is already closed and the sequence numbers already advanced, so resend
+                // the exact same FIN-ACK segment rather than building a fresh (higher-sequenced) one.
+                pendingFinAck?.let { writeToDevice(it) }
+            }
+            else -> {
+                // close the outward-facing (remote-server) channel now, but leave the connection's
+                // state at CLOSING and in the cache until the device acknowledges our FIN-ACK below
+                // - this is a graceful, client-initiated close, not an abort, so don't also send a
+                // client-facing RST; the FIN-ACK written below is the correct signal. The device's
+                // final ACK is what finalizes the state to CLOSED and removes the connection from
+                // the cache, via handleAckEmpty()'s CLOSING branch.
+                closeSoft(abortClientSession = false, finalizeState = false)
+                increaseTheirSeqNum(1)
+                val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())
+                increaseOurSeqNum(1)
+                pendingFinAck = finAckResponse
+                writeToDevice(finAckResponse)
+            }
         }
     }
 
