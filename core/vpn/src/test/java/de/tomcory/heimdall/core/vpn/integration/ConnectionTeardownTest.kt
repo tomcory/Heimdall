@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.integration
 
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.PacketFixtures
@@ -19,6 +20,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.Inet4Address
+import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicReference
 
 class ConnectionTeardownTest {
@@ -345,5 +347,76 @@ class ConnectionTeardownTest {
         assertNotSame(connection, secondConnection)
 
         secondConnection?.closeHard()
+    }
+
+    @Test
+    fun `remote-initiated close releases the socket channel, not just the selection key`() {
+        acceptThread = Thread {
+            try {
+                acceptedSocket.set(serverSocket.accept())
+            } catch (e: Exception) {
+                // closed during teardown
+            }
+        }
+        acceptThread.start()
+
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        pump = SelectorPump(componentManager.selector)
+        pump.start()
+
+        val deviceWriter = RecordingDeviceWriter()
+        val localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address
+        val localPort = 41004
+        val remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
+        val remotePort = serverSocket.localPort
+
+        val synPacket = PacketFixtures.buildTcpSynPacket(localAddr, localPort, remoteAddr, remotePort)
+        val connection = TransportLayerConnection.getInstance(synPacket, componentManager, deviceWriter.handler)
+        connection?.unwrapOutbound(synPacket.payload)
+
+        val handshakeDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < handshakeDeadline && deviceWriter.sentMessages.isEmpty()) {
+            Thread.sleep(20)
+        }
+        assertTrue("expected a SYN-ACK to be sent back to the device", deviceWriter.sentMessages.isNotEmpty())
+
+        // complete the local handshake with an empty ACK so the connection reaches CONNECTED
+        val ackPacket = PacketFixtures.buildTcpDataPacket(
+            localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
+            seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false
+        )
+        connection?.unwrapOutbound(ackPacket.payload)
+        assertEquals(TransportLayerConnection.TransportLayerState.CONNECTED, connection?.state)
+
+        val acceptDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < acceptDeadline && acceptedSocket.get() == null) {
+            Thread.sleep(20)
+        }
+        val peerSocket = acceptedSocket.get()
+        assertTrue("server never accepted the connection", peerSocket != null)
+
+        // selectableChannel is `protected` on TcpConnection, so it's read via reflection here
+        val channelField = TcpConnection::class.java.getDeclaredField("selectableChannel")
+        channelField.isAccessible = true
+        fun isChannelOpen() = (channelField.get(connection) as SocketChannel).isOpen
+
+        assertTrue("expected the channel to be open right after the handshake", isChannelOpen())
+
+        // the remote server closes its side first (no FIN from the device involved at all) - the
+        // selector should observe EOF on the local channel and the connection should release it,
+        // not just deregister the SelectionKey
+        peerSocket!!.close()
+
+        val closedDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < closedDeadline && isChannelOpen()) {
+            Thread.sleep(20)
+        }
+        assertFalse(
+            "expected the local SocketChannel to be closed (fd released) after the remote side closed, not just deregistered from the selector",
+            isChannelOpen()
+        )
+
+        // the connection should have started its own local closing handshake with the device
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, connection?.state)
     }
 }

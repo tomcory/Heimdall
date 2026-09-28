@@ -280,6 +280,7 @@ class TcpConnection internal constructor(
             }
             TransportLayerState.CLOSING -> {
                 // closing handshake complete, set status to CLOSED and remove the connection from the cache
+                closeChannel()
                 state = TransportLayerState.CLOSED
                 ConnectionCache.removeConnection(this)
             }
@@ -380,6 +381,9 @@ class TcpConnection internal constructor(
         // SocketChannel is closed
         if (bytesRead == -1) {
             selectionKey?.cancel()
+            // the remote side is done; release the socket/fd now regardless of which branch
+            // below we take, instead of only deregistering the SelectionKey and leaking it
+            closeChannel()
             if (state == TransportLayerState.CLOSING) {
                 // client and server agree that the connection is close
                 state = TransportLayerState.CLOSED
@@ -392,6 +396,19 @@ class TcpConnection internal constructor(
                 increaseOurSeqNum(1)
                 writeToDevice(finPacket)
             }
+        }
+    }
+
+    /**
+     * Closes the outward-facing [SocketChannel], releasing its underlying fd. Safe to call
+     * more than once ([java.nio.channels.Channel.close] is a no-op if already closed) - several
+     * of the paths that call this may already have closed the channel via [closeSoft]/[closeHard].
+     */
+    private fun closeChannel() {
+        try {
+            selectableChannel.close()
+        } catch (e: IOException) {
+            Timber.e(e, "tcp$id Error closing SocketChannel")
         }
     }
 
