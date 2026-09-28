@@ -3,8 +3,13 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.util.ByteUtils
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
@@ -13,10 +18,12 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLException
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TlsConnection(
     id: Long,
     transportLayer: TransportLayerConnection,
-    componentManager: ComponentManager
+    componentManager: ComponentManager,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
 ) : EncryptionLayerConnection(
     id,
     transportLayer,
@@ -30,6 +37,28 @@ class TlsConnection(
     }
 
     override val protocol = "TLS"
+
+    /**
+     * Confines every mutation of this connection's state/buffers to at most one task at a time,
+     * regardless of which thread triggers it. Without this, `state`, the eight `ByteBuffer`
+     * fields, and the reassembly caches below are mutated both by whichever thread calls
+     * unwrapOutbound/unwrapInbound (OutboundTrafficHandler and InboundTrafficHandler are each one
+     * shared thread serving every connection) and by the ad-hoc handshake coroutines further
+     * down - a real cross-direction race (docs/vpn-mitm-audit.md V-26), e.g. the server-facing
+     * handshake finishing (driven by inbound records) calls initiateClientHandshake(), which
+     * mutates `state` and replays `bufferedOutboundRecords`, a list also written from the
+     * outbound code path. `limitedParallelism(1)` gives this guarantee without a dedicated OS
+     * thread per connection - important since a device can have many concurrent TLS connections.
+     * The `dispatcher` constructor parameter exists purely for tests, to substitute a
+     * synchronous dispatcher (e.g. Dispatchers.Unconfined) so existing assertions that run
+     * immediately after unwrapOutbound/unwrapInbound don't need to wait for real async dispatch.
+     */
+    private val connectionScope = CoroutineScope(
+        dispatcher + SupervisorJob() + CoroutineExceptionHandler { _, e ->
+            Timber.e(e, "tls$id Uncaught exception in connectionScope, closing connection")
+            closeConnection()
+        }
+    )
 
     private var state: ConnectionState = ConnectionState.NEW
     private var hostname: String = transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: ""
@@ -74,7 +103,7 @@ class TlsConnection(
     private var outboundCount = 0
     private var inboundCount = 0
 
-    private val log = true
+    private val log = false
 
     /**
      * Safety cap on BUFFER_UNDERFLOW retries in [handleWrap]/[handleUnwrap]. Growing the buffer
@@ -89,8 +118,22 @@ class TlsConnection(
     //////////////////////////////////////////////////////////////////////
 
     override fun unwrapOutbound(payload: ByteArray) {
-        if(log) Timber.d("tls$id unwrapOutbound of ${payload.size} bytes in state $state")
-        prepareRecords(payload, true)
+        // dispatched via connectionScope (see its kdoc) rather than run inline, since this is one
+        // of the two true external entry points where a thread outside this connection's own
+        // confinement first touches its state
+        connectionScope.launch {
+            try {
+                if(log) Timber.d("tls$id unwrapOutbound of ${payload.size} bytes in state $state")
+                prepareRecords(payload, true)
+            } catch (e: Throwable) {
+                // moving this work onto connectionScope means the calling thread
+                // (OutboundTrafficHandler) returns immediately after enqueueing it and can no
+                // longer observe an exception thrown here - so unlike before, this try/catch is
+                // this connection's only safety net for its own record-processing failures
+                Timber.e(e, "tls$id unwrapOutbound failed, closing connection")
+                closeConnection()
+            }
+        }
     }
 
     override fun unwrapOutbound(packet: Packet) {
@@ -98,8 +141,15 @@ class TlsConnection(
     }
 
     override fun unwrapInbound(payload: ByteArray) {
-        if(log) Timber.d("tls$id unwrapInbound of ${payload.size} bytes in state $state")
-        prepareRecords(payload, false)
+        connectionScope.launch {
+            try {
+                if(log) Timber.d("tls$id unwrapInbound of ${payload.size} bytes in state $state")
+                prepareRecords(payload, false)
+            } catch (e: Throwable) {
+                Timber.e(e, "tls$id unwrapInbound failed, closing connection")
+                closeConnection()
+            }
+        }
     }
 
     override fun wrapOutbound(payload: ByteArray) {
@@ -353,7 +403,7 @@ class TlsConnection(
         originalClientHello = record
 
         // set up the server-facing SSLEngine and initiate the handshake
-        CoroutineScope(Dispatchers.IO).launch {
+        connectionScope.launch {
             try {
                 setupServerSSLEngine()
                 continueHandshake(handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP, isClientFacing = false)
@@ -372,7 +422,7 @@ class TlsConnection(
         if(log) Timber.d("tls$id initiateClientHandshake Hostname: $hostname")
 
         // set up the client-facing SSLEngine and initiate the handshake
-        CoroutineScope(Dispatchers.IO).launch {
+        connectionScope.launch {
             try {
                 setupClientSSLEngine()
                 continueHandshake(originalClientHello, RecordType.HANDSHAKE_CLIENT_HELLO, true, SSLEngineResult.HandshakeStatus.NEED_UNWRAP)
@@ -466,17 +516,16 @@ class TlsConnection(
                 val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
                 val tasks = generateSequence { engine?.delegatedTask }.toList()
                 if(tasks.isNotEmpty()) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                    connectionScope.launch {
                         if(log) Timber.d("tls$id continueHandshake ($direction) running ${tasks.size} delegated tasks")
                         try {
                             tasks.forEach { it.run() }
                         } catch (e: Exception) {
-                            System.err.println("DBG-PROD NEED_TASK coroutine task threw: $e")
+                            Timber.e(e, "tls$id continueHandshake ($direction) NEED_TASK coroutine task threw")
                             closeConnection()
                             return@launch
                         }
                         val nextStatus = engine?.handshakeStatus ?: handshakeStatus
-                        System.err.println("DBG-PROD NEED_TASK coroutine done, nextStatus=$nextStatus thread=${Thread.currentThread().name}")
                         continueHandshake(handshakeStatus = nextStatus, isClientFacing = isClientFacing)
                     }
                 } else {
@@ -497,8 +546,6 @@ class TlsConnection(
      */
     private fun closeConnection() {
         if(log) Timber.d("tls$id closeConnection in state $state")
-        System.err.println("DBG-CC closeConnection in state=$state")
-        Thread.currentThread().stackTrace.take(12).forEach { System.err.println("  $it") }
 
         switchState(ConnectionState.CLOSED)
 
@@ -518,6 +565,11 @@ class TlsConnection(
 
         // close the transport layer
         transportLayer.closeHard()
+
+        // drop any not-yet-run queued work (e.g. a late NEED_TASK follow-up, or a stray
+        // unwrapOutbound/unwrapInbound call that arrives after this connection already closed
+        // itself) instead of letting it run against a torn-down connection
+        connectionScope.cancel()
     }
 
     /**
@@ -775,7 +827,6 @@ class TlsConnection(
         val res = try {
             sslEngine?.unwrap(netBuffer, appBuffer)
         } catch (sslException: SSLException) {
-            System.err.println("DBG-UNWRAP SSLException dir=$direction state=$state hs=${sslEngine?.handshakeStatus}: ${sslException.message}")
             Timber.e("tls$id handleUnwrap ($direction) SSLException in state $state\n${sslException.message}")
             Timber.e("tls$id ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
             null

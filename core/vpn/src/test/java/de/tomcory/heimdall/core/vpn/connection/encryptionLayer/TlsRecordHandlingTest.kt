@@ -7,6 +7,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -32,8 +33,10 @@ class TlsRecordHandlingTest {
         every { transportLayer.remotePort } returns 443
         every { transportLayer.appId } returns null
 
-        // id=0 skips all Timber.d init-block logs that access property chains
-        tlsConnection = TlsConnection(0, transportLayer, componentManager)
+        // id=0 skips all Timber.d init-block logs that access property chains. Dispatchers.Unconfined
+        // makes connectionScope.launch { ... } run its body eagerly on the calling thread (none of
+        // these bodies ever suspend), so unwrapOutbound/unwrapInbound stay synchronous for these tests.
+        tlsConnection = TlsConnection(0, transportLayer, componentManager, Dispatchers.Unconfined)
     }
 
     // -----------------------------------------------------------------------
@@ -368,12 +371,26 @@ class TlsRecordHandlingTest {
         every { mitmComponentManager.doMitm } returns true
         every { mitmComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
 
+        // without this, createServerSSLEngine()'s fully-relaxed SSLEngine mock's wrap() call
+        // returns a synthesized SSLEngineResult whose Status defaults to the first-declared enum
+        // constant (BUFFER_UNDERFLOW) - handleWrap's underflow-retry-then-close path then closes
+        // the connection deterministically a few synchronous calls later, which used to go
+        // unnoticed because unwrapOutbound ran synchronously and assertions raced ahead of it.
+        // Stub a believable "sent our part, now waiting for the peer's next message" result so
+        // the handshake actually parks in SERVER_HANDSHAKE, matching what this test verifies.
+        val fakeServerEngine: SSLEngine = mockk(relaxed = true)
+        every { fakeServerEngine.wrap(any<ByteBuffer>(), any<ByteBuffer>()) } returns
+            SSLEngineResult(SSLEngineResult.Status.OK, SSLEngineResult.HandshakeStatus.NEED_UNWRAP, 0, 0)
+        every { mitmComponentManager.mitmManager.createServerSSLEngine(any(), any()) } returns fakeServerEngine
+
         val mitmTransportLayer: TransportLayerConnection = mockk(relaxed = true)
         every { mitmTransportLayer.remoteHost } returns null
         every { mitmTransportLayer.remotePort } returns 443
         every { mitmTransportLayer.appId } returns null
 
-        val mitmConnection = TlsConnection(0, mitmTransportLayer, mitmComponentManager)
+        // Dispatchers.Unconfined: none of the dispatched bodies suspend, so this runs the whole
+        // handshake-initiation chain eagerly/synchronously, same as every other test in this file
+        val mitmConnection = TlsConnection(0, mitmTransportLayer, mitmComponentManager, Dispatchers.Unconfined)
 
         // record #1: a complete, well-framed TLS record containing a ClientHello (handshake type 0x01)
         val record1 = handshakeRecord(0x01)
@@ -397,5 +414,151 @@ class TlsRecordHandlingTest {
         assertEquals("SERVER_HANDSHAKE", readStateName(mitmConnection))
         assertEquals(1, readBufferedOutboundRecordCount(mitmConnection))
         verify(exactly = 0) { mitmTransportLayer.closeHard() }
+    }
+
+    // -----------------------------------------------------------------------
+    // V-26 (docs/vpn-mitm-audit.md): TlsConnection's state/buffers/reassembly caches used to
+    // have zero synchronization despite being mutated both by whichever thread calls
+    // unwrapOutbound/unwrapInbound and by untracked handshake coroutines. Fixed by confining all
+    // mutation to a per-connection single-threaded dispatcher (connectionScope).
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `state and bufferedOutboundRecords survive a concurrent burst of records during a handshake`() {
+        // doMitm=true, unlike the passthrough test below - handleOutboundRecord/handleInboundRecord
+        // both return before ever touching `state` when doMitm is false, so this is the only way
+        // to actually exercise V-26's core hazard: `state` and `bufferedOutboundRecords`, mutated
+        // both by the handshake coroutine (initiateServerHandshake, itself dispatched onto
+        // connectionScope) and by whichever thread calls unwrapOutbound.
+        val realComponentManager: ComponentManager = mockk(relaxed = true)
+        every { realComponentManager.doMitm } returns true
+        every { realComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+
+        // a believable "sent our part, now waiting" result, same as the split-ClientHello test
+        // above - without this the handshake self-closes a few calls later regardless of thread
+        // safety (an unrelated, pre-existing mock-fidelity gap, not a V-26 concern)
+        val fakeServerEngine: SSLEngine = mockk(relaxed = true)
+        every { fakeServerEngine.wrap(any<ByteBuffer>(), any<ByteBuffer>()) } returns
+            SSLEngineResult(SSLEngineResult.Status.OK, SSLEngineResult.HandshakeStatus.NEED_UNWRAP, 0, 0)
+        every { realComponentManager.mitmManager.createServerSSLEngine(any(), any()) } returns fakeServerEngine
+
+        val realTransportLayer: TransportLayerConnection = mockk(relaxed = true)
+        every { realTransportLayer.remoteHost } returns null
+        every { realTransportLayer.remotePort } returns 443
+        every { realTransportLayer.appId } returns null
+
+        val connection = TlsConnection(0, realTransportLayer, realComponentManager)
+
+        // record #1 triggers initiateServerHandshake() -> SERVER_HANDSHAKE, itself dispatched
+        // onto connectionScope (a coroutine running on some Dispatchers.IO worker thread)
+        connection.unwrapOutbound(handshakeRecord(0x01))
+
+        // meanwhile, a burst of records arrives on another thread and must all get buffered by
+        // bufferOutboundRecord() - concurrently with the handshake coroutine mutating `state` and
+        // (via replayBufferedOutboundRecords(), reachable once the handshake progresses further)
+        // this same bufferedOutboundRecords list. Kept under maxBufferedOutboundRecords (16) so
+        // the cap itself doesn't trigger a close.
+        val extraRecordCount = 10
+        val extraRecords = (0 until extraRecordCount).map { i -> handshakeRecord(0xAB.toByte(), bodySize = 8 + i) }
+        val burstThread = Thread {
+            extraRecords.forEach { connection.unwrapOutbound(it) }
+        }
+        burstThread.start()
+        burstThread.join(15000)
+
+        // everything above only enqueues work onto connectionScope; wait for it to drain
+        val deadline = System.currentTimeMillis() + 15000
+        while (System.currentTimeMillis() < deadline && readBufferedOutboundRecordCount(connection) < extraRecordCount) {
+            Thread.sleep(20)
+        }
+
+        assertEquals("SERVER_HANDSHAKE", readStateName(connection))
+        assertEquals(
+            "every concurrently-submitted record must be buffered exactly once, none lost or duplicated",
+            extraRecordCount,
+            readBufferedOutboundRecordCount(connection)
+        )
+        verify(exactly = 0) { realTransportLayer.closeHard() }
+    }
+
+    @Test
+    fun `concurrent outbound and inbound traffic on one connection is reassembled without corruption`() {
+        // uses the REAL default dispatcher (no override) - this specifically tests that genuine
+        // cross-thread concurrent dispatch is safe, not the synchronous Dispatchers.Unconfined
+        // path every other test in this file uses
+        val realComponentManager: ComponentManager = mockk(relaxed = true)
+        every { realComponentManager.doMitm } returns false
+        every { realComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+
+        val realTransportLayer: TransportLayerConnection = mockk(relaxed = true)
+        every { realTransportLayer.remoteHost } returns null
+        every { realTransportLayer.remotePort } returns 443
+        every { realTransportLayer.appId } returns null
+
+        val connection = TlsConnection(0, realTransportLayer, realComponentManager)
+
+        val recordCount = 50
+        val outboundRecords = (0 until recordCount).map { i -> appData(*ByteArray(20) { (i + it).toByte() }) }
+        val inboundRecords = (0 until recordCount).map { i -> appData(*ByteArray(20) { (100 + i + it).toByte() }) }
+
+        val outboundReceived = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+        val inboundReceived = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+        every { realTransportLayer.wrapOutbound(any()) } answers { outboundReceived.add(firstArg<ByteArray>().copyOf()) }
+        every { realTransportLayer.wrapInbound(any()) } answers { inboundReceived.add(firstArg<ByteArray>().copyOf()) }
+
+        // each direction's records are sent as two fragments (exercising the reassembly cache),
+        // sequentially within their own thread - but the two threads run concurrently against
+        // the same connection, exactly like OutboundTrafficHandler/InboundTrafficHandler would
+        val outboundThread = Thread {
+            outboundRecords.forEach { record ->
+                val splitPoint = record.size / 2
+                connection.unwrapOutbound(record.copyOfRange(0, splitPoint))
+                connection.unwrapOutbound(record.copyOfRange(splitPoint, record.size))
+            }
+        }
+        val inboundThread = Thread {
+            inboundRecords.forEach { record ->
+                val splitPoint = record.size / 2
+                connection.unwrapInbound(record.copyOfRange(0, splitPoint))
+                connection.unwrapInbound(record.copyOfRange(splitPoint, record.size))
+            }
+        }
+
+        outboundThread.start()
+        inboundThread.start()
+        outboundThread.join(15000)
+        inboundThread.join(15000)
+
+        // the two threads above only enqueue work onto connectionScope; wait for it to drain
+        val deadline = System.currentTimeMillis() + 15000
+        while (System.currentTimeMillis() < deadline &&
+            (outboundReceived.size < recordCount || inboundReceived.size < recordCount)
+        ) {
+            Thread.sleep(20)
+        }
+
+        assertEquals("every outbound record must be forwarded exactly once", recordCount, outboundReceived.size)
+        assertEquals("every inbound record must be forwarded exactly once", recordCount, inboundReceived.size)
+
+        // exact order + content match proves no interleaving/corruption between concurrently
+        // dispatched outbound and inbound work, and no reordering within either direction
+        assertEquals(outboundRecords.map { it.toList() }, outboundReceived.map { it.toList() })
+        assertEquals(inboundRecords.map { it.toList() }, inboundReceived.map { it.toList() })
+    }
+
+    @Test
+    fun `closeConnection cancels the connection scope so a late dispatch is dropped instead of running`() {
+        val closeConnection = TlsConnection::class.java.getDeclaredMethod("closeConnection")
+        closeConnection.isAccessible = true
+        closeConnection.invoke(tlsConnection)
+        assertEquals("CLOSED", readStateName(tlsConnection))
+
+        // a record arriving after the connection already closed itself - connectionScope was
+        // cancelled by closeConnection(), so this dispatch must be dropped, not run against an
+        // already-torn-down connection
+        tlsConnection.unwrapOutbound(appData(0x01, 0x02, 0x03))
+
+        verify(exactly = 0) { transportLayer.wrapOutbound(any()) }
+        assertEquals("CLOSED", readStateName(tlsConnection))
     }
 }
