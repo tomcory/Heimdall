@@ -13,7 +13,10 @@ import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.cert.Certificate
+import java.security.cert.CertificateExpiredException
+import java.security.cert.CertificateNotYetValidException
 import java.security.cert.X509Certificate
+import java.util.Date
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -27,40 +30,75 @@ object KeyStoreHelper {
     private const val KEY_STORE_FILE_EXTENSION = ".p12"
 
     /**
-     * Initialises a key store containing a root CA certificate (if there isn't already such a key store).
+     * Initialises a key store containing a root CA certificate (if there isn't already a *valid*
+     * key store). An existing key store whose CA certificate has expired (or isn't valid yet) is
+     * not reused - it's regenerated the same way a missing key store would be, since continuing
+     * to sign fake leaf certificates with an expired CA would otherwise fail every TLS handshake
+     * silently. Regeneration invalidates any copy of the CA certificate the user has already
+     * installed on the device, so the caller should prompt them to reinstall it when this
+     * happens (see [Timber.w] calls below for the specific condition).
      */
     @Throws(GeneralSecurityException::class, OperatorCreationException::class, IOException::class)
     fun initialiseOrLoadKeyStore(
         authority: Authority
     ): KeyStore {
 
-
-        return if (authority.aliasFile(KEY_STORE_FILE_EXTENSION).exists() && authority.aliasFile(".pem").exists()) {
-            // since there already is a key store, we can just load and return it
-            val keyStore = KeyStore.getInstance(KEY_STORE_TYPE)
-            FileInputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { stream ->
-                keyStore.load(stream, authority.password)
-            }
-
-            Timber.d("Loaded existing root certificate authority key store")
-
-            keyStore
+        val existing = if (authority.aliasFile(KEY_STORE_FILE_EXTENSION).exists() && authority.aliasFile(".pem").exists()) {
+            loadIfValid(authority)
         } else {
-            // if no key store exists, we need to create one containing our root CA certificate
-            // step 1: create the certificate
-            val keyStore = CertificateHelper.createRootCertificate(authority, KEY_STORE_TYPE)
+            null
+        }
 
-            // step 2: store the certificate in the key store
-            FileOutputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { outputStream ->
-                keyStore.store(outputStream, authority.password)
-            }
+        if (existing != null) {
+            return existing
+        }
 
-            Timber.d("Created new root certificate authority key store")
+        // no existing (valid) key store - create a new one containing our root CA certificate
+        // step 1: create the certificate
+        val keyStore = CertificateHelper.createRootCertificate(authority, KEY_STORE_TYPE)
 
-            // export the root CA certificate to a .pem file
-            exportPem(authority.aliasFile(".pem"), keyStore.getCertificate(authority.alias))
+        // step 2: store the certificate in the key store
+        FileOutputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { outputStream ->
+            keyStore.store(outputStream, authority.password)
+        }
 
+        Timber.d("Created new root certificate authority key store")
+
+        // export the root CA certificate to a .pem file
+        exportPem(authority.aliasFile(".pem"), keyStore.getCertificate(authority.alias))
+
+        return keyStore
+    }
+
+    /**
+     * Loads the existing key store for [authority] and returns it if its CA certificate is
+     * currently valid, or `null` if the key store is missing a certificate entry or that
+     * certificate isn't currently valid (in either case, the caller should regenerate instead of
+     * reusing it).
+     */
+    @Throws(GeneralSecurityException::class, IOException::class)
+    private fun loadIfValid(authority: Authority): KeyStore? {
+        val keyStore = KeyStore.getInstance(KEY_STORE_TYPE)
+        FileInputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { stream ->
+            keyStore.load(stream, authority.password)
+        }
+
+        val cert = keyStore.getCertificate(authority.alias) as? X509Certificate
+        if (cert == null) {
+            Timber.w("Existing root CA key store for alias ${authority.alias} has no certificate entry, regenerating")
+            return null
+        }
+
+        return try {
+            cert.checkValidity(Date())
+            Timber.d("Loaded existing root certificate authority key store")
             keyStore
+        } catch (e: CertificateExpiredException) {
+            Timber.w(e, "Root CA certificate for alias ${authority.alias} expired on ${cert.notAfter} - regenerating. The user will need to reinstall the new CA certificate for MitM inspection to keep working.")
+            null
+        } catch (e: CertificateNotYetValidException) {
+            Timber.w(e, "Root CA certificate for alias ${authority.alias} is not valid until ${cert.notBefore} - regenerating.")
+            null
         }
     }
 

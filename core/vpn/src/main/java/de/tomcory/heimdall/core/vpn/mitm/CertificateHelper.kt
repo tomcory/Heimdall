@@ -68,8 +68,10 @@ object CertificateHelper {
      * expiration date grater than Mon, 24 Jan 6084 02:07:59 GMT (issue #6).
      *
      * Hundred years in the future from starting the proxy should be enough.
+     * Only used for the root CA certificate itself (see [createRootCertificate]) - fake leaf
+     * certificates get their own, much shorter, expiry (see [createServerCertificate]).
      */
-    private val NOT_AFTER = Date(System.currentTimeMillis() + ONE_DAY * 365)
+    private val NOT_AFTER = Date(System.currentTimeMillis() + ONE_DAY * 365 * 100)
 
     /**
      * Enforce TLS 1.2 if available, since it's not default up to Java 8.
