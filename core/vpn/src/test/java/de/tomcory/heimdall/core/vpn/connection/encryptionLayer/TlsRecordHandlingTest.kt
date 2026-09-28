@@ -10,6 +10,10 @@ import io.mockk.verify
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.nio.ByteBuffer
+import javax.net.ssl.SSLEngine
+import javax.net.ssl.SSLEngineResult
+import javax.net.ssl.SSLSession
 
 class TlsRecordHandlingTest {
 
@@ -268,5 +272,67 @@ class TlsRecordHandlingTest {
         assertEquals(2, captured.size)
         assertArrayEquals(record1, captured[0])
         assertArrayEquals(record2, captured[1])
+    }
+
+    // -----------------------------------------------------------------------
+    // PKT-04 (docs/vpn-mitm-audit.md V-11/V-13): BUFFER_UNDERFLOW retry cap and
+    // handshake-setup coroutine exception guards. handleWrap/handleUnwrap and the
+    // initiate*Handshake methods are private, so they're driven via reflection.
+    // -----------------------------------------------------------------------
+
+    private fun setPrivateField(target: Any, fieldName: String, value: Any?) {
+        val field = TlsConnection::class.java.getDeclaredField(fieldName)
+        field.isAccessible = true
+        field.set(target, value)
+    }
+
+    @Test
+    fun `handleUnwrap terminates via closeConnection after repeated BUFFER_UNDERFLOW instead of recursing forever`() {
+        var unwrapCallCount = 0
+        val fakeEngine: SSLEngine = mockk(relaxed = true)
+        every { fakeEngine.unwrap(any<ByteBuffer>(), any<ByteBuffer>()) } answers {
+            unwrapCallCount++
+            SSLEngineResult(SSLEngineResult.Status.BUFFER_UNDERFLOW, SSLEngineResult.HandshakeStatus.NEED_UNWRAP, 0, 0)
+        }
+        // isOutbound=false routes through serverSSLEngine in handleUnwrap
+        setPrivateField(tlsConnection, "serverSSLEngine", fakeEngine)
+
+        val handleUnwrap = TlsConnection::class.java.getDeclaredMethod(
+            "handleUnwrap", ByteArray::class.java, Boolean::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
+        )
+        handleUnwrap.isAccessible = true
+        handleUnwrap.invoke(tlsConnection, byteArrayOf(1, 2, 3, 4, 5), false, 2, 0)
+
+        // maxBufferUnderflowRetries (5) retries -> 6 total unwrap() calls, not unbounded recursion
+        assertEquals(6, unwrapCallCount)
+        verify { transportLayer.closeHard() }
+    }
+
+    @Test
+    fun `initiateServerHandshake closes the connection instead of crashing if setupServerSSLEngine throws`() {
+        every { componentManager.mitmManager.createServerSSLEngine(any(), any()) } throws RuntimeException("boom in createServerSSLEngine")
+
+        val initiateServerHandshake = TlsConnection::class.java.getDeclaredMethod("initiateServerHandshake", ByteArray::class.java)
+        initiateServerHandshake.isAccessible = true
+        initiateServerHandshake.invoke(tlsConnection, byteArrayOf(0x16, 0x03, 0x03, 0x00, 0x01, 0x01))
+
+        // setupServerSSLEngine() runs on a launched coroutine, so wait for the async close
+        verify(timeout = 5000) { transportLayer.closeHard() }
+    }
+
+    @Test
+    fun `initiateClientHandshake closes the connection instead of crashing if setupClientSSLEngine throws`() {
+        val fakeServerEngine: SSLEngine = mockk(relaxed = true)
+        val fakeSession: SSLSession = mockk(relaxed = true)
+        every { fakeServerEngine.session } returns fakeSession
+        setPrivateField(tlsConnection, "serverSSLEngine", fakeServerEngine)
+
+        every { componentManager.mitmManager.createClientSSLEngineFor(any()) } throws RuntimeException("boom in createClientSSLEngineFor")
+
+        val initiateClientHandshake = TlsConnection::class.java.getDeclaredMethod("initiateClientHandshake")
+        initiateClientHandshake.isAccessible = true
+        initiateClientHandshake.invoke(tlsConnection)
+
+        verify(timeout = 5000) { transportLayer.closeHard() }
     }
 }

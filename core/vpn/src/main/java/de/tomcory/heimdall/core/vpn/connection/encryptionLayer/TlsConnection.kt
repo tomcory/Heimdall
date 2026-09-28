@@ -66,6 +66,14 @@ class TlsConnection(
 
     private val log = true
 
+    /**
+     * Safety cap on BUFFER_UNDERFLOW retries in [handleWrap]/[handleUnwrap]. Growing the buffer
+     * cannot fix a genuine "not enough data has arrived yet" condition (e.g. a handshake message
+     * split across more TLS records than have been received so far) - retrying that forever with
+     * an ever-larger buffer would recurse without bound.
+     */
+    private val maxBufferUnderflowRetries = 5
+
     ////////////////////////////////////////////////////////////////////////
     ///// Inherited methods ///////////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////
@@ -304,8 +312,13 @@ class TlsConnection(
 
         // set up the server-facing SSLEngine and initiate the handshake
         CoroutineScope(Dispatchers.IO).launch {
-            setupServerSSLEngine()
-            continueHandshake(handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP, isClientFacing = false)
+            try {
+                setupServerSSLEngine()
+                continueHandshake(handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP, isClientFacing = false)
+            } catch (e: Throwable) {
+                Timber.e(e, "tls$id initiateServerHandshake failed, closing connection")
+                closeConnection()
+            }
         }
     }
 
@@ -318,8 +331,13 @@ class TlsConnection(
 
         // set up the client-facing SSLEngine and initiate the handshake
         CoroutineScope(Dispatchers.IO).launch {
-            setupClientSSLEngine()
-            continueHandshake(originalClientHello, RecordType.HANDSHAKE_CLIENT_HELLO, true, SSLEngineResult.HandshakeStatus.NEED_UNWRAP)
+            try {
+                setupClientSSLEngine()
+                continueHandshake(originalClientHello, RecordType.HANDSHAKE_CLIENT_HELLO, true, SSLEngineResult.HandshakeStatus.NEED_UNWRAP)
+            } catch (e: Throwable) {
+                Timber.e(e, "tls$id initiateClientHandshake failed, closing connection")
+                closeConnection()
+            }
         }
     }
 
@@ -550,7 +568,7 @@ class TlsConnection(
      *
      * @return The wrapped TLS record, or null if the wrap operation failed. If the operation failed, [closeConnection] is called before returning.
      */
-    private fun handleWrap(payload: ByteArray? = null, isOutbound: Boolean, resizeFactor: Int = 2, closing: Boolean = false): Pair<ByteArray?, SSLEngineResult?> {
+    private fun handleWrap(payload: ByteArray? = null, isOutbound: Boolean, resizeFactor: Int = 2, closing: Boolean = false, underflowRetries: Int = 0): Pair<ByteArray?, SSLEngineResult?> {
         val direction = if(isOutbound) "outbound" else "inbound"
 
         var appBuffer = if(isOutbound) serverAppBufferWrap else clientAppBufferWrap
@@ -612,13 +630,18 @@ class TlsConnection(
 
             // if the wrap() operation requires more input data, increase the capacity of the appBuffer and retry
             SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
+                if(underflowRetries >= maxBufferUnderflowRetries) {
+                    Timber.e("tls$id handleWrap ($isOutbound) buffer underflow persisted after $underflowRetries retries, closing connection")
+                    closeConnection()
+                    return Pair(null, res)
+                }
                 Timber.w("tls$id handleWrap ($isOutbound) buffer underflow, increasing appBuffer capacity and retrying")
                 if(isOutbound) {
                     serverAppBufferWrap = ByteBuffer.allocate(serverAppBufferWrap.capacity() + (payload?.size ?: serverAppBufferWrap.capacity()))
                 } else {
                     clientAppBufferWrap = ByteBuffer.allocate(clientAppBufferWrap.capacity() + (payload?.size ?: clientAppBufferWrap.capacity()))
                 }
-                return handleWrap(payload, isOutbound, resizeFactor)
+                return handleWrap(payload, isOutbound, resizeFactor, closing, underflowRetries + 1)
             }
 
             // if the wrap() operation generates more data than the netBuffer can hold, increase the capacity of the netBuffer and retry
@@ -668,7 +691,7 @@ class TlsConnection(
      *
      * @return The unwrapped application data payload (might be empty), or null if the unwrap operation failed. If the operation failed, [closeConnection] is called before returning.
      */
-    private fun handleUnwrap(record: ByteArray, isOutbound: Boolean, resizeFactor: Int = 2): Pair<ByteArray?, SSLEngineResult?> {
+    private fun handleUnwrap(record: ByteArray, isOutbound: Boolean, resizeFactor: Int = 2, underflowRetries: Int = 0): Pair<ByteArray?, SSLEngineResult?> {
         val direction = if(isOutbound) "outbound" else "inbound"
 
         var appBuffer = if(isOutbound) clientAppBufferUnwrap else serverAppBufferUnwrap
@@ -730,13 +753,18 @@ class TlsConnection(
 
             // if the unwrap() operation requires more input data, increase the capacity of the netBuffer and retry
             SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
+                if(underflowRetries >= maxBufferUnderflowRetries) {
+                    Timber.e("tls$id handleUnwrap ($direction) buffer underflow persisted after $underflowRetries retries, closing connection")
+                    closeConnection()
+                    return Pair(null, res)
+                }
                 Timber.w("tls$id handleUnwrap ($direction) buffer underflow, increasing netBuffer capacity and retrying")
                 if(isOutbound) {
                     clientNetBufferUnwrap = ByteBuffer.allocate(clientNetBufferUnwrap.capacity() + record.size)
                 } else {
                     serverNetBufferUnwrap = ByteBuffer.allocate(serverNetBufferUnwrap.capacity() + record.size)
                 }
-                return handleUnwrap(record, isOutbound, resizeFactor)
+                return handleUnwrap(record, isOutbound, resizeFactor, underflowRetries + 1)
             }
 
             // if the unwrap() operation generates more data than the appBuffer can hold, increase the capacity of the appBuffer and retry
