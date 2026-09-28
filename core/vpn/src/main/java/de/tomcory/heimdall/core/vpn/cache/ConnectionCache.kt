@@ -41,6 +41,11 @@ class ConnectionCache {
             )
         }
 
+        /** Snapshot of every currently-cached connection, regardless of protocol. */
+        fun allConnections(): List<TransportLayerConnection> {
+            return cache.connections.values.toList()
+        }
+
         fun closeAllAndClear() {
             for (connection in cache.connections.values) {
                 connection.closeSoft()

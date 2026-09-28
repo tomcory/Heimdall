@@ -3,6 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 import android.os.Handler
 import android.system.OsConstants
 import de.tomcory.heimdall.core.database.entity.Protocol
+import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
@@ -48,6 +49,17 @@ class UdpConnection internal constructor(
     override val id: Long
     override val selectableChannel: DatagramChannel
     override val selectionKey: SelectionKey?
+
+    /**
+     * Wall-clock time of the last actual data transfer on this connection (i.e. the last
+     * [wrapOutbound]/[unwrapInbound] call that moved a non-zero number of bytes), used by
+     * [sweepIdleConnections] to idle-reap UDP "connections" that never get an explicit close
+     * signal of their own (unlike TCP's FIN/RST). Initialised to construction time so a brand
+     * new connection isn't immediately eligible for reaping.
+     */
+    @Volatile
+    var lastActivityAt: Long = System.currentTimeMillis()
+        private set
 
     init {
         // these values must be initialised in this order because they each depend on the previous one
@@ -152,6 +164,9 @@ class UdpConnection internal constructor(
                     break
                 }
             }
+            if (bytesWritten > 0) {
+                lastActivityAt = System.currentTimeMillis()
+            }
             recordBytesOut(bytesWritten)
         }
     }
@@ -202,6 +217,9 @@ class UdpConnection internal constructor(
                 }
             } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
 
+            if (totalBytesRead > 0) {
+                lastActivityAt = System.currentTimeMillis()
+            }
             recordBytesIn(totalBytesRead)
 
             // no need to keep DNS connections open after the first and only packet
@@ -225,4 +243,36 @@ class UdpConnection internal constructor(
     }
 
     override fun closeClientSession() {}
+
+    companion object {
+        /**
+         * Default idle timeout after which a UDP "connection" with no activity is closed by
+         * [sweepIdleConnections], matching typical NAT UDP session timeout conventions (RFC 4787
+         * recommends at least 2 minutes for NATs; this picks a slightly more generous default).
+         */
+        const val DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /**
+         * Closes every currently-cached [UdpConnection] that's had no [wrapOutbound]/[unwrapInbound]
+         * activity for longer than [idleTimeoutMs]. Unlike TCP, UDP has no FIN/RST of its own to
+         * signal "this flow is done" - without a sweep like this, every UDP flow (QUIC, WebRTC,
+         * games, ...) other than the DNS special-case would stay registered - holding a
+         * DatagramChannel fd and its read/write buffers - for the entire VPN session.
+         *
+         * @param now Injectable for testing; defaults to the real current time.
+         */
+        fun sweepIdleConnections(idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS, now: Long = System.currentTimeMillis()) {
+            ConnectionCache.allConnections()
+                .filterIsInstance<UdpConnection>()
+                .filter { now - it.lastActivityAt > idleTimeoutMs }
+                .forEach { connection ->
+                    try {
+                        Timber.d("udp${connection.id} idle-reaping UDP connection to ${connection.remoteHost ?: connection.ipPacketBuilder.remoteAddress.hostAddress}:${connection.remotePort} (no activity for over ${idleTimeoutMs}ms)")
+                        connection.closeHard()
+                    } catch (e: Throwable) {
+                        Timber.e(e, "Error closing idle UDP connection during sweep")
+                    }
+                }
+        }
+    }
 }
