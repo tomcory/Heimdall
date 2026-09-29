@@ -157,6 +157,52 @@ class KeyStoreHelperTest {
     }
 
     @Test
+    fun `a keystore that can't be opened with the current password is regenerated instead of crashing`() {
+        // Simulates a keystore created before per-install random passwords replaced the old
+        // hardcoded literal password: the .p12 exists, but authority.password (freshly generated,
+        // since there's no .pwd file yet) doesn't match what the file was actually encrypted
+        // with - KeyStore.load() throws "PKCS12 key store mac invalid - wrong password or
+        // corrupted file" in this situation, which used to propagate uncaught and crash VPN
+        // startup entirely (docs of this fix: KeyStoreHelper.loadIfValid).
+        val dir = createTempDir()
+        try {
+            val authority = Authority.getDefaultInstance(dir)
+
+            val keyPair = CertificateHelper.generateKeyPair(2048)
+            val issuer = X500NameBuilder(BCStyle.INSTANCE)
+                .addRDN(BCStyle.CN, authority.issuerCN)
+                .addRDN(BCStyle.O, authority.issuerO)
+                .addRDN(BCStyle.OU, authority.issuerOU)
+                .build()
+            val notBefore = Date(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1))
+            val notAfter = Date(System.currentTimeMillis() + TimeUnit.DAYS.toMillis(365))
+            val certificateBuilder = JcaX509v3CertificateBuilder(issuer, BigInteger.valueOf(System.nanoTime()), notBefore, notAfter, issuer, keyPair.public)
+            certificateBuilder.addExtension(Extension.basicConstraints, true, BasicConstraints(true))
+            val signer = JcaContentSignerBuilder("SHA256WithRSAEncryption").build(keyPair.private)
+            val cert = JcaX509CertificateConverter().getCertificate(certificateBuilder.build(signer))
+
+            // deliberately encrypt with a DIFFERENT password than authority.password will load with
+            val wrongPassword = "changeit".toCharArray()
+            val keyStore = KeyStore.getInstance(keyStoreType)
+            keyStore.load(null, null)
+            keyStore.setKeyEntry(authority.alias, keyPair.private as PrivateKey, wrongPassword, arrayOf(cert))
+            FileOutputStream(authority.aliasFile(keyStoreExtension)).use { keyStore.store(it, wrongPassword) }
+
+            val result = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+            val resultCert = result.getCertificate(authority.alias) as X509Certificate
+
+            assertNotEquals(
+                "expected a fresh certificate (different serial) instead of failing to reuse the unreadable one",
+                cert.serialNumber,
+                resultCert.serialNumber
+            )
+            resultCert.checkValidity() // must not throw
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a missing pem export is re-derived from the existing keystore, not treated as a reason to regenerate`() {
         val dir = createTempDir()
         try {

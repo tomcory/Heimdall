@@ -77,15 +77,29 @@ object KeyStoreHelper {
 
     /**
      * Loads the existing key store for [authority] and returns it if its CA certificate is
-     * currently valid, or `null` if the key store is missing a certificate entry or that
-     * certificate isn't currently valid (in either case, the caller should regenerate instead of
-     * reusing it).
+     * currently valid, or `null` if the key store can't be loaded at all, is missing a
+     * certificate entry, or that certificate isn't currently valid (in every case, the caller
+     * should regenerate instead of reusing it).
      */
-    @Throws(GeneralSecurityException::class, IOException::class)
     private fun loadIfValid(authority: Authority): KeyStore? {
         val keyStore = KeyStore.getInstance(KEY_STORE_TYPE)
-        FileInputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { stream ->
-            keyStore.load(stream, authority.password)
+        try {
+            FileInputStream(authority.aliasFile(KEY_STORE_FILE_EXTENSION)).use { stream ->
+                keyStore.load(stream, authority.password)
+            }
+        } catch (e: IOException) {
+            // Typically "PKCS12 key store mac invalid - wrong password or corrupted file" - e.g.
+            // a keystore created before per-install random passwords replaced the old hardcoded
+            // literal (so there's no .pwd file, and a freshly-generated random password doesn't
+            // match what the file was actually encrypted with), or genuine on-disk corruption.
+            // Either way this keystore can't be read at all, so it's unusable - treat it the same
+            // as a missing/invalid certificate entry below and regenerate, rather than letting
+            // this crash VPN startup entirely.
+            Timber.w(e, "Existing root CA key store for alias ${authority.alias} could not be loaded (wrong password or corrupted file), regenerating")
+            return null
+        } catch (e: GeneralSecurityException) {
+            Timber.w(e, "Existing root CA key store for alias ${authority.alias} could not be loaded, regenerating")
+            return null
         }
 
         val cert = keyStore.getCertificate(authority.alias) as? X509Certificate

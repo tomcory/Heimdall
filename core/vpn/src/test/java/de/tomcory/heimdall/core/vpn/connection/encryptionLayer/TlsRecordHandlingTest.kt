@@ -228,6 +228,32 @@ class TlsRecordHandlingTest {
     }
 
     @Test
+    fun `processRecord stops once the transport connection is already closed, instead of retrying every remaining attached record`() {
+        // doMitm=false (this test class's default) means handleOutboundRecord's passthrough
+        // branch never touches TlsConnection's own `state` - without a guard on the underlying
+        // transport connection, every attached record after the one that closed it would
+        // independently repeat the exact same doomed write and log its own redundant error.
+        val record1 = appData(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte())
+        val record2 = appData(0x01, 0x02)
+        val packed = record1 + record2
+
+        var wrapOutboundCalls = 0
+        // simulates transportLayer.wrapOutbound() failing on the first record and closing the
+        // connection (as TcpConnection.wrapOutbound's catch block does on a real write failure)
+        every { transportLayer.state } answers {
+            if (wrapOutboundCalls == 0) TransportLayerConnection.TransportLayerState.CONNECTED
+            else TransportLayerConnection.TransportLayerState.CLOSED
+        }
+        every { transportLayer.wrapOutbound(any()) } answers {
+            wrapOutboundCalls++
+        }
+
+        tlsConnection.unwrapOutbound(packed)
+
+        verify(exactly = 1) { transportLayer.wrapOutbound(any()) }
+    }
+
+    @Test
     fun `prepareRecords stashes tiny snippet and combines it with the next payload`() {
         // Send only 3 bytes (less than the 5-byte TLS header minimum)
         val snippet = byteArrayOf(0x17, 0x03, 0x03)

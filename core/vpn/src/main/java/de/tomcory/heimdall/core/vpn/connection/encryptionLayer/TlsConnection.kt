@@ -907,6 +907,17 @@ class TlsConnection(
     private fun processRecord(record: ByteArray, isOutbound: Boolean) {
         if(record.isNotEmpty()) {
 
+            // a single transport-layer payload can contain several attached TLS records (prepareRecords
+            // recurses through them one at a time) - if an earlier record in this same batch already
+            // triggered a write failure that tore down the underlying transport connection (most visibly
+            // on the doMitm=false passthrough path, which never touches `state` above), every later
+            // record in the batch would otherwise independently repeat the exact same doomed write and
+            // log its own redundant error. Stop once the transport connection is definitively gone.
+            if (transportLayer.state == TransportLayerConnection.TransportLayerState.CLOSED ||
+                transportLayer.state == TransportLayerConnection.TransportLayerState.ABORTED) {
+                return
+            }
+
             val recordType = parseRecordType(record)
 
             if(isOutbound) {
