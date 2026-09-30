@@ -90,6 +90,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/fileprovider" />
         </provider>
+
+        <!-- HeimdallApplication supplies WorkManager's configuration (Hilt worker factory) via
+             Configuration.Provider, so WorkManager must be initialised on demand: remove the
+             default androidx.startup initializer, which would initialise it with the default
+             configuration before the application's is available -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>
