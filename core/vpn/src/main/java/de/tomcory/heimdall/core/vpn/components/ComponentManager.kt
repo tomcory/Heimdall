@@ -12,6 +12,7 @@ import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,8 @@ class ComponentManager(
     existingSessionId: Long = -1,
     val doMitm: Boolean = false,
     val trustAllUpstreamCertificates: Boolean = false,
+    val mitmScope: MitmScope = MitmScope.ALL,
+    val learnPassthrough: Boolean = true,
     keyStoreDir: File,
     val appFinder: AppFinder,
     val maxPacketSize: Int = 16413,

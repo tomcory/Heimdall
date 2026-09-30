@@ -9,6 +9,7 @@ import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import io.mockk.every
 import io.mockk.mockk
 import java.io.File
@@ -58,7 +59,9 @@ object ComponentManagerFixtures {
         appPackage: String = "com.example.test",
         labelAsTracker: Boolean = false,
         sessionId: Long = 1,
-        maxPacketSize: Int = 16413
+        maxPacketSize: Int = 16413,
+        mitmScope: MitmScope = MitmScope.ALL,
+        learnPassthrough: Boolean = true
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -84,6 +87,10 @@ object ComponentManagerFixtures {
         every { componentManager.maxPacketSize } returns maxPacketSize
         every { componentManager.dnsCache } returns dnsCache
         every { componentManager.tlsPassthroughCache } returns tlsPassthroughCache
+        // must be stubbed explicitly: a relaxed mock would return a MitmScope mock whose
+        // shouldIntercept() is false, and false for learnPassthrough, silently disabling MitM
+        every { componentManager.mitmScope } returns mitmScope
+        every { componentManager.learnPassthrough } returns learnPassthrough
         every { componentManager.sessionId } returns sessionId
         every { componentManager.protectSocket } returns { _: Socket -> }
         every { componentManager.protectDatagramSocket } returns { _: DatagramSocket -> }

@@ -7,6 +7,7 @@ import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateHelper
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.SubjectAlternativeNameHolder
 import io.mockk.every
 import io.mockk.mockk
@@ -57,6 +58,8 @@ class TlsHandshakeDelegatedTaskTest {
         val componentManager = mockk<ComponentManager>(relaxed = true)
         every { componentManager.doMitm } returns true
         every { componentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+        every { componentManager.mitmScope } returns MitmScope.ALL
+        every { componentManager.learnPassthrough } returns true
         every { componentManager.mitmManager } returns
                 CertificateSniffingMitmManager(Authority.getDefaultInstance(mitmDir), trustAllServers = true)
 

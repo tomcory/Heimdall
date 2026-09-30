@@ -95,7 +95,7 @@ fun MitMPreferences(
         )
 
         BooleanPreference(
-            text = "App-layer passthrough",
+            text = "Auto-skip MitM on cert rejection",
             value = viewModel.preferences.mitmAppLayerPassthrough.collectAsState(initial = viewModel.prefInit.mitmAppLayerPassthroughInitial).value,
             onValueChange = { value -> viewModel.preferences.setMitmAppLayerPassthrough(value) }
         )

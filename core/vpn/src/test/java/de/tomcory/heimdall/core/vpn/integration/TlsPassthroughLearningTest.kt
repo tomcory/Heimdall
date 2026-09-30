@@ -10,9 +10,11 @@ import de.tomcory.heimdall.core.vpn.integration.support.PacketFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.RecordingDeviceWriter
 import de.tomcory.heimdall.core.vpn.integration.support.SelectorPump
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -54,7 +56,17 @@ class TlsPassthroughLearningTest {
         PacketFixtures.warmUpPcap4j()
         ConnectionCache.closeAllAndClear()
         fakeTlsServer = FakeTlsServer(hostname)
-        componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        useComponentManager()
+    }
+
+    /** (Re)builds the shared ComponentManager with the given MitM settings (PKT-24). */
+    private fun useComponentManager(mitmScope: MitmScope = MitmScope.ALL, learnPassthrough: Boolean = true) {
+        if (::pump.isInitialized) pump.stop()
+        componentManager = ComponentManagerFixtures.buildTestComponentManager(
+            keyStoreDir = createTempDir(),
+            mitmScope = mitmScope,
+            learnPassthrough = learnPassthrough
+        )
         cache = componentManager.tlsPassthroughCache
         pump = SelectorPump(componentManager.selector)
         pump.start()
@@ -176,6 +188,59 @@ class TlsPassthroughLearningTest {
         Thread.sleep(500)
         assertFalse(cache.get(appId, hostname))
         assertEquals(0, suspectCount())
+    }
+
+    // ---- MitM scope and learning switch (docs/vpn-mitm-audit.md PKT-24) ----
+
+    @Test
+    fun `host outside the MitM scope is passed through`() {
+        useComponentManager(mitmScope = MitmScope(hostMode = MitmScope.HostMode.BLACKLIST, hosts = listOf(hostname)))
+        assertPassedThrough(localPort = 45040)
+    }
+
+    @Test
+    fun `app outside the MitM scope is passed through`() {
+        // the fixture attributes every connection to "com.example.test"
+        useComponentManager(mitmScope = MitmScope(includedApps = setOf("com.other.app")))
+        assertPassedThrough(localPort = 45041)
+    }
+
+    @Test
+    fun `app and host inside the MitM scope are still intercepted`() {
+        useComponentManager(mitmScope = MitmScope(
+            includedApps = setOf("com.example.test"),
+            hostMode = MitmScope.HostMode.WHITELIST,
+            hosts = listOf(hostname)
+        ))
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull(runClientHandshake(Flow(localPort = 45042), driver))
+        assertNotEquals(
+            "an intercepted connection must present a forged certificate",
+            fakeTlsServer.leafCert,
+            driver.engine.session.peerCertificates[0]
+        )
+    }
+
+    @Test
+    fun `nothing is learned when passthrough learning is switched off`() {
+        useComponentManager(learnPassthrough = false)
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val flow = Flow(localPort = 45043)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port, rejectingTrustManager())
+        assertNotNull(runClientHandshake(flow, driver))
+
+        // negative assertion: allow time for the rejection to be processed (see the normal-flow test)
+        Thread.sleep(500)
+        assertFalse(cache.get(appId, hostname))
+    }
+
+    /** Opens a connection and asserts the client sees the real upstream certificate, i.e. no MitM. */
+    private fun assertPassedThrough(localPort: Int) {
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull("the passthrough handshake should succeed", runClientHandshake(Flow(localPort), driver))
+        assertEquals(fakeTlsServer.leafCert, driver.engine.session.peerCertificates[0])
     }
 
     // ---- helpers ----

@@ -240,8 +240,11 @@ class TlsConnection(
             sni = findSni(record)
             sni?.let { hostname = it }
 
-            // update the doMitm flag if the connection is marked for passthroughs
-            doMitm = doMitm && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, hostname) } ?: false)
+            // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)
+            // that aren't marked for passthrough
+            doMitm = doMitm
+                    && componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, hostname)
+                    && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, hostname) } ?: false)
         }
 
         // if we don't want to MITM, we can hand the unprocessed record straight to the application layer
@@ -1211,7 +1214,8 @@ class TlsConnection(
      * connection is actually being MitM'd, and only for connections attributed to an app.
      */
     private fun learnPassthrough(reason: PassthroughReason) {
-        if(!doMitm) {
+        // learning can be switched off by the user ("mitm_appLayer_passthrough", PKT-24)
+        if(!doMitm || !componentManager.learnPassthrough) {
             return
         }
         val appId = transportLayer.appId ?: return

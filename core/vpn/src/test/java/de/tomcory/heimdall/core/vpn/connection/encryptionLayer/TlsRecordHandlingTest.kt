@@ -3,6 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -27,6 +28,8 @@ class TlsRecordHandlingTest {
         componentManager = mockk(relaxed = true)
         every { componentManager.doMitm } returns false
         every { componentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+        every { componentManager.mitmScope } returns MitmScope.ALL
+        every { componentManager.learnPassthrough } returns true
 
         transportLayer = mockk(relaxed = true)
         every { transportLayer.remoteHost } returns null
@@ -396,6 +399,9 @@ class TlsRecordHandlingTest {
         val mitmComponentManager: ComponentManager = mockk(relaxed = true)
         every { mitmComponentManager.doMitm } returns true
         every { mitmComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+        // explicit, or the relaxed mock's MitmScope would veto MitM (PKT-24)
+        every { mitmComponentManager.mitmScope } returns MitmScope.ALL
+        every { mitmComponentManager.learnPassthrough } returns true
 
         // without this, createServerSSLEngine()'s fully-relaxed SSLEngine mock's wrap() call
         // returns a synthesized SSLEngineResult whose Status defaults to the first-declared enum
@@ -459,6 +465,9 @@ class TlsRecordHandlingTest {
         val realComponentManager: ComponentManager = mockk(relaxed = true)
         every { realComponentManager.doMitm } returns true
         every { realComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+        // explicit, or the relaxed mock's MitmScope would veto MitM (PKT-24)
+        every { realComponentManager.mitmScope } returns MitmScope.ALL
+        every { realComponentManager.learnPassthrough } returns true
 
         // a believable "sent our part, now waiting" result, same as the split-ClientHello test
         // above - without this the handshake self-closes a few calls later regardless of thread
@@ -515,6 +524,9 @@ class TlsRecordHandlingTest {
         val realComponentManager: ComponentManager = mockk(relaxed = true)
         every { realComponentManager.doMitm } returns false
         every { realComponentManager.tlsPassthroughCache } returns TlsPassthroughCache()
+        // explicit, or the relaxed mock's MitmScope would veto MitM (PKT-24)
+        every { realComponentManager.mitmScope } returns MitmScope.ALL
+        every { realComponentManager.learnPassthrough } returns true
 
         val realTransportLayer: TransportLayerConnection = mockk(relaxed = true)
         every { realTransportLayer.remoteHost } returns null

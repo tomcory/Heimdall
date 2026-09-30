@@ -46,6 +46,9 @@ message Preferences {
 
   // ---- MITM PREFERENCES
   bool mitm_enable = 12;
+  // whether the MitM learns, per VPN session, to stop intercepting (app, host) pairs whose app
+  // rejects Heimdall's forged certificate (docs/vpn-mitm-audit.md PKT-23/PKT-24). The historical
+  // name is kept for storage compatibility.
   bool mitm_appLayer_passthrough = 13;
   string mitm_caCert_path = 14;
   MonitoringScopeApps mitm_monitoringScope_apps = 15;

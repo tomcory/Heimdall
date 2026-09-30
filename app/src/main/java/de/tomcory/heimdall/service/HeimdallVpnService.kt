@@ -22,6 +22,7 @@ import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.RoomDatabaseConnector
+import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
 import de.tomcory.heimdall.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -204,8 +205,13 @@ class HeimdallVpnService : VpnService() {
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
         val trustAllUpstreamCertificates = preferences.mitmTrustAllUpstreamCerts.first()
+        val mitmScope = if (doMitm) resolveMitmScope() else MitmScope.ALL
+        val learnPassthrough = preferences.mitmAppLayerPassthrough.first()
 
         Timber.d("MitM mode: $doMitm")
+        if (doMitm) {
+            Timber.d("MitM scope: apps included=${mitmScope.includedApps?.size ?: "all"}, excluded=${mitmScope.excludedApps.size}, hosts=${mitmScope.hostMode} (${mitmScope.hosts.size}); learn passthrough: $learnPassthrough")
+        }
 
         // establish the VPN interface
         if (!establishInterface(doMitm)) {
@@ -224,6 +230,8 @@ class HeimdallVpnService : VpnService() {
                 appFinder = AppFinder(this),
                 doMitm = doMitm,
                 trustAllUpstreamCertificates = trustAllUpstreamCertificates,
+                mitmScope = mitmScope,
+                learnPassthrough = learnPassthrough,
                 existingSessionId = existingSessionId,
                 keyStoreDir = File(this.filesDir, "keystore"),
                 protectDatagramSocket = { socket -> protect(socket) },
@@ -238,6 +246,31 @@ class HeimdallVpnService : VpnService() {
 
         // getting to this point means that everything was established and launched successfully
         componentsActive = true
+    }
+
+    /**
+     * Resolves the user's MitM monitoring-scope preferences into the [MitmScope] the VPN applies
+     * (docs/vpn-mitm-audit.md PKT-24).
+     */
+    private suspend fun resolveMitmScope(): MitmScope = MitmScopeResolver.resolve(
+        appScope = preferences.mitmMonitoringScopeApps.first(),
+        whitelistApps = preferences.mitmWhitelistApps.first(),
+        blacklistApps = preferences.mitmBlacklistApps.first(),
+        hostScope = preferences.mitmMonitoringScopeHosts.first(),
+        whitelistHosts = preferences.mitmWhitelistHosts.first(),
+        blacklistHosts = preferences.mitmBlacklistHosts.first(),
+        systemPackages = ::getSystemPackages
+    )
+
+    /** Package names of all installed system apps. */
+    private fun getSystemPackages(): Set<String> {
+        val systemApps = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getInstalledApplications(
+                PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong() or PackageManager.MATCH_SYSTEM_ONLY.toLong()))
+        } else {
+            packageManager.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.MATCH_SYSTEM_ONLY)
+        }
+        return systemApps.map { it.packageName }.toSet()
     }
 
     /**
@@ -342,19 +375,11 @@ class HeimdallVpnService : VpnService() {
 
         // if the monitoring scope excludes system apps, add them to the builder's blacklist
         if(monitoringScope == APPS_NON_SYSTEM || monitoringScope == APPS_NON_SYSTEM_BLACKLIST) {
-            // get a list of all system apps...
-            val systemApps = if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                packageManager.getInstalledApplications(
-                    PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong() or PackageManager.MATCH_SYSTEM_ONLY.toLong()))
-            } else {
-                packageManager.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.MATCH_SYSTEM_ONLY)
-            }
-
-            // ...and add them all to the builder's blacklist
-            for (packageInfo in systemApps) {
+            // add all system apps to the builder's blacklist
+            for (packageName in getSystemPackages()) {
                 try {
-                    blacklist.add(packageInfo.packageName)
-                    builder.addDisallowedApplication(packageInfo.packageName)
+                    blacklist.add(packageName)
+                    builder.addDisallowedApplication(packageName)
                 } catch (e: PackageManager.NameNotFoundException) {
                     Timber.e(e, "Error adding system app to blacklist")
                 }
