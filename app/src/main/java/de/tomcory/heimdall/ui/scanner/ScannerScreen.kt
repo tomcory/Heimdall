@@ -7,7 +7,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -49,8 +51,11 @@ fun ScannerScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.surface,
+        // MainScreen's outer Scaffold already pads the nav host for system bars and the bottom
+        // bar; claiming them again here would apply those insets twice
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             // ── Persistent control strip ───────────────────────────────────────
             ScannerControlStrip(
                 onShowSnackbar = showSnackbar,
