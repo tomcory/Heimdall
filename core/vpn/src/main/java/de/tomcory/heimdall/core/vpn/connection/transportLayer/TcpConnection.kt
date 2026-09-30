@@ -312,6 +312,11 @@ class TcpConnection internal constructor(
      */
     private fun handleRst() {
         Timber.d("tcp$id Got RST from client, closing connection")
+        // only a live connection counts as the client giving up - an RST after the remote side
+        // already started closing (CLOSING) or after teardown isn't the client's decision
+        if (state == TransportLayerState.CONNECTING || state == TransportLayerState.CONNECTED) {
+            notifyClientClosed()
+        }
         closeHard(abortClientSession = false)
     }
 
@@ -348,6 +353,7 @@ class TcpConnection internal constructor(
                 // client-facing RST; the FIN-ACK written below is the correct signal. The device's
                 // final ACK is what finalizes the state to CLOSED and removes the connection from
                 // the cache, via handleAckEmpty()'s CLOSING branch.
+                notifyClientClosed()
                 closeSoft(abortClientSession = false, finalizeState = false)
                 increaseTheirSeqNum(1)
                 val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())

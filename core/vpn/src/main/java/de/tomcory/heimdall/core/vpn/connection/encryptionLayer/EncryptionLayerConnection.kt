@@ -103,6 +103,15 @@ abstract class EncryptionLayerConnection(
      */
     abstract fun wrapInbound(payload: ByteArray)
 
+    /**
+     * Called by the transport layer when the device-side client closes or aborts the connection
+     * itself (e.g. a TCP FIN or RST sent by the app), as opposed to the remote server closing it or
+     * the connection being torn down due to an error. Called on the transport layer's thread before
+     * the transport connection is torn down; implementations with their own confinement must hop
+     * onto it. No-op by default.
+     */
+    open fun onClientClosed() {}
+
     companion object {
 
         /**

@@ -140,6 +140,15 @@ abstract class TransportLayerConnection protected constructor(
         encryptionLayer?.unwrapInbound(payload)
     }
 
+    /**
+     * Tells the encryption layer (if one exists yet) that the device-side client closed or aborted
+     * the connection itself. Transport implementations call this only on client-initiated close
+     * paths, never on remote-initiated or error-driven teardown.
+     */
+    protected fun notifyClientClosed() {
+        encryptionLayer?.onClientClosed()
+    }
+
     protected fun createDatabaseEntity(): Long {
         return if(remotePort == 53) {
             0

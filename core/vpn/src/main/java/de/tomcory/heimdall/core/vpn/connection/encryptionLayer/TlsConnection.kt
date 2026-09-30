@@ -168,6 +168,18 @@ class TlsConnection(
         }
     }
 
+    override fun onClientClosed() {
+        // dispatched via connectionScope like unwrapOutbound/unwrapInbound, so it runs after any
+        // records the client sent before closing and never races the handshake state. If this
+        // connection already closed itself, connectionScope is cancelled and this is simply dropped
+        // (which also prevents re-entry via closeConnection() -> transportLayer.closeHard()).
+        connectionScope.launch {
+            if(log) Timber.d("tls$id onClientClosed in state $state")
+            // client-side failure detection (passthrough learning) hooks in here, see
+            // docs/vpn-mitm-audit.md PKT-23
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////
     ///// Traffic handler methods /////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////

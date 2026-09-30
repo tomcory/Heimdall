@@ -1,6 +1,10 @@
 package de.tomcory.heimdall.core.vpn.integration
 
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
+import java.util.concurrent.atomic.AtomicInteger
+import org.pcap4j.packet.Packet
+import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
+import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
@@ -442,5 +446,135 @@ class ConnectionTeardownTest {
         assertEquals(DeviceWriteThread.WRITE_STRAY, message.what)
         val tcp = (message.obj as IpPacket).payload as TcpPacket
         assertTrue("stray reply should be an RST", tcp.header.rst)
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-22: client-closed notification to the encryption layer ----
+
+    /** Encryption layer stand-in that only counts [onClientClosed] calls. */
+    private class RecordingEncryptionLayer(
+        transportLayer: TransportLayerConnection,
+        componentManager: ComponentManager
+    ) : EncryptionLayerConnection(0, transportLayer, componentManager) {
+        override val protocol = "TEST"
+        val clientClosedCalls = AtomicInteger(0)
+        override fun onClientClosed() { clientClosedCalls.incrementAndGet() }
+        override fun unwrapOutbound(payload: ByteArray) {}
+        override fun unwrapOutbound(packet: Packet) {}
+        override fun unwrapInbound(payload: ByteArray) {}
+        override fun wrapOutbound(payload: ByteArray) {}
+        override fun wrapInbound(payload: ByteArray) {}
+    }
+
+    private class EstablishedFlow(
+        val connection: TransportLayerConnection,
+        val deviceWriter: RecordingDeviceWriter,
+        val recorder: RecordingEncryptionLayer,
+        val localAddr: Inet4Address,
+        val localPort: Int,
+        val remoteAddr: Inet4Address,
+        val remotePort: Int
+    ) {
+        fun sendFromDevice(finFlag: Boolean = false, rstFlag: Boolean = false) {
+            val packet = PacketFixtures.buildTcpDataPacket(
+                localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
+                seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false,
+                ackFlag = !rstFlag, finFlag = finFlag, rstFlag = rstFlag
+            )
+            connection.unwrapOutbound(packet.payload)
+        }
+    }
+
+    /**
+     * Opens a CONNECTED TCP flow to [serverSocket] and installs a [RecordingEncryptionLayer] in
+     * place of the lazily-created real one (reflection, since the field is private to the transport layer).
+     */
+    private fun establishFlowWithRecorder(localPort: Int): EstablishedFlow {
+        acceptThread = Thread {
+            try {
+                acceptedSocket.set(serverSocket.accept())
+            } catch (e: Exception) {
+                // closed during teardown
+            }
+        }
+        acceptThread.start()
+
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        pump = SelectorPump(componentManager.selector)
+        pump.start()
+
+        val deviceWriter = RecordingDeviceWriter()
+        val localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address
+        val remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
+        val remotePort = serverSocket.localPort
+
+        val synPacket = PacketFixtures.buildTcpSynPacket(localAddr, localPort, remoteAddr, remotePort)
+        val connection = TransportLayerConnection.getInstance(synPacket, componentManager, deviceWriter.handler)!!
+        connection.unwrapOutbound(synPacket.payload)
+
+        val handshakeDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < handshakeDeadline && deviceWriter.sentMessages.isEmpty()) {
+            Thread.sleep(20)
+        }
+        assertTrue("expected a SYN-ACK to be sent back to the device", deviceWriter.sentMessages.isNotEmpty())
+
+        val flow = EstablishedFlow(
+            connection, deviceWriter, RecordingEncryptionLayer(connection, componentManager),
+            localAddr, localPort, remoteAddr, remotePort
+        )
+        flow.sendFromDevice() // bare ACK completes the local handshake
+        assertEquals(TransportLayerConnection.TransportLayerState.CONNECTED, connection.state)
+
+        val field = TransportLayerConnection::class.java.getDeclaredField("encryptionLayer")
+        field.isAccessible = true
+        field.set(connection, flow.recorder)
+        return flow
+    }
+
+    @Test
+    fun `device FIN notifies the encryption layer exactly once`() {
+        val flow = establishFlowWithRecorder(localPort = 41600)
+
+        flow.sendFromDevice(finFlag = true)
+        // a retransmitted FIN while CLOSING must not notify again
+        flow.sendFromDevice(finFlag = true)
+
+        assertEquals(1, flow.recorder.clientClosedCalls.get())
+    }
+
+    @Test
+    fun `device RST notifies the encryption layer exactly once`() {
+        val flow = establishFlowWithRecorder(localPort = 41601)
+
+        flow.sendFromDevice(rstFlag = true)
+
+        assertEquals(1, flow.recorder.clientClosedCalls.get())
+    }
+
+    @Test
+    fun `remote close does not notify the encryption layer`() {
+        val flow = establishFlowWithRecorder(localPort = 41602)
+
+        // wait for the server to accept, then close it from the remote side
+        val acceptDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < acceptDeadline && acceptedSocket.get() == null) {
+            Thread.sleep(20)
+        }
+        val messagesBeforeClose = flow.deviceWriter.sentMessages.size
+        acceptedSocket.get()!!.close()
+
+        // the remote EOF makes the transport send its own FIN to the device and move to CLOSING
+        val finDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < finDeadline &&
+            flow.connection.state != TransportLayerConnection.TransportLayerState.CLOSING) {
+            Thread.sleep(20)
+        }
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, flow.connection.state)
+        assertTrue(flow.deviceWriter.sentMessages.size > messagesBeforeClose)
+
+        // the device answering that close (FIN-ACK), or resetting after it, is not the client giving up
+        flow.sendFromDevice(finFlag = true)
+        flow.sendFromDevice(rstFlag = true)
+
+        assertEquals(0, flow.recorder.clientClosedCalls.get())
     }
 }
