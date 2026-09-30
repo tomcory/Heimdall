@@ -159,7 +159,62 @@ object KeyStoreHelper {
         exportPem(authority.aliasFile("-$commonName-cert.pem"), *certs)
     }
 
-    private fun calculateSubjectHashOld(x509Certificate: X509Certificate): String {
+    /**
+     * Deletes the root CA key store and its `.pem` export for [authority], so that the next
+     * [initialiseOrLoadKeyStore] call generates a fresh CA. The `.pwd` file is kept, so the new
+     * key store is encrypted with the same per-install password.
+     */
+    fun deleteKeyStore(authority: Authority) {
+        for (extension in listOf(KEY_STORE_FILE_EXTENSION, ".pem")) {
+            val file = File(authority.keyStoreDir, authority.alias + extension)
+            if (file.exists() && !file.delete()) {
+                throw IOException("Could not delete ${file.absolutePath}")
+            }
+        }
+        Timber.d("Deleted root certificate authority key store for alias ${authority.alias}")
+    }
+
+    /**
+     * The root CA certificate as exported by [exportCaFiles].
+     *
+     * @property hash the certificate's `subject_hash_old` (see [subjectHashOld])
+     * @property pemFile the certificate as a PEM file named after the authority's alias
+     * @property systemFile the same certificate named `<hash>.0`, as expected by the system CA store
+     */
+    data class CaExport(
+        val hash: String,
+        val pemFile: File,
+        val systemFile: File
+    )
+
+    /**
+     * Exports the root CA certificate of [authority] from [keyStore] to [outDir], both as
+     * `<alias>.pem` and as `<subject_hash_old>.0` (the file name Android's system CA store
+     * expects, e.g. in `/system/etc/security/cacerts`).
+     */
+    @Throws(IOException::class)
+    fun exportCaFiles(authority: Authority, keyStore: KeyStore, outDir: File): CaExport {
+        val x509Certificate = keyStore.getCertificate(authority.alias) as X509Certificate
+
+        if (!outDir.exists() && !outDir.mkdirs()) {
+            throw IOException("Could not create ${outDir.absolutePath}")
+        }
+
+        val hash = subjectHashOld(x509Certificate)
+        val pemFile = File(outDir, "${authority.alias}.pem")
+        val systemFile = File(outDir, "$hash.0")
+        exportPem(pemFile, x509Certificate)
+        exportPem(systemFile, x509Certificate)
+
+        return CaExport(hash, pemFile, systemFile)
+    }
+
+    /**
+     * Calculates the certificate's subject hash the way `openssl x509 -subject_hash_old` does:
+     * the first four bytes of the MD5 of the DER-encoded subject, read as a little-endian integer.
+     * Android's system CA store names its certificates after this hash.
+     */
+    fun subjectHashOld(x509Certificate: X509Certificate): String {
         val asn1EncodedSubject = x509Certificate.subjectX500Principal.encoded
         val hash = MessageDigest.getInstance("MD5").digest(asn1EncodedSubject)
 
@@ -248,12 +303,7 @@ object KeyStoreHelper {
             val metaPath = File(modulePath, "META-INF/com/google/android").apply { mkdirs() }
 
             // export certificate to PEM file named <subject_old_hash>.0 and write it to system/etc/security/cacerts
-            val pemFile = File(cacertsPath, "${calculateSubjectHashOld(x509Certificate)}.0")
-            FileWriter(pemFile).use { fileWriter ->
-                JcaPEMWriter(fileWriter).use { pemWriter ->
-                    pemWriter.writeObject(x509Certificate)
-                }
-            }
+            exportPem(File(cacertsPath, "${subjectHashOld(x509Certificate)}.0"), x509Certificate)
 
             // create module.prop file with module information
             val modulePropContent = """

@@ -149,7 +149,11 @@ dependencies {
     androidTestImplementation (libs.androidx.test.runner)
     androidTestImplementation (libs.androidx.test.rules)
     androidTestImplementation (libs.androidx.espresso.core)
-    testImplementation (libs.robolectric)
+    testImplementation (libs.robolectric) {
+        // Robolectric brings bcprov-jdk18on, which clashes with core:vpn's bcprov-jdk15on (same
+        // classes, different versions) and breaks CA generation in unit tests
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk18on")
+    }
 
     // project modules
     implementation (project(":core:database"))

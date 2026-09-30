@@ -10,14 +10,17 @@ import org.bouncycastle.openssl.jcajce.JcaPEMWriter
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.io.FileOutputStream
 import java.io.FileWriter
 import java.math.BigInteger
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -230,6 +233,86 @@ class KeyStoreHelperTest {
                 secondCert.publicKey.encoded
             )
             assertTrue("expected the .pem export to have been re-created", authority.aliasFile(".pem").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `subjectHashOld matches openssl x509 -subject_hash_old`() {
+        // generated with `openssl req -x509 -subj "/CN=Heimdall/O=TU Berlin/OU=SNET" ...`;
+        // `openssl x509 -noout -subject_hash_old` prints 49222eb4 for it
+        val pem = """
+            -----BEGIN CERTIFICATE-----
+            MIIBxDCCAWmgAwIBAgIULwhEnhqMH51WuzNutoi5+59pMpMwCgYIKoZIzj0EAwIw
+            NjERMA8GA1UEAwwISGVpbWRhbGwxEjAQBgNVBAoMCVRVIEJlcmxpbjENMAsGA1UE
+            CwwEU05FVDAgFw0yNjA5MjkxOTA2MTVaGA8yMTI2MDkwNTE5MDYxNVowNjERMA8G
+            A1UEAwwISGVpbWRhbGwxEjAQBgNVBAoMCVRVIEJlcmxpbjENMAsGA1UECwwEU05F
+            VDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABK9E2MAK+W4OsgviQtsPQgtXiuF5
+            GIQ7zy1QyElAAarCRySJ06Bc+VsRGpOGdU1fdIdIrEsk1YmnO9zl22EFhu6jUzBR
+            MB0GA1UdDgQWBBSMfzo0gNORCFIFSMZXsu9LKwctrTAfBgNVHSMEGDAWgBSMfzo0
+            gNORCFIFSMZXsu9LKwctrTAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kA
+            MEYCIQCEOk0EtSgtTgJ3b/8lZ/Je54raNspHU8RZy6ofpp4i5QIhAOKoOGlLyH29
+            PG35X1qT0EqH51uOVU2QplGpG+oUpfFX
+            -----END CERTIFICATE-----
+        """.trimIndent()
+        val cert = CertificateFactory.getInstance("X.509")
+            .generateCertificate(pem.byteInputStream()) as X509Certificate
+
+        assertEquals("49222eb4", KeyStoreHelper.subjectHashOld(cert))
+    }
+
+    @Test
+    fun `deleteKeyStore forces a fresh CA but keeps the keystore password`() {
+        val dir = createTempDir()
+        try {
+            val authority = Authority.getDefaultInstance(dir)
+            val firstCert = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+                .getCertificate(authority.alias) as X509Certificate
+            val passwordFile = File(dir, "${authority.alias}.pwd")
+            val password = passwordFile.readText()
+
+            KeyStoreHelper.deleteKeyStore(authority)
+
+            assertFalse("expected the keystore to have been deleted", File(dir, "${authority.alias}$keyStoreExtension").exists())
+            assertFalse("expected the .pem export to have been deleted", File(dir, "${authority.alias}.pem").exists())
+            assertEquals("expected the keystore password to be kept", password, passwordFile.readText())
+
+            // a fresh Authority re-reads the kept password, as a new process would
+            val reloaded = Authority.getDefaultInstance(dir)
+            val secondCert = KeyStoreHelper.initialiseOrLoadKeyStore(reloaded)
+                .getCertificate(reloaded.alias) as X509Certificate
+
+            assertNotEquals(
+                "expected a fresh certificate after deleting the keystore",
+                firstCert.serialNumber,
+                secondCert.serialNumber
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `exportCaFiles writes the pem and the hash-named system file`() {
+        val dir = createTempDir()
+        val outDir = File(dir, "export/ca")
+        try {
+            val authority = Authority.getDefaultInstance(dir)
+            val keyStore = KeyStoreHelper.initialiseOrLoadKeyStore(authority)
+            val cert = keyStore.getCertificate(authority.alias) as X509Certificate
+
+            val export = KeyStoreHelper.exportCaFiles(authority, keyStore, outDir)
+
+            assertEquals(KeyStoreHelper.subjectHashOld(cert), export.hash)
+            assertEquals(File(outDir, "${authority.alias}.pem"), export.pemFile)
+            assertEquals(File(outDir, "${export.hash}.0"), export.systemFile)
+
+            val factory = CertificateFactory.getInstance("X.509")
+            for (file in listOf(export.pemFile, export.systemFile)) {
+                val parsed = file.inputStream().use { factory.generateCertificate(it) }
+                assertEquals("expected ${file.name} to contain the CA certificate", cert, parsed)
+            }
         } finally {
             dir.deleteRecursively()
         }

@@ -151,6 +151,22 @@ Earlier versions also offered an alternative interception path via a LittleProxy
 
 For the full component-by-component breakdown of this pipeline (threading model, TLS MitM deep dive, configuration), see [`core/vpn/README.md`](../core/vpn/README.md).
 
+### Generating the CA via adb
+
+The MitM root CA can also be generated without the UI, which is useful for emulator setups that install it into the system CA store. `CaCertificateCommandReceiver` (`app/service/`) handles the broadcast. It is guarded by `android.permission.DUMP`, which only the shell and system hold.
+
+```bash
+adb shell am broadcast -f 0x20 \
+  -n de.tomcory.heimdall/.service.CaCertificateCommandReceiver \
+  -a de.tomcory.heimdall.action.GENERATE_CA_CERT [--ez force true]
+# Broadcast completed: result=-1, data="status=generated hash=<hash> pem=<path> system=<path>"
+adb pull /sdcard/Android/data/de.tomcory.heimdall/files/ca/ .
+```
+
+- The pulled directory contains `heimdallmitm.pem` and `<subject_hash_old>.0`, the file name the system CA store (`/system/etc/security/cacerts`) expects.
+- Without `force`, an existing valid CA is reused (`status=reused`). With `force true`, a new CA is generated, which invalidates any installed copy. A forced run is refused while the VPN is active (`status=refused reason=vpn_active`, result=0).
+- `-f 0x20` (`FLAG_INCLUDE_STOPPED_PACKAGES`) lets the command work on a fresh install that has never been launched.
+
 ---
 
 ## 6. Evaluator & Scoring Modules
