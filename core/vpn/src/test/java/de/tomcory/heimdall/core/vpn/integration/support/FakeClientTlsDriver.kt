@@ -15,11 +15,13 @@ import javax.net.ssl.X509TrustManager
  * with a dynamically-generated leaf certificate; this driver is the peer that completes that
  * handshake from the other side, entirely in the JVM, without any Android dependencies.
  *
- * Certificate validation is intentionally disabled (trust-all) - this harness is exercising the
+ * Certificate validation is disabled (trust-all) by default - this harness is exercising the
  * MITM protocol machinery, not certificate trust policy (which is already covered by
- * CertificateHelperTest/SubjectAlternativeNameHolderTest).
+ * CertificateHelperTest/SubjectAlternativeNameHolderTest). Pass a [trustManager] to simulate an
+ * app with its own trust policy, e.g. one that rejects the forged certificate (see
+ * TlsPassthroughLearningTest).
  */
-class FakeClientTlsDriver(hostname: String, port: Int) {
+class FakeClientTlsDriver(hostname: String, port: Int, trustManager: X509TrustManager? = null) {
 
     val engine: SSLEngine
 
@@ -28,13 +30,13 @@ class FakeClientTlsDriver(hostname: String, port: Int) {
     private var netBufferOut = ByteBuffer.allocate(16921)
 
     init {
-        val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+        val trustManagers = arrayOf<TrustManager>(trustManager ?: object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = Unit
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         })
         val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, trustAll, null)
+        sslContext.init(null, trustManagers, null)
         engine = sslContext.createSSLEngine(hostname, port)
         engine.useClientMode = true
         engine.beginHandshake()

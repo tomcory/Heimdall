@@ -78,4 +78,78 @@ class TlsPassthroughCacheTest {
         val backingMap = field.get(bounded) as Map<*, *>
         assertEquals(5, backingMap.size)
     }
+
+    // ---- recordFailure (docs/vpn-mitm-audit.md PKT-23) ----
+
+    @Test
+    fun `handshake error marks the pair immediately`() {
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR))
+        assertTrue(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `close during handshake marks the pair immediately`() {
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE))
+        assertTrue(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `closed without data only marks the pair once the threshold is reached`() {
+        val thresholded = TlsPassthroughCache(closedWithoutDataThreshold = 3)
+
+        assertFalse(thresholded.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertFalse(thresholded.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertFalse(thresholded.get(1000, "example.com"))
+
+        assertTrue(thresholded.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertTrue(thresholded.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `default closed-without-data threshold is two`() {
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+    }
+
+    @Test
+    fun `closed-without-data hits are counted per pair`() {
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertFalse(cache.recordFailure(2000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertFalse(cache.recordFailure(1000, "other.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+
+        assertFalse(cache.get(1000, "example.com"))
+        assertFalse(cache.get(2000, "example.com"))
+        assertFalse(cache.get(1000, "other.com"))
+    }
+
+    @Test
+    fun `recordFailure returns false for a pair that is already marked`() {
+        cache.put(1000, "example.com")
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR))
+        assertTrue(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `a stronger signal marks a pair that already has closed-without-data hits`() {
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR))
+        assertEquals("marking a pair clears its pending suspect counter", 0, suspectCounts(cache).size)
+    }
+
+    @Test
+    fun `pending suspect counters never grow past maxSize`() {
+        val bounded = TlsPassthroughCache(maxSize = 5)
+
+        for (i in 0 until 1000) {
+            bounded.recordFailure(i, "host$i.com", PassthroughReason.CLOSED_WITHOUT_DATA)
+        }
+
+        assertEquals(5, suspectCounts(bounded).size)
+    }
+
+    private fun suspectCounts(target: TlsPassthroughCache): Map<*, *> {
+        val field = TlsPassthroughCache::class.java.getDeclaredField("suspectCounts")
+        field.isAccessible = true
+        return field.get(target) as Map<*, *>
+    }
 }

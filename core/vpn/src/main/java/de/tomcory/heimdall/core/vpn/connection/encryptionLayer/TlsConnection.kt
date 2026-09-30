@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
+import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
 import de.tomcory.heimdall.core.util.ByteUtils
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -103,6 +104,13 @@ class TlsConnection(
     private var outboundCount = 0
     private var inboundCount = 0
 
+    /**
+     * Application-data bytes the client has sent through the established client-facing session.
+     * Zero at close time means the client completed the handshake and then gave up without
+     * sending anything, the typical symptom of certificate pinning (see [recordPinningSuspect]).
+     */
+    private var outboundAppBytes = 0L
+
     private val log = false
 
     /**
@@ -175,8 +183,11 @@ class TlsConnection(
         // (which also prevents re-entry via closeConnection() -> transportLayer.closeHard()).
         connectionScope.launch {
             if(log) Timber.d("tls$id onClientClosed in state $state")
-            // client-side failure detection (passthrough learning) hooks in here, see
-            // docs/vpn-mitm-audit.md PKT-23
+            if(state == ConnectionState.CLIENT_HANDSHAKE) {
+                learnPassthrough(PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE)
+            } else {
+                recordPinningSuspect()
+            }
         }
     }
 
@@ -284,6 +295,7 @@ class TlsConnection(
                 unwrappedPayload?.let {
                     if(it.isNotEmpty()) {
                         if(log) Timber.d("tls$id handleOutboundRecord unwrapped ${it.size} bytes, passing to app layer")
+                        outboundAppBytes += it.size
                         passOutboundToAppLayer(it)
                     }
                 }
@@ -480,7 +492,20 @@ class TlsConnection(
             // if the SSLEngine needs more data to continue the handshake, unwrap the record and continue the handshake based on the resulting handshakeStatus
             SSLEngineResult.HandshakeStatus.NEED_UNWRAP -> {
                 record?.let {
-                    val (unwrappedPayload, res) = handleUnwrap(it, isClientFacing)
+                    var (unwrappedPayload, res) = handleUnwrap(it, isClientFacing)
+                    if(res != null && res.bytesConsumed() == 0 && res.handshakeStatus == SSLEngineResult.HandshakeStatus.NEED_TASK) {
+                        // the engine refused the record because it still had delegated tasks
+                        // pending - run them and retry, instead of losing the record
+                        // (docs/vpn-mitm-audit.md PKT-25). Tasks are run inline below, so this is
+                        // purely defensive.
+                        val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
+                        if(!runDelegatedTasks(engine, direction)) {
+                            return
+                        }
+                        val retry = handleUnwrap(it, isClientFacing)
+                        unwrappedPayload = retry.first
+                        res = retry.second
+                    }
                     if(unwrappedPayload != null && res != null) {
                         continueHandshake(handshakeStatus = res.handshakeStatus, isClientFacing = isClientFacing)
                     }
@@ -517,34 +542,27 @@ class TlsConnection(
                 }
             }
 
-            // the SSLEngine needs to perform a task to continue the handshake, handle it and continue the handshake based on the resulting handshakeStatus
-            // Drain ALL pending delegated tasks into a single coroutine. The JSSE engine can queue
-            // multiple tasks per handshake step (e.g. key schedule + certificate verification under
-            // TLS 1.3). Multi-record flights from the server trigger this branch once per record,
-            // but all tasks were already queued by the first unwrap() call. Subsequent calls find
-            // an empty queue — if we called closeConnection() there (as before) the handshake
-            // would fail. Instead, only launch the coroutine on the first call (when tasks != empty).
+            // the SSLEngine needs to run delegated tasks (e.g. key schedule, certificate
+            // verification) before the handshake can continue. Run them inline: this code already
+            // runs confined to connectionScope's single-threaded dispatcher, and the engine can't
+            // accept further records until its tasks have run - it returns NEED_TASK without
+            // consuming them. Running the tasks in a separately launched coroutine (as before) left
+            // a window in which the remaining records of a multi-record flight were unwrapped,
+            // refused and dropped, hanging the handshake (docs/vpn-mitm-audit.md PKT-25).
             SSLEngineResult.HandshakeStatus.NEED_TASK -> {
                 val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
-                val tasks = generateSequence { engine?.delegatedTask }.toList()
-                if(tasks.isNotEmpty()) {
-                    connectionScope.launch {
-                        if(log) Timber.d("tls$id continueHandshake ($direction) running ${tasks.size} delegated tasks")
-                        try {
-                            tasks.forEach { it.run() }
-                        } catch (e: Exception) {
-                            Timber.e(e, "tls$id continueHandshake ($direction) NEED_TASK coroutine task threw")
-                            closeConnection()
-                            return@launch
-                        }
-                        val nextStatus = engine?.handshakeStatus ?: handshakeStatus
-                        continueHandshake(handshakeStatus = nextStatus, isClientFacing = isClientFacing)
-                    }
-                } else {
-                    // Tasks already consumed by a prior call for this handshake step; that coroutine
-                    // will continue the handshake once the tasks have run.
-                    if(log) Timber.d("tls$id continueHandshake ($direction) NEED_TASK with no tasks — prior coroutine is handling")
+                if(!runDelegatedTasks(engine, direction)) {
+                    return
                 }
+                val nextStatus = engine?.handshakeStatus
+                if(nextStatus == null || nextStatus == SSLEngineResult.HandshakeStatus.NEED_TASK) {
+                    // no progress possible (no engine, or it still wants tasks it didn't hand out) -
+                    // bail out instead of recursing forever
+                    Timber.e("tls$id continueHandshake ($direction) NEED_TASK made no progress (status $nextStatus), closing connection")
+                    closeConnection()
+                    return
+                }
+                continueHandshake(handshakeStatus = nextStatus, isClientFacing = isClientFacing)
             }
         }
     }
@@ -840,6 +858,14 @@ class TlsConnection(
             sslEngine?.unwrap(netBuffer, appBuffer)
         } catch (sslException: SSLException) {
             Timber.e("tls$id handleUnwrap ($direction) SSLException in state $state\n${sslException.message}")
+            // the client-facing engine failing on client data mid-handshake means the client
+            // rejected us - typically a fatal alert over our forged certificate. Under TLS 1.3 that
+            // alert is encrypted and arrives as an APP_DATA record, so the engine throwing here is
+            // the only signal that catches it reliably; the exception text differs by provider
+            // (JDK vs Conscrypt), so any SSLException in this state counts.
+            if(isOutbound && state == ConnectionState.CLIENT_HANDSHAKE) {
+                learnPassthrough(PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+            }
             Timber.e("tls$id ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
             null
         }
@@ -889,6 +915,10 @@ class TlsConnection(
             // if the unwrap() operation results in a closed session, close the connection
             SSLEngineResult.Status.CLOSED -> {
                 Timber.d("tls$id handleUnwrap ($direction) resulted in closed session, closing connection")
+                if(isOutbound) {
+                    // the client sent close_notify
+                    recordPinningSuspect()
+                }
                 closeConnection()
                 return Pair(null, res)
             }
@@ -1172,6 +1202,52 @@ class TlsConnection(
             Timber.w("tls$id findSni: malformed ClientHello, could not extract SNI")
             null
         }
+    }
+
+    /**
+     * Records a client-side MitM failure for this connection's (app, hostname) pair so later
+     * connections for the pair pass through unmodified (docs/vpn-mitm-audit.md PKT-23). Keyed the
+     * same way as the passthrough check in [handleOutboundRecord]. Only relevant while this
+     * connection is actually being MitM'd, and only for connections attributed to an app.
+     */
+    private fun learnPassthrough(reason: PassthroughReason) {
+        if(!doMitm) {
+            return
+        }
+        val appId = transportLayer.appId ?: return
+        if(componentManager.tlsPassthroughCache.recordFailure(appId, hostname, reason)) {
+            Timber.i("tls$id learned passthrough for app=${transportLayer.appPackage} host=$hostname ($reason)")
+        }
+    }
+
+    /**
+     * Counts a pinning-style close (handshake completed, then closed without any application
+     * data) toward passthrough. Called both when the client closes the TCP connection and when it
+     * sends close_notify; the latter tears this connection down, so the two never double-count.
+     */
+    private fun recordPinningSuspect() {
+        if(state == ConnectionState.CLIENT_ESTABLISHED && outboundAppBytes == 0L) {
+            learnPassthrough(PassthroughReason.CLOSED_WITHOUT_DATA)
+        }
+    }
+
+    /**
+     * Runs all of [engine]'s pending delegated tasks on the calling (connection-confined) thread.
+     *
+     * @return false if a task threw, in which case the connection has been closed.
+     */
+    private fun runDelegatedTasks(engine: SSLEngine?, direction: String): Boolean {
+        try {
+            while(true) {
+                val task = engine?.delegatedTask ?: break
+                task.run()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "tls$id continueHandshake ($direction) delegated task threw, closing connection")
+            closeConnection()
+            return false
+        }
+        return true
     }
 
     private fun switchState(newState: ConnectionState) {

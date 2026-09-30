@@ -12,6 +12,9 @@ has been implemented — no file under `core/vpn` was changed while producing th
 All file:line references were verified against the source at the time of writing (2026-09-28).
 Line numbers drift — use the surrounding quoted code to re-locate if they no longer match.
 
+**Addendum 2026-09-30:** V-32–V-35 / PKT-20–PKT-24, found during the QUIC analysis
+(`docs/quic_mitm.md`), plus V-36 / PKT-25, found while implementing PKT-23. References were checked against branch `bugfix/mitm-vpn` at `cb7cc22`.
+
 ---
 
 ## 1. Findings register
@@ -54,6 +57,11 @@ dead code, misleading comments — see the Appendix, not given a full write-up h
 | V-28 | L | VPN teardown never joins `InboundTrafficHandler` before clearing the connection cache |
 | V-30 | L | `detectTls()`'s length guard is one byte stricter than what it actually needs |
 | V-31 | L | `AppLayerConnection`'s HTTP-sniff guard is off by one, silently swallowed by a broad catch |
+| V-32 | L | `core:vpn` depends on all of `netty-all` 4.1.58 solely for `InsecureTrustManagerFactory` |
+| V-33 | L | Stray-RST device writes use an undeclared magic message code `6` |
+| V-34 | H | `TlsPassthroughCache` is read but never written — apps rejecting the forged cert fail on every connection |
+| V-35 | M | MitM app/host scope preferences are editable in the UI but never read by the VPN |
+| V-36 | H | Handshake records arriving while delegated tasks are pending are silently dropped — the MitM handshake hangs |
 
 ---
 
@@ -651,6 +659,97 @@ kept terse here since their packets (below) carry the fix detail.
 
 ---
 
+## Addendum findings (V-32–V-36)
+
+### V-32 — Netty pulled in for a single class (Low)
+
+`SSLEngineSource.kt:5` imports `io.netty.handler.ssl.util.InsecureTrustManagerFactory`, and `:143`
+uses it when `trustAllServers` is set. Nothing else in `core/` or `app/` imports Netty, yet
+`core/vpn/build.gradle.kts:36` depends on all of `netty-all` 4.1.58.Final
+(`gradle/libs.versions.toml:34,106`). That is an old release that adds APK weight, method count and
+dependency-audit surface. The code already flags this itself with the TODO at `SSLEngineSource.kt:138`
+("can we get rid of the InsecureTrustManagerFactory (with the goal of eliminating Netty)?").
+`CLAUDE.md` and `docs/ARCHITECTURE.md` also describe Netty as doing "TCP/TLS handling in the
+VPN's MitM engine", which is not true.
+
+**Recommendation:** replace it with a small in-house `X509ExtendedTrustManager` and drop the
+dependency (PKT-20).
+
+### V-33 — Magic device-write message code `6` (Low)
+
+`TransportLayerConnection.getInstance()` resets unknown TCP packets with
+`deviceWriter.obtainMessage(6, …)` (`TransportLayerConnection.kt:285`, and the commented-out DoT
+branch at `:279`). `DeviceWriteThread` only declares `WRITE_TCP = 0` and `WRITE_UDP = 1`
+(`DeviceWriteThread.kt:63-66`). `handleMessageImpl` (`:47-61`) never reads `msg.what`, so there is
+no functional bug today. The number is still undocumented, and a future dispatcher keyed on `what`
+would silently drop these packets.
+
+**Recommendation:** add a named constant and document that `what` is informational (PKT-21).
+
+### V-34 — `TlsPassthroughCache` is never populated (High)
+
+`TlsConnection.handleOutboundRecord()` checks the cache on every ClientHello:
+
+```kotlin
+doMitm = doMitm && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, hostname) } ?: false)
+```
+
+(`TlsConnection.kt:221`). However, nothing in `core/` or `app/` ever calls
+`TlsPassthroughCache.put()`, so the check is always `false`. An app that rejects Heimdall's forged
+certificate keeps failing on every connection for the whole VPN session. That includes apps that
+don't trust user CAs (the default for `targetSdk ≥ 24`), apps that pin, and apps whose TLS stack
+rejects the handshake for some other reason. With MitM enabled, such apps are effectively
+offline, and the traffic they would have sent is never captured, even as ciphertext.
+
+Two details make detection non-trivial:
+- Under TLS 1.3 the client's fatal alert after our Certificate message is encrypted, so it arrives
+  with outer record type `APP_DATA`, not `ALERT`. It only shows up as the client-facing
+  `SSLEngine.unwrap()` throwing, inside `handleUnwrap` (`:826-832`).
+- A client that simply closes TCP during or right after the handshake (OkHttp's
+  `CertificatePinner` completes the handshake and then closes) is invisible to `TlsConnection`.
+  `TcpConnection` handles device FIN/RST (`TcpConnection.kt:152-166`) without notifying the layers
+  above.
+
+**Recommendation:** add a "client closed" hook from transport to encryption layer (PKT-22), then
+learn per-session passthrough entries from client-side handshake failures (PKT-23).
+
+### V-35 — MitM scope preferences have no effect (Medium)
+
+`preferences.proto:47-56` defines `mitm_appLayer_passthrough`, `mitm_monitoringScope_apps`,
+`mitm_monitoringScope_hosts` and the four MitM app/host white/blacklists.
+`PreferencesDataSource` exposes them, and `TrafficScannerPreferences.kt:98-117` and
+`PreferencesScreen.kt:316-327` let the user edit several of them. But
+`HeimdallVpnService.launchServiceComponents()` (`:204-229`) only reads `mitmEnable` and
+`mitmTrustAllUpstreamCerts`, and `ComponentManager` has no parameter for any of them. Users can
+configure "don't intercept app X / host Y" and it is silently ignored. Two further problems:
+- `mitm_appLayer_passthrough` (default `true`) has no documented meaning.
+- There is no UI editor for the MitM *host* lists.
+
+**Recommendation:** resolve the preferences into a core-owned `MitmScope` and apply it at the
+same decision point as V-34's learned passthrough (PKT-24).
+
+### V-36 — Handshake records dropped while delegated tasks are pending (High)
+
+`TlsConnection.continueHandshake()`'s `NEED_TASK` branch drained the engine's delegated tasks
+(key schedule, certificate verification) and ran them in a separately launched coroutine on
+`connectionScope`. That coroutine only ran after the current task finished. When several handshake
+records arrived in one transport payload, `prepareRecords` kept unwrapping the remaining records
+in the current task, while the tasks were still pending. JSSE's `SSLEngine.unwrap()` then returns
+`NEED_TASK` without consuming anything. The branch found the task queue empty ("prior coroutine is
+handling") and returned, so the record was lost and the handshake hung waiting for it.
+
+Whether it triggers depends on how the peer's flight is split across TCP reads, so it showed up as
+an intermittent "client-facing TLS handshake never completed" failure in `TlsMitmHttpFlowTest`.
+It was confirmed with temporary logging while implementing PKT-23: inbound records of 90 and
+~1749 bytes were unwrapped with 0 bytes consumed and dropped. On a device it means MitM'd
+connections randomly stall during the handshake.
+
+**Recommendation:** run delegated tasks inline, since the code is already confined to the
+connection's single-threaded dispatcher, and retry rather than drop a record the engine refuses
+(PKT-25).
+
+---
+
 ## 2. Packets
 
 ### PKT-01 — Fix the TCP split-payload sequence number bug
@@ -935,13 +1034,229 @@ kept terse here since their packets (below) carry the fix detail.
 - **Tests:** extend `core/vpn/src/test/java/de/tomcory/heimdall/core/vpn/connection/encryptionLayer/ProtocolDetectionTest.kt` with cases for a real QUIC v2 long-header packet, a minimal 6-byte TLS ClientHello-prefix, and an 8/9/10-byte first HTTP payload — asserting each is now correctly classified instead of falling through to `PlaintextConnection`/`RawConnection`.
 - **Commit:** `fix(vpn): fix QUIC version bit-math and off-by-one length guards in protocol detection`
 
+### PKT-20 — Replace Netty's `InsecureTrustManagerFactory` with our own; drop `netty-all`
+
+- **Priority:** Low · **Depends on:** —
+- **Resolves:** V-32
+- **Approach:**
+  - Add `mitm/InsecureTrustManager.kt` containing
+    `object InsecureTrustManager : X509ExtendedTrustManager()`. All six
+    `checkClientTrusted`/`checkServerTrusted` overloads are no-ops: `(chain, authType)`,
+    `(…, Socket)` and `(…, SSLEngine)`. `getAcceptedIssuers()` returns `emptyArray()`.
+  - It **must** extend `X509ExtendedTrustManager` rather than implement plain
+    `X509TrustManager`. JSSE wraps a plain `X509TrustManager` in `AbstractTrustManagerWrapper`,
+    which re-applies endpoint identification and algorithm constraints.
+    `SSLEngineSource.newSSLEngine(host, port)` sets the endpoint identification algorithm to
+    `"HTTPS"` (`SSLEngineSource.kt:99-128`), so a plain trust manager would still reject hostname
+    mismatches and would not really trust everything.
+  - The kdoc says both of these things, and that the class is only reachable when the user
+    enables "Trust all upstream TLS certificates" (PKT-07).
+  - In `SSLEngineSource.initialiseSSLContext()` (`:139-146`), replace
+    `InsecureTrustManagerFactory.INSTANCE.trustManagers` with `arrayOf(InsecureTrustManager)`.
+    Delete the Netty import, the TODO at `:138`, and the commented-out `TrustManagerFactory`
+    lines.
+  - Remove `libs.netty.all` from `core/vpn/build.gradle.kts` and the `netty`/`netty-all` entries
+    from `gradle/libs.versions.toml`. Guava stays, because `SSLEngineSource`'s certificate cache
+    uses it.
+  - Update the docs that describe Netty: `CLAUDE.md` (module tree and dependency table),
+    `docs/ARCHITECTURE.md` (dependency table), `core/vpn/README.md` (trust-all description and
+    dependency table) and `docs/quic_mitm.md` (§3.4 and open question 2). Leave the historical
+    `docs/implementation-plan.md` alone.
+- **Files:** new `mitm/InsecureTrustManager.kt`, `mitm/SSLEngineSource.kt`,
+  `core/vpn/build.gradle.kts`, `gradle/libs.versions.toml`, and the docs listed above.
+- **Tests:** new `core/vpn/src/test/java/de/tomcory/heimdall/core/vpn/mitm/InsecureTrustManagerTest.kt`:
+  - Every check overload accepts an arbitrary self-signed chain without throwing.
+  - A real handshake through `CertificateSniffingMitmManager(authority, trustAllServers = true)`
+    against `integration/support/FakeTlsServer("example.com")` completes, with the server-facing
+    engine created for a **different** peer host (for example `"mismatch.test"`). That covers
+    both an untrusted issuer and a hostname mismatch.
+  - Negative control: the same handshake with `trustAllServers = false` fails, via
+    `MergeTrustManager`.
+  - `TlsMitmHttpFlowTest` (trust-all via `ComponentManagerFixtures.kt:71`) and
+    `CertificateSniffingMitmManagerTest` must stay green.
+  - `./gradlew :app:dependencies | grep -i netty` prints nothing.
+- **Commit:** `refactor(vpn): replace Netty InsecureTrustManagerFactory with own X509ExtendedTrustManager, drop netty-all`
+
+### PKT-21 — Name the stray-packet device-write code
+
+- **Priority:** Low · **Depends on:** —
+- **Resolves:** V-33
+- **Approach:**
+  - Add `const val WRITE_STRAY = 2` to the `DeviceWriteThread` companion and use it at
+    `TransportLayerConnection.kt:285`, and in the commented-out line at `:279`.
+  - Add a kdoc on the companion stating that `what` is informational, for logs and tests only:
+    `handleMessageImpl` writes any `IpPacket` whatever its code.
+  - Include `msg.what` in the "unknown message type" error log at `DeviceWriteThread.kt:49`.
+- **Files:** `components/DeviceWriteThread.kt`, `connection/transportLayer/TransportLayerConnection.kt`.
+- **Tests:** no existing test asserts `what == 6` (checked). Add an assertion to an existing
+  stray-RST path in `integration/ConnectionTeardownTest.kt` or `MalformedInputRobustnessTest.kt`:
+  an unknown ACK/FIN produces a message with `what == DeviceWriteThread.WRITE_STRAY`.
+  `ComponentManagerFixtures` already records `.what`.
+- **Commit:** `refactor(vpn): replace magic device-write message code 6 with DeviceWriteThread.WRITE_STRAY`
+
+### PKT-22 — Notify the encryption layer when the device closes a TCP connection
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** — (enabler for PKT-23, which needs to tell "the app gave up" apart from "the
+  server closed")
+- **Approach:**
+  - Add `open fun onClientClosed() {}` to `EncryptionLayerConnection`, a no-op by default.
+  - Add `protected fun notifyClientClosed() { encryptionLayer?.onClientClosed() }` to
+    `TransportLayerConnection`.
+  - In `TcpConnection`, call it only on the **device-initiated** close paths (an RST from the
+    device and the device's first FIN, `TcpConnection.kt:152-166`), before teardown. Do not call
+    it on remote-EOF or read-error paths.
+  - `TlsConnection.onClientClosed()` dispatches onto `connectionScope`, like `unwrapOutbound`.
+    If `closeConnection()` has already cancelled the scope, the launch is dropped. That also
+    guards against re-entry via `closeConnection() → transportLayer.closeHard()`. PKT-23 adds
+    the body.
+- **Files:** `connection/encryptionLayer/EncryptionLayerConnection.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`,
+  `connection/transportLayer/TransportLayerConnection.kt`,
+  `connection/transportLayer/TcpConnection.kt`.
+- **Tests:** extend `integration/ConnectionTeardownTest.kt` with a recording
+  `EncryptionLayerConnection`. A device FIN and a device RST each produce exactly one
+  `onClientClosed()`, and a remote EOF produces none.
+- **Commit:** `feat(vpn): notify encryption layer when the device closes a TCP connection`
+
+### PKT-23 — Learn per-session TLS passthrough from client-side handshake failures
+
+- **Priority:** High · **Depends on:** PKT-22, PKT-25 (its integration tests hang without the
+  PKT-25 fix); builds on PKT-14's bounded cache
+- **Resolves:** V-34
+- **Approach:**
+  - **Cache** (`metadata/TlsPassthroughCache.kt`, already bounded by PKT-14):
+    - Add `enum class PassthroughReason { CLIENT_HANDSHAKE_ERROR, CLIENT_CLOSED_DURING_HANDSHAKE, CLOSED_WITHOUT_DATA }`.
+    - Add `fun recordFailure(initiator: Int, hostname: String, reason: PassthroughReason): Boolean`,
+      which returns `true` when the pair has just become passthrough.
+    - The first two reasons call `put()` straight away.
+    - `CLOSED_WITHOUT_DATA` increments a per-pair counter kept in a second bounded access-order
+      map, under the same lock and with the same `maxSize`. It calls `put()` when the counter
+      reaches `closedWithoutDataThreshold`, a constructor parameter with default 2. The
+      threshold exists because preconnects and idle keep-alive connections also close without
+      data.
+    - `get()`/`put()` keep their signatures. Entries stay per VPN session on `ComponentManager`
+      (`ComponentManager.kt:85`); they are deliberately not persisted.
+  - **Detection** (`TlsConnection`):
+    - Use the same key as the read at `:221`, `(transportLayer.appId, hostname)`, and skip
+      recording when `appId == null`.
+    - Evaluate the signals only while `doMitm` is true.
+    - **(a) Client handshake error:** in `handleUnwrap`'s `SSLException` catch (`:826-832`),
+      when `isOutbound && state == CLIENT_HANDSHAKE`, record `CLIENT_HANDSHAKE_ERROR` before
+      the existing `null` → `closeConnection()` path.
+      - Hook the unwrap rather than the `RecordType.ALERT` branch, because a TLS 1.3 client's
+        alert is encrypted (see V-34).
+      - Treat any `SSLException` in that state as a rejection, since the message text differs
+        between JDK ("Received fatal alert: certificate_unknown") and Conscrypt
+        (`…ALERT_UNKNOWN_CA`). Log the message.
+    - **(b) Client closed during handshake:** in `onClientClosed()` (PKT-22), record
+      `CLIENT_CLOSED_DURING_HANDSHAKE` when `state == CLIENT_HANDSHAKE`.
+    - **(c) Closed without data:** add `private var outboundAppBytes = 0L`, incremented where
+      `CLIENT_ESTABLISHED` passes unwrapped data to the app layer (`:278-285`). Record
+      `CLOSED_WITHOUT_DATA` when `state == CLIENT_ESTABLISHED && outboundAppBytes == 0` and
+      either `onClientClosed()` fires or `handleUnwrap` returns `Status.CLOSED` for the
+      outbound direction (`:874-878`, the client's close_notify). Put both sites behind one
+      `recordPinningSuspect()` helper.
+    - When `recordFailure` returns `true`, log it once:
+      `Timber.i("tls$id learned passthrough for app=$appPackage host=$hostname ($reason)")`.
+    - Nothing else needs to change. The next ClientHello for that pair sets `doMitm = false` at
+      `:221` and is passed through raw.
+- **Files:** `metadata/TlsPassthroughCache.kt`, `connection/encryptionLayer/TlsConnection.kt`,
+  `core/vpn/src/test/.../integration/support/FakeClientTlsDriver.kt` (optional rejecting trust
+  manager).
+- **Tests:**
+  - `metadata/TlsPassthroughCacheTest.kt`:
+    - The immediate reasons put at once.
+    - `CLOSED_WITHOUT_DATA` puts only on the Nth hit.
+    - The counter map is bounded.
+  - New `integration/TlsPassthroughLearningTest.kt`, reusing the `TlsMitmHttpFlowTest`
+    scaffolding. `ComponentManagerFixtures` already stubs `appId = 1000` and a real
+    `TlsPassthroughCache`.
+    1. The driver rejects the forged certificate. Assert `cache.get(1000, "example.com")`, and
+       that a second connection is **not** intercepted: the driver sees
+       `FakeTlsServer.leafCert`.
+    2. A ClientHello followed by a device FIN during `CLIENT_HANDSHAKE` sets the cache.
+    3. Two handshake-then-close-without-data connections leave the cache unset after the first
+       and set after the second.
+    4. A normal request/response flow leaves the cache empty.
+- **Commit:** `feat(vpn): learn per-session TLS passthrough from client handshake failures and pinning-style closes`
+
+### PKT-24 — Honour the MitM app/host scope preferences
+
+- **Priority:** Medium · **Depends on:** PKT-23 (shares the `TlsConnection.kt:221` decision point)
+- **Resolves:** V-35
+- **Approach:**
+  - **Core type.** `core:vpn` must not depend on `core:datastore-proto`, so add
+    `mitm/MitmScope.kt`:
+    `data class MitmScope(val includedApps: Set<String>?, val excludedApps: Set<String>, val hostMode: HostMode, val hosts: List<String>)`,
+    with `enum class HostMode { ALL, WHITELIST, BLACKLIST }`,
+    `fun shouldIntercept(appPackage: String?, hostname: String): Boolean`, and a
+    `MitmScope.ALL` default.
+    - Host matching reuses `core:util`'s `Trie` with the same `split(".").reversed()` splitter
+      as `ComponentManager.trackerTrie`, which gives domain-suffix matching. Build the trie once
+      at construction.
+  - **Wiring.** Add a `ComponentManager(mitmScope: MitmScope = MitmScope.ALL)` parameter.
+    `TlsConnection.kt:221` becomes
+    `doMitm && componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, hostname) && !learnedPassthrough`.
+  - **App side.**
+    - `HeimdallVpnService.launchServiceComponents()` reads `mitmMonitoringScopeApps/Hosts` and
+      the four MitM lists.
+    - It resolves them with a pure `MitmScopeResolver.resolve(…, systemPackages)` in
+      `app/.../service/` and passes the result into `ComponentManager`.
+    - Extract the existing system-app query (`HeimdallVpnService.kt:343-360`) into a helper
+      shared by the VPN scope and the MitM scope.
+  - **Open, confirm before implementing:** `mitm_appLayer_passthrough` has no defined meaning
+    today. The proposal is to make it the on/off switch for PKT-23's learning
+    (`ComponentManager(learnPassthrough = …)`) and relabel it "Automatically skip MitM for
+    hosts that reject Heimdall's certificate".
+  - **Out of scope:** a UI editor for the MitM host lists. Only the app lists are editable today
+    (`PreferencesScreen.kt:316-327`).
+- **Files:** new `mitm/MitmScope.kt`, `components/ComponentManager.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`,
+  `app/.../service/HeimdallVpnService.kt`, new `app/.../service/MitmScopeResolver.kt`.
+- **Tests:**
+  - `core/vpn/src/test/.../mitm/MitmScopeTest.kt`:
+    - Each host mode.
+    - Subdomain matching, and no false match between `badexample.com` and `example.com`.
+    - Included and excluded apps.
+    - A `null` `appPackage` is excluded only when an include-list is set.
+  - `app/src/test/java/de/tomcory/heimdall/service/MitmScopeResolverTest.kt`: every
+    `MonitoringScopeApps` value, with a fake system-package set.
+  - An integration case: with `hostMode = BLACKLIST, hosts = ["example.com"]`, a
+    `TlsMitmHttpFlowTest`-style flow passes through without interception.
+- **Commit:** `feat(vpn): honour MitM app/host monitoring-scope preferences when deciding whether to intercept`
+
+### PKT-25 — Run TLS delegated tasks inline instead of dropping records
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** V-36
+- **Approach:**
+  - In `TlsConnection.continueHandshake()`'s `NEED_TASK` branch, run all pending delegated tasks
+    inline through a new `runDelegatedTasks(engine, direction)` helper, then continue with the
+    engine's new handshake status.
+    - This is safe because the code already runs confined to `connectionScope`'s single-threaded
+      dispatcher. The old launched coroutine ran on the same dispatcher anyway, just later, so
+      nothing moves to a different thread.
+    - A task that throws closes the connection, as before.
+    - If the status is still `NEED_TASK` after running the tasks, close the connection instead
+      of recursing.
+  - Defensive retry in the `NEED_UNWRAP` branch: if `handleUnwrap` reports 0 bytes consumed with
+    `NEED_TASK`, run the tasks and unwrap the same record again rather than losing it.
+- **Files:** `connection/encryptionLayer/TlsConnection.kt`.
+- **Tests:** new `connection/encryptionLayer/TlsHandshakeDelegatedTaskTest.kt`. It drives a
+  `TlsConnection` (with its real dispatcher, since `Dispatchers.Unconfined` hides the race) and
+  delivers an in-memory upstream server's entire handshake flight as **one** payload. It asserts
+  that the server-facing handshake completes, i.e. the client-facing handshake starts. The test
+  fails on the old code.
+- **Commit:** `fix(vpn): run TLS delegated tasks inline so multi-record handshake flights aren't dropped`
+
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either
 narrow-trigger (V-07 needs a CN shared across differing-SAN certs within a 5-minute window; V-17
 needs an actively hostile or badly-behaved TCP peer; V-27/V-28 are minor selector/teardown
 hygiene with no correctness impact observed) or a genuinely open architectural question (V-26,
 confining all of a `TlsConnection`'s mutation to a single-threaded per-connection dispatcher, is
 a bigger refactor than a packet — worth a dedicated design pass rather than a quick fix). Revisit
-after PKT-01 through PKT-19 land.
+after PKT-01 through PKT-25 land.
 
 ---
 
