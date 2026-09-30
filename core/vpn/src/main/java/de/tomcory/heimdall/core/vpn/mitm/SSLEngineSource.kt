@@ -2,7 +2,6 @@ package de.tomcory.heimdall.core.vpn.mitm
 
 import com.google.common.cache.Cache
 import com.google.common.cache.CacheBuilder
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory
 import timber.log.Timber
 import org.bouncycastle.operator.OperatorCreationException
 import java.io.*
@@ -41,7 +40,7 @@ class SSLEngineSource (
     private val authority: Authority,
 
     /**
-     * when set to true, an InsecureTrustManager is used - generally not recommended
+     * when set to true, [InsecureTrustManager] is used - generally not recommended
      * in production, but it's fine to use here because it's not our job to verify
      * remote hosts
      */
@@ -135,12 +134,8 @@ class SSLEngineSource (
         caCert = ks.getCertificate(authority.alias)
         caPrivateKey = ks.getKey(authority.alias, authority.password) as PrivateKey
 
-        //TODO: can we get rid of the InsecureTrustManagerFactory (with the goal of eliminating Netty)?
         val trustManagers: Array<TrustManager> = if (trustAllServers) {
-            //val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-            //trustManagerFactory.init(ks)
-            //trustManagerFactory.trustManagers //TODO: -> did this do the trick?
-            InsecureTrustManagerFactory.INSTANCE.trustManagers
+            arrayOf(InsecureTrustManager)
         } else {
             arrayOf(MergeTrustManager(ks))
         }

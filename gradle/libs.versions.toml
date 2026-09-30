@@ -31,7 +31,6 @@ materialIconsCore = "1.7.8"
 mpAndroidChart = "v3.1.0"
 multidexlib2 = "2.3.4.r2"
 navigation = "2.8.9"
-netty= "4.1.58.Final"
 okhttp = "5.0.0-alpha.2"
 opencsv = "5.6"
 palette-ktx = "1.0.0"
@@ -103,7 +102,6 @@ lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", v
 lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 mpAndroidChart = { module = "com.github.PhilJay:MPAndroidChart", version.ref = "mpAndroidChart" }
 multidexlib2 = { module = "com.github.lanchon.dexpatcher:multidexlib2", version.ref = "multidexlib2" }
-netty-all = { module = "io.netty:netty-all", version.ref = "netty" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 opencsv = { module = "com.opencsv:opencsv", version.ref = "opencsv" }
 pcap4j-core = { module = "org.pcap4j:pcap4j-core", version.ref = "pcap4j" }

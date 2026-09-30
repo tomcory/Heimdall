@@ -33,7 +33,6 @@ dependencies {
 
     implementation (libs.bouncycastle.bcpkix.jdk15on)
     implementation (libs.guava)
-    implementation (libs.netty.all) { exclude(group = "org.slf4j") }
 
     // pcap4j
     implementation (libs.pcap4j.core)

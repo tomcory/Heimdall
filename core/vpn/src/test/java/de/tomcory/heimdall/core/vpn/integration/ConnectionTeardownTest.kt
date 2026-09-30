@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.integration
 
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
+import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
@@ -418,5 +419,28 @@ class ConnectionTeardownTest {
 
         // the connection should have started its own local closing handshake with the device
         assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, connection?.state)
+    }
+
+    @Test
+    fun `ACK for an unknown flow is answered with a stray RST using WRITE_STRAY`() {
+        // docs/vpn-mitm-audit.md PKT-21 (V-33): this path used to post the RST with an undeclared magic code 6
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        val deviceWriter = RecordingDeviceWriter()
+        val localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address
+        val remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
+
+        // a bare ACK with no preceding SYN - no connection exists for this flow
+        val ackPacket = PacketFixtures.buildTcpDataPacket(
+            localAddr = localAddr, localPort = 41500, remoteAddr = remoteAddr, remotePort = 443,
+            seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false
+        )
+        val connection = TransportLayerConnection.getInstance(ackPacket, componentManager, deviceWriter.handler)
+
+        assertEquals("no connection should be created for an unknown flow", null, connection)
+        assertEquals(1, deviceWriter.sentMessages.size)
+        val message = deviceWriter.sentMessages[0]
+        assertEquals(DeviceWriteThread.WRITE_STRAY, message.what)
+        val tcp = (message.obj as IpPacket).payload as TcpPacket
+        assertTrue("stray reply should be an RST", tcp.header.rst)
     }
 }

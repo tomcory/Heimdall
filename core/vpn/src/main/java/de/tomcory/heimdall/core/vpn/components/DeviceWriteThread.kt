@@ -46,7 +46,7 @@ class DeviceWriteThread(
 
     private fun handleMessageImpl(msg: Message) {
         if (msg.obj !is IpPacket) {
-            Timber.e("Got unknown message type: %s (should be org.pcap4j.packet.IpV4Packet)", msg.obj.javaClass.name)
+            Timber.e("Got unknown message type: %s (what=%d, should be org.pcap4j.packet.IpPacket)", msg.obj?.javaClass?.name, msg.what)
             return
         }
 
@@ -60,8 +60,19 @@ class DeviceWriteThread(
         }
     }
 
+    /**
+     * Message codes (`Message.what`) used when posting packets to this thread's [handler]. They
+     * are informational only (for logging and tests): [handleMessageImpl] writes any [IpPacket] it
+     * receives to the device, regardless of the code.
+     */
     companion object {
+        /** A packet belonging to an existing TCP connection. */
         const val WRITE_TCP = 0
+
+        /** A packet belonging to an existing UDP connection. */
         const val WRITE_UDP = 1
+
+        /** A one-off packet not tied to any tracked connection, e.g. an RST answering a segment for an unknown flow. */
+        const val WRITE_STRAY = 2
     }
 }

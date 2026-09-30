@@ -488,7 +488,7 @@ Factory for `SSLEngine` instances. Server-specific `SSLContext` objects (one per
 - **`newSSLEngine(remoteHost, remotePort)`** — Client-mode engine for the upstream server connection. Sets SNI via `SSLParameters.serverNames` and enables endpoint algorithm `"HTTPS"` for hostname verification.
 - **`createCertForHost(commonName, sans)`** — Checks the Guava cache. On a miss calls `CertificateHelper.createServerCertificate()`, builds a new `SSLContext`, caches it, and returns a server-mode engine for the device-facing half of the MitM.
 
-When `trustAllServers = true`, Netty's `InsecureTrustManagerFactory` is used for the upstream connection (useful for debugging apps that use certificate pinning through alternate means).
+When `trustAllServers = true`, `InsecureTrustManager` (an `X509ExtendedTrustManager` that accepts every chain and skips hostname checks) is used for the upstream connection (useful for debugging apps that use certificate pinning through alternate means).
 
 #### CertificateSniffingMitmManager
 
@@ -635,7 +635,6 @@ All configuration is passed into `ComponentManager` at construction time by `Hei
 | **Pcap4j** (`pcap4j-core`, `pcap4j-packetfactory-static`) | 1.7.6 | Parsing raw IP/TCP/UDP/DNS packets; constructing response packets |
 | **BouncyCastle** (`bcpkix-jdk15on`) | 1.69 | X.509 certificate generation; PEM serialisation |
 | **Guava** | — | `CacheBuilder` for per-host `SSLContext` caching |
-| **Netty** (`netty-all`) | 4.1.58 | `InsecureTrustManagerFactory` for upstream trust bypass |
 | **Room KTX** | 2.7.1 | Database persistence via `RoomDatabaseConnector` |
 | **Lifecycle Runtime KTX** | — | Coroutine scopes in connection classes |
 | **Timber** | 4.7.1 | Logging throughout |

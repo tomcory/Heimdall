@@ -4,6 +4,7 @@ import android.os.Handler
 import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
+import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import kotlinx.coroutines.CoroutineScope
@@ -276,13 +277,13 @@ abstract class TransportLayerConnection protected constructor(
                     val tcpPacket = initialPacket.payload as TcpPacket
 //                    if(tcpPacket.header.dstPort.valueAsInt() == 853) {
 //                        Timber.w("Resetting DoT packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
-//                        deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
+//                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
 //                        null
 //                    } else
                     if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
                         val headerString = if(tcpPacket.header.fin) "FIN" else "" + if(tcpPacket.header.ack) "ACK" else "" + if (tcpPacket.header.rst) "RST" else ""
                         Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
-                        deviceWriter.sendMessage(deviceWriter.obtainMessage(6, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
+                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null
                     } else {
                         TcpConnection(

@@ -251,7 +251,6 @@ All DAO methods are `suspend` functions; relationships are expressed with Room `
 | DataStore + Protobuf | 1.1.6 | Type-safe preferences |
 | Retrofit + OkHttp | 2.9.0 / 5.0.0-alpha.2 | HTTP networking (Exodus API) |
 | Pcap4j | 1.7.6 | IP/TCP/UDP packet parsing |
-| Netty | 4.1.58 | TCP/TLS handling in the VPN's MitM engine |
 | BouncyCastle | 1.69 | TLS certificate generation |
 | multidexlib2 | — | APK/DEX parsing |
 | JSoup | 1.14.3 | HTML scraping (Play Store privacy policy) |
