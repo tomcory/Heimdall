@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import org.pcap4j.packet.Packet
@@ -19,6 +20,7 @@ class PlaintextConnection(
         if(id > 0) {
             Timber.d("plain$id Creating plaintext connection to ${transportLayer.ipPacketBuilder.remoteAddress.hostAddress}:${transportLayer.remotePort} (${transportLayer.remoteHost})")
         }
+        persistSecurity(SecurityProtocol.PLAIN)
     }
 
     override val protocol = "PLAIN"

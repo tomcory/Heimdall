@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
@@ -239,6 +240,7 @@ class TlsConnection(
         if (recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
             sni = findSni(record)
             sni?.let { hostname = it }
+            persistSecurity(SecurityProtocol.TLS, sni = sni)
 
             // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)
             // that aren't marked for passthrough

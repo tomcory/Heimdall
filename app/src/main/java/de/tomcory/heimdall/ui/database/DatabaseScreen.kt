@@ -272,6 +272,12 @@ private fun ConnectionDetail(
             // Connection metadata
             ConnectionMetadataRow("Remote", "${connection.remoteHost ?: "unresolved"}:${connection.remotePort}")
             ConnectionMetadataRow("Protocol", connection.protocol.name)
+            connection.securityProtocol?.let { ConnectionMetadataRow("Security", it.name) }
+            connection.sni?.let { ConnectionMetadataRow("SNI", it) }
+            connection.alpn?.let { ConnectionMetadataRow("ALPN", it) }
+            if (connection.blocked) {
+                ConnectionMetadataRow("QUIC", "blocked")
+            }
             ConnectionMetadataRow("↑ Out", formatBytes(connection.bytesOut))
             ConnectionMetadataRow("↓ In", formatBytes(connection.bytesIn))
 

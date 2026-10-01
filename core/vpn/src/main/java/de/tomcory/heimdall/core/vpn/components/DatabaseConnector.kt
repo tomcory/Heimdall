@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.components
 
 import de.tomcory.heimdall.core.database.entity.Protocol
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 
 interface DatabaseConnector {
 
@@ -39,6 +40,37 @@ interface DatabaseConnector {
     suspend fun updateConnectionBytesIn(
         id: Long,
         delta: Int
+    )
+
+    /**
+     * Records what the encryption layer learned about a connection from its first payload.
+     *
+     * @param alpn The application protocols the client offered, comma-separated.
+     * @param echOffered Whether the ClientHello carried an Encrypted Client Hello extension.
+     */
+    suspend fun updateConnectionSecurity(
+        id: Long,
+        securityProtocol: SecurityProtocol,
+        sni: String?,
+        alpn: String?,
+        echOffered: Boolean
+    )
+
+    /**
+     * Replaces a connection's hostname and tracker label once a better hostname than the one
+     * known at creation time is available.
+     */
+    suspend fun updateConnectionHost(
+        id: Long,
+        remoteHost: String,
+        isTracker: Boolean
+    )
+
+    /**
+     * Marks a connection whose traffic was dropped instead of forwarded.
+     */
+    suspend fun markConnectionBlocked(
+        id: Long
     )
 
     suspend fun persistHttpRequest(

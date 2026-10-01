@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import de.tomcory.heimdall.core.database.entity.Connection
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 
 @Dao
 interface ConnectionDao {
@@ -26,6 +27,15 @@ interface ConnectionDao {
 
     @Query("UPDATE Connection SET bytesIn = bytesIn + :delta WHERE id = :id")
     suspend fun updateBytesIn(id: Long, delta: Int)
+
+    @Query("UPDATE Connection SET securityProtocol = :securityProtocol, sni = :sni, alpn = :alpn, echOffered = :echOffered WHERE id = :id")
+    suspend fun updateSecurity(id: Long, securityProtocol: SecurityProtocol, sni: String?, alpn: String?, echOffered: Boolean)
+
+    @Query("UPDATE Connection SET remoteHost = :remoteHost, isTracker = :isTracker WHERE id = :id")
+    suspend fun updateHost(id: Long, remoteHost: String, isTracker: Boolean)
+
+    @Query("UPDATE Connection SET blocked = 1 WHERE id = :id")
+    suspend fun markBlocked(id: Long)
 
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>

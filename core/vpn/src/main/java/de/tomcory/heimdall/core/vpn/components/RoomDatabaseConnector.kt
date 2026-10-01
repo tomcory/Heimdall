@@ -5,6 +5,7 @@ import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.database.entity.Session
 import timber.log.Timber
 
@@ -88,6 +89,36 @@ class RoomDatabaseConnector(
             database.connectionDao().updateBytesIn(id, delta)
         } catch (e: Exception) {
             Timber.e(e, "Error while updating connection bytesIn (cID: $id)")
+        }
+    }
+
+    override suspend fun updateConnectionSecurity(
+        id: Long,
+        securityProtocol: SecurityProtocol,
+        sni: String?,
+        alpn: String?,
+        echOffered: Boolean
+    ) {
+        try {
+            database.connectionDao().updateSecurity(id, securityProtocol, sni, alpn, echOffered)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while updating connection security metadata (cID: $id)")
+        }
+    }
+
+    override suspend fun updateConnectionHost(id: Long, remoteHost: String, isTracker: Boolean) {
+        try {
+            database.connectionDao().updateHost(id, remoteHost, isTracker)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while updating connection host (cID: $id)")
+        }
+    }
+
+    override suspend fun markConnectionBlocked(id: Long) {
+        try {
+            database.connectionDao().markBlocked(id)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while marking connection as blocked (cID: $id)")
         }
     }
 

@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.integration
 
 import android.os.Message
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.InboundTrafficHandler
@@ -149,6 +150,15 @@ class MalformedInputRobustnessTest {
             TransportLayerConnection.TransportLayerState.CONNECTED,
             connection?.state
         )
+
+        // unrecognised payloads are recorded as PLAIN (docs/vpn-mitm-audit.md PKT-27); the
+        // update is written asynchronously
+        val securityDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < securityDeadline && dbConnector.connections.firstOrNull()?.securityProtocol == null) {
+            Thread.sleep(20)
+        }
+        assertEquals(SecurityProtocol.PLAIN, dbConnector.connections.first().securityProtocol)
+        assertNull(dbConnector.connections.first().sni)
     }
 
     @Test

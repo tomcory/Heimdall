@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.integration
 
 import android.os.Message
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
@@ -196,6 +197,12 @@ class TlsMitmHttpFlowTest {
         assertEquals(1, dbConnector.responses.size)
         assertEquals(200, dbConnector.responses[0].statusCode)
         assertEquals("Hello, world!", dbConnector.responses[0].content)
+
+        // the connection is recorded as TLS along with the server name the client asked for
+        // (docs/vpn-mitm-audit.md PKT-27)
+        assertEquals(1, dbConnector.connections.size)
+        assertEquals(SecurityProtocol.TLS, dbConnector.connections[0].securityProtocol)
+        assertEquals(hostname, dbConnector.connections[0].sni)
 
         // --- certificate assertion: the dynamically-generated leaf cert must mirror FakeTlsServer's CN ---
         val peerCert = driver.engine.session.peerCertificates[0] as X509Certificate

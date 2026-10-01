@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.vpn.integration.support
 
 import de.tomcory.heimdall.core.database.entity.Protocol
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
@@ -14,13 +15,18 @@ data class RecordedConnection(
     val initiatorId: Int,
     val initiatorPkg: String,
     val localPort: Int,
-    val remoteHost: String?,
+    @Volatile var remoteHost: String?,
     val remoteIp: String,
     val remotePort: Int,
-    val isTracker: Boolean,
+    @Volatile var isTracker: Boolean,
     @Volatile var deleted: Boolean = false,
     @Volatile var bytesOut: Long = 0,
-    @Volatile var bytesIn: Long = 0
+    @Volatile var bytesIn: Long = 0,
+    @Volatile var securityProtocol: SecurityProtocol? = null,
+    @Volatile var sni: String? = null,
+    @Volatile var alpn: String? = null,
+    @Volatile var echOffered: Boolean = false,
+    @Volatile var blocked: Boolean = false
 )
 
 data class RecordedRequest(
@@ -131,6 +137,33 @@ class RecordingDatabaseConnector : DatabaseConnector {
 
     override suspend fun updateConnectionBytesIn(id: Long, delta: Int) {
         connections.find { it.id == id }?.let { it.bytesIn += delta }
+    }
+
+    override suspend fun updateConnectionSecurity(
+        id: Long,
+        securityProtocol: SecurityProtocol,
+        sni: String?,
+        alpn: String?,
+        echOffered: Boolean
+    ) {
+        connections.find { it.id == id }?.let {
+            it.sni = sni
+            it.alpn = alpn
+            it.echOffered = echOffered
+            // written last: tests poll on this field to know the update has landed
+            it.securityProtocol = securityProtocol
+        }
+    }
+
+    override suspend fun updateConnectionHost(id: Long, remoteHost: String, isTracker: Boolean) {
+        connections.find { it.id == id }?.let {
+            it.remoteHost = remoteHost
+            it.isTracker = isTracker
+        }
+    }
+
+    override suspend fun markConnectionBlocked(id: Long) {
+        connections.find { it.id == id }?.blocked = true
     }
 
     override suspend fun persistHttpRequest(

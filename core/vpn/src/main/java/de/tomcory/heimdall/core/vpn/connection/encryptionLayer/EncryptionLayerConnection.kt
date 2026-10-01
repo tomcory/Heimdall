@@ -1,9 +1,13 @@
 package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
+import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.appLayer.RawConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 
@@ -27,6 +31,28 @@ abstract class EncryptionLayerConnection(
      * Indicates whether to perform a man-in-the-middle attack on this connection.
      */
     var doMitm = componentManager.doMitm
+
+    /**
+     * Asynchronously records how this connection is secured, along with what its ClientHello
+     * revealed, on the connection's database entry (docs/vpn-mitm-audit.md PKT-27). Connections
+     * without a database entry (id 0, e.g. DNS) are skipped.
+     *
+     * @param sni The server name the client asked for, if any.
+     * @param alpn The application protocols the client offered, comma-separated.
+     * @param echOffered Whether the ClientHello carried an Encrypted Client Hello extension.
+     */
+    protected fun persistSecurity(
+        securityProtocol: SecurityProtocol,
+        sni: String? = null,
+        alpn: String? = null,
+        echOffered: Boolean = false
+    ) {
+        if (id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.updateConnectionSecurity(id, securityProtocol, sni, alpn, echOffered)
+            }
+        }
+    }
 
     /**
      * Passes an outbound payload to the application layer, creating an [AppLayerConnection] instance if necessary.

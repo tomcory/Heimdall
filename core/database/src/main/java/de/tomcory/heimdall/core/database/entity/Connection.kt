@@ -36,5 +36,17 @@ data class Connection(
     val remotePort: Int,
     val isTracker: Boolean = false,
     val bytesOut: Long = 0,
-    val bytesIn: Long = 0
+    val bytesIn: Long = 0,
+    // null: the connection carried no payload yet, so nothing was classified
+    val securityProtocol: SecurityProtocol? = null,
+    // server name the client asked for in its TLS or QUIC ClientHello, if it sent one
+    val sni: String? = null,
+    // application protocols the client offered in its ClientHello, comma-separated in the
+    // client's order of preference (e.g. "h2,http/1.1")
+    val alpn: String? = null,
+    // the ClientHello carried an Encrypted Client Hello extension. Clients also send it as
+    // GREASE, so this alone does not mean the real server name was hidden.
+    val echOffered: Boolean = false,
+    // Heimdall dropped this connection's traffic instead of forwarding it
+    val blocked: Boolean = false
 )
