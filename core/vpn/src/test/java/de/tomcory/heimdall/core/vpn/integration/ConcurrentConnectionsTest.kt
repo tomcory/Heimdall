@@ -15,6 +15,7 @@ import org.junit.Test
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -32,6 +33,13 @@ class ConcurrentConnectionsTest {
     private lateinit var acceptThread: Thread
     private lateinit var pump: SelectorPump
 
+    /**
+     * Keeps accepted sockets reachable for the duration of a test. An accepted socket that is
+     * dropped can be closed by the garbage collector at any moment, which the connection under
+     * test sees as a remote close: it then sends a FIN and advances its sequence number.
+     */
+    private val acceptedSockets = CopyOnWriteArrayList<Socket>()
+
     @Before
     fun setup() {
         PacketFixtures.warmUpPcap4j()
@@ -42,6 +50,7 @@ class ConcurrentConnectionsTest {
     @After
     fun teardown() {
         if (::pump.isInitialized) pump.stop()
+        acceptedSockets.forEach { it.close() }
         if (::serverSocket.isInitialized && !serverSocket.isClosed) serverSocket.close()
         if (::acceptThread.isInitialized) acceptThread.join(2000)
         ConnectionCache.closeAllAndClear()
@@ -128,7 +137,7 @@ class ConcurrentConnectionsTest {
     fun `concurrent increments of ourSeqNum and theirSeqNum from both directions never lose an update`() {
         acceptThread = Thread {
             try {
-                serverSocket.accept()
+                acceptedSockets.add(serverSocket.accept())
             } catch (e: Exception) {
                 // server socket closed during teardown, expected
             }

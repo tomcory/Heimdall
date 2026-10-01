@@ -135,7 +135,9 @@ class TcpConnection internal constructor(
         selectableChannel.socket().keepAlive = true
         selectableChannel.socket().tcpNoDelay = true
         selectableChannel.socket().soTimeout = 0
-        selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
+        // The receive buffer is deliberately left at the platform default. It bounds the window
+        // the remote host may send into, and shrinking it (it used to be set to maxPacketSize)
+        // halved download throughput (docs/vpn-mitm-audit.md PKT-34).
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
         return selectableChannel
     }

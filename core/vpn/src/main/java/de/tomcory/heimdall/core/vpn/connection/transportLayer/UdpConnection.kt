@@ -112,7 +112,11 @@ class UdpConnection internal constructor(
         componentManager.protectDatagramSocket(selectableChannel.socket())
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().soTimeout = 0
-        selectableChannel.socket().receiveBufferSize = componentManager.maxPacketSize
+        // UDP has no flow control: datagrams that arrive while the buffer is full are dropped by
+        // the kernel. A burst (QUIC, media) easily outruns the selector thread for a moment, so
+        // ask for a generous buffer; the kernel caps the request at its own limit
+        // (docs/vpn-mitm-audit.md PKT-34).
+        selectableChannel.socket().receiveBufferSize = RECEIVE_BUFFER_SIZE
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
         state = TransportLayerState.CONNECTED
         return selectableChannel
@@ -251,6 +255,13 @@ class UdpConnection internal constructor(
          * recommends at least 2 minutes for NATs; this picks a slightly more generous default).
          */
         const val DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000L
+
+        /**
+         * Receive buffer requested for each flow's outward-facing socket. It only bounds how
+         * many datagrams may queue up between two reads; each read still takes one datagram of
+         * at most maxPacketSize bytes.
+         */
+        const val RECEIVE_BUFFER_SIZE = 1024 * 1024
 
         /**
          * Closes every currently-cached [UdpConnection] that's had no [wrapOutbound]/[unwrapInbound]
