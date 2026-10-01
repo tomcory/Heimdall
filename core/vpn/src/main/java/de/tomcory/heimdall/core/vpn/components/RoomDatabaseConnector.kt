@@ -76,7 +76,7 @@ class RoomDatabaseConnector(
         }
     }
 
-    override suspend fun updateConnectionBytesOut(id: Long, delta: Int) {
+    override suspend fun updateConnectionBytesOut(id: Long, delta: Long) {
         try {
             database.connectionDao().updateBytesOut(id, delta)
         } catch (e: Exception) {
@@ -84,7 +84,7 @@ class RoomDatabaseConnector(
         }
     }
 
-    override suspend fun updateConnectionBytesIn(id: Long, delta: Int) {
+    override suspend fun updateConnectionBytesIn(id: Long, delta: Long) {
         try {
             database.connectionDao().updateBytesIn(id, delta)
         } catch (e: Exception) {

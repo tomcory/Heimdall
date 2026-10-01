@@ -34,12 +34,12 @@ interface DatabaseConnector {
 
     suspend fun updateConnectionBytesOut(
         id: Long,
-        delta: Int
+        delta: Long
     )
 
     suspend fun updateConnectionBytesIn(
         id: Long,
-        delta: Int
+        delta: Long
     )
 
     /**

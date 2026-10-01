@@ -23,10 +23,10 @@ interface ConnectionDao {
     suspend fun deleteForApp(packageName: String): Int
 
     @Query("UPDATE Connection SET bytesOut = bytesOut + :delta WHERE id = :id")
-    suspend fun updateBytesOut(id: Long, delta: Int)
+    suspend fun updateBytesOut(id: Long, delta: Long)
 
     @Query("UPDATE Connection SET bytesIn = bytesIn + :delta WHERE id = :id")
-    suspend fun updateBytesIn(id: Long, delta: Int)
+    suspend fun updateBytesIn(id: Long, delta: Long)
 
     @Query("UPDATE Connection SET securityProtocol = :securityProtocol, sni = :sni, alpn = :alpn, echOffered = :echOffered WHERE id = :id")
     suspend fun updateSecurity(id: Long, securityProtocol: SecurityProtocol, sni: String?, alpn: String?, echOffered: Boolean)

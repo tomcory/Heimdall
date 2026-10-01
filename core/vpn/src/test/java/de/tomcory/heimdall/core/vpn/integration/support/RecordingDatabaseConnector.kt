@@ -4,6 +4,7 @@ import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 data class RecordedConnection(
@@ -131,12 +132,17 @@ class RecordingDatabaseConnector : DatabaseConnector {
         return id.toInt()
     }
 
-    override suspend fun updateConnectionBytesOut(id: Long, delta: Int) {
-        connections.find { it.id == id }?.let { it.bytesOut += delta }
+    /** Number of byte counter updates received, i.e. of database writes a real connector would have made. */
+    val byteCounterUpdates = AtomicInteger(0)
+
+    override suspend fun updateConnectionBytesOut(id: Long, delta: Long) {
+        byteCounterUpdates.incrementAndGet()
+        connections.find { it.id == id }?.let { synchronized(it) { it.bytesOut += delta } }
     }
 
-    override suspend fun updateConnectionBytesIn(id: Long, delta: Int) {
-        connections.find { it.id == id }?.let { it.bytesIn += delta }
+    override suspend fun updateConnectionBytesIn(id: Long, delta: Long) {
+        byteCounterUpdates.incrementAndGet()
+        connections.find { it.id == id }?.let { synchronized(it) { it.bytesIn += delta } }
     }
 
     override suspend fun updateConnectionSecurity(

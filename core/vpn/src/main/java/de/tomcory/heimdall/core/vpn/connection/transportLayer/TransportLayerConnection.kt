@@ -20,6 +20,7 @@ import java.nio.ByteBuffer
 import java.nio.channels.SelectableChannel
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Base class for all transport-layer connection holders.
@@ -247,26 +248,58 @@ abstract class TransportLayerConnection protected constructor(
         }
     }
 
+    // Bytes transferred since the counters were last written to the database. They are only
+    // added up here and written in batches by flushByteCounters(): one database UPDATE per data
+    // segment queued thousands of writes during a large transfer, and everything else that
+    // needed the database, including the setup of new connections, waited behind them
+    // (docs/vpn-mitm-audit.md PKT-38).
+    private val pendingBytesOut = AtomicLong(0)
+    private val pendingBytesIn = AtomicLong(0)
+
     /**
-     * Records [delta] bytes sent from the device out to the remote host by asynchronously
-     * updating the connection's persisted bytesOut counter.
+     * Records [delta] bytes sent from the device out to the remote host. The connection's
+     * persisted bytesOut counter is updated by the next [flushByteCounters].
      */
     protected fun recordBytesOut(delta: Int) {
         if (delta > 0 && id > 0) {
-            CoroutineScope(Dispatchers.IO).launch {
-                componentManager.databaseConnector.updateConnectionBytesOut(id, delta)
-            }
+            pendingBytesOut.addAndGet(delta.toLong())
         }
     }
 
     /**
-     * Records [delta] bytes received from the remote host by asynchronously updating the
-     * connection's persisted bytesIn counter.
+     * Records [delta] bytes received from the remote host. The connection's persisted bytesIn
+     * counter is updated by the next [flushByteCounters].
      */
     protected fun recordBytesIn(delta: Int) {
         if (delta > 0 && id > 0) {
+            pendingBytesIn.addAndGet(delta.toLong())
+        }
+    }
+
+    /**
+     * Writes the bytes recorded since the last flush to the connection's persisted counters.
+     * Does nothing if there are none. Safe to call from several threads at once: every recorded
+     * byte is written exactly once, and the updates are additive, so their order doesn't matter.
+     */
+    suspend fun flushByteCounters() {
+        val bytesOut = pendingBytesOut.getAndSet(0)
+        if (bytesOut > 0) {
+            componentManager.databaseConnector.updateConnectionBytesOut(id, bytesOut)
+        }
+        val bytesIn = pendingBytesIn.getAndSet(0)
+        if (bytesIn > 0) {
+            componentManager.databaseConnector.updateConnectionBytesIn(id, bytesIn)
+        }
+    }
+
+    /**
+     * Flushes the byte counters without blocking the caller, for the moment a connection stops
+     * being tracked and no periodic flush will reach it any more.
+     */
+    fun flushByteCountersAsync() {
+        if (pendingBytesOut.get() > 0 || pendingBytesIn.get() > 0) {
             CoroutineScope(Dispatchers.IO).launch {
-                componentManager.databaseConnector.updateConnectionBytesIn(id, delta)
+                flushByteCounters()
             }
         }
     }

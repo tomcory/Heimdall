@@ -49,6 +49,9 @@ class ConnectionCache {
                     connection
                 )
             )
+            // the periodic flush only reaches cached connections, so write what this one still
+            // has to report now
+            connection.flushByteCountersAsync()
         }
 
         /** Snapshot of every currently-cached connection, regardless of protocol. */

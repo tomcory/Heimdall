@@ -10,6 +10,7 @@ import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
@@ -83,6 +84,7 @@ class ComponentManager(
     // cancelled in stopComponents() alongside everything else
     private val componentScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var idleSweepJob: Job? = null
+    private var byteCounterFlushJob: Job? = null
 
     // set up the caches for DNS lookups and TLS passthrough connections
     val dnsCache = DnsCache()
@@ -183,11 +185,34 @@ class ComponentManager(
                 }
             }
         }
+
+        // write the connections' byte counters in batches instead of once per packet
+        byteCounterFlushJob = componentScope.launch {
+            while (isActive) {
+                delay(BYTE_COUNTER_FLUSH_INTERVAL_MS)
+                flushByteCounters()
+            }
+        }
+    }
+
+    /**
+     * Writes the byte counters of every tracked connection that has transferred data since its
+     * last flush (see [TransportLayerConnection.flushByteCounters]).
+     */
+    private suspend fun flushByteCounters() {
+        for (connection in ConnectionCache.allConnections()) {
+            try {
+                connection.flushByteCounters()
+            } catch (e: Throwable) {
+                Timber.e(e, "Error flushing a connection's byte counters")
+            }
+        }
     }
 
     suspend fun stopComponents() {
-        // stop the periodic idle sweep
+        // stop the periodic idle sweep and byte counter flush
         idleSweepJob?.cancel()
+        byteCounterFlushJob?.cancel()
 
         // closing the interrupter pipe stops the DevicePollThread's polling
         try {
@@ -211,7 +236,9 @@ class ComponentManager(
             Timber.w(e, "Error closing VPN interface streams")
         }
 
-        // clear the connection cache
+        // write the byte counters of the connections that are still open, then clear the
+        // connection cache
+        flushByteCounters()
         ConnectionCache.closeAllAndClear()
 
         // update the session end time in the database
@@ -310,6 +337,9 @@ class ComponentManager(
 
     companion object {
         val selectorMonitor: Any = Any()
+
+        /** How often the connections' byte counters are written to the database. */
+        private const val BYTE_COUNTER_FLUSH_INTERVAL_MS = 1000L
 
         /**
          * How often to check for connections to reap: idle UDP connections (see
