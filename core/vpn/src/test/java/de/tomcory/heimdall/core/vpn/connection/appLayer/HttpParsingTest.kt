@@ -813,4 +813,140 @@ class HttpParsingTest {
             bufferedBytes(isOutbound = false) <= 64 * 1024
         )
     }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-37 (V-52): bodies with a Content-Length above the size limit
+    // are counted, not buffered
+    // -----------------------------------------------------------------------
+
+    private val sizeLimit = 1024 * 1024
+
+    /** Feeds [total] body bytes in payloads of [payloadSize], calling [afterEach] after every payload. */
+    private fun feedBody(total: Int, isOutbound: Boolean, payloadSize: Int = 16 * 1024, afterEach: () -> Unit = {}) {
+        val payload = ByteArray(payloadSize) { 'b'.code.toByte() }
+        var sent = 0
+        while (sent < total) {
+            val size = minOf(payloadSize, total - sent)
+            val bytes = if (size == payloadSize) payload else payload.copyOf(size)
+            if (isOutbound) httpConnection.unwrapOutbound(bytes) else httpConnection.unwrapInbound(bytes)
+            sent += size
+            afterEach()
+        }
+    }
+
+    @Test
+    fun `large response with Content-Length is counted instead of buffered`() {
+        sendRequest("GET", "/big")
+        sendRequest("GET", "/next")
+        val size = 5_000_000
+        var maxBuffered = 0
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: $size\r\n\r\n".toByteArray())
+        feedBody(size, isOutbound = false) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = false)) }
+        Thread.sleep(500)
+
+        assertEquals("nothing of a body that is too large to store may be held in memory", 0, maxBuffered)
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = "<too large: $size bytes>",
+                contentLength = size,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+
+        // the parser is back in step for the next response on the connection
+        httpConnection.unwrapInbound("HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray())
+        Thread.sleep(500)
+        verifyResponse(404, "gone")
+    }
+
+    @Test
+    fun `large request with Content-Length is counted instead of buffered`() {
+        val size = 5_000_000
+        var maxBuffered = 0
+
+        httpConnection.unwrapOutbound("POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: $size\r\n\r\n".toByteArray())
+        feedBody(size, isOutbound = true) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = true)) }
+        Thread.sleep(500)
+
+        assertEquals(0, maxBuffered)
+        coVerify(exactly = 1) {
+            connector.persistHttpRequest(
+                content = "<too large: $size bytes>",
+                contentLength = size,
+                method = "POST",
+                remotePath = "/upload",
+                connectionId = any(), timestamp = any(), headers = any(),
+                remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+
+        // the next request on the connection is parsed on its own
+        httpConnection.unwrapOutbound("GET /after HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+        coVerify(exactly = 1) {
+            connector.persistHttpRequest(
+                method = "GET",
+                remotePath = "/after",
+                connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
+                remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    @Test
+    fun `a body of exactly the size limit is still stored in full`() {
+        sendRequest("GET", "/")
+        var maxBuffered = 0
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: $sizeLimit\r\n\r\n".toByteArray())
+        feedBody(sizeLimit, isOutbound = false) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = false)) }
+        Thread.sleep(500)
+
+        assertTrue("a storable body is buffered, but never more than the limit plus its headers", maxBuffered in 1..(sizeLimit + 1024))
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = match { it.length == sizeLimit && !it.startsWith("<too large") },
+                contentLength = sizeLimit,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    @Test
+    fun `a body one byte over the size limit is not stored`() {
+        sendRequest("GET", "/")
+        val size = sizeLimit + 1
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: $size\r\n\r\n".toByteArray())
+        feedBody(size, isOutbound = false)
+        Thread.sleep(500)
+
+        verifyResponse(200, "<too large: $size bytes>")
+        assertEquals(0, bufferedBytes(isOutbound = false))
+    }
+
+    @Test
+    fun `the message behind an oversized body in the same payload is parsed`() {
+        sendRequest("GET", "/big")
+        sendRequest("GET", "/next")
+        val size = 2_000_000
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: $size\r\n\r\n".toByteArray())
+        feedBody(size - 100, isOutbound = false)
+        // the last 100 body bytes and the next response arrive together
+        httpConnection.unwrapInbound(ByteArray(100) { 'b'.code.toByte() } + "HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "<too large: $size bytes>")
+        verifyResponse(404, "gone")
+    }
 }

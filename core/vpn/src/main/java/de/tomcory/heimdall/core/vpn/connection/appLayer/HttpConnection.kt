@@ -50,10 +50,10 @@ class HttpConnection(
         /** Number of bytes of the current chunked message held in [chunkCache]. */
         var cachedSize = 0
 
-        /** Status line and headers of the current chunked message, kept in case its body turns out to be [tooLarge]. */
+        /** Status line and headers of the current message, kept for the case that its body is [tooLarge]. */
         var headerBytes: ByteArray? = null
 
-        /** The current chunked message outgrew the size limit, so its body is no longer cached. */
+        /** The current message's body exceeds the size limit, so it is not (or no longer) cached. */
         var tooLarge = false
 
         /**
@@ -213,18 +213,33 @@ class HttpConnection(
             val availableBodyBytes = assembledPayload.size - bodyStart
 
             if(contentLength >= 0) {
+                // A body larger than the limit is never kept: only its length is recorded
+                // (docs/vpn-mitm-audit.md PKT-37). The length is known up front, so nothing of
+                // such a body has to be buffered, however large it is.
+                val tooLarge = contentLength > maximumMessageSize
+
                 if(availableBodyBytes >= contentLength) {
                     // the message is complete; anything behind it belongs to the next one
                     val messageEnd = bodyStart + contentLength
-                    persistMessage(String(assembledPayload, 0, messageEnd, Charsets.UTF_8), isOutbound)
+                    if(tooLarge) {
+                        persistMessage(headerBlock, isOutbound, oversizedBodyLength = contentLength.toLong())
+                    } else {
+                        persistMessage(String(assembledPayload, 0, messageEnd, Charsets.UTF_8), isOutbound)
+                    }
                     continueAfterMessage(assembledPayload, messageEnd, isOutbound)
                 } else {
-                    // the body overflows this payload: cache it and wait for more
+                    // the body overflows this payload: wait for the rest
                     state.overflowing = true
                     state.statedContentLength = contentLength
                     state.remainingContentLength = contentLength - availableBodyBytes
                     Timber.d("http$id starting overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                    state.chunkCache.add(assembledPayload)
+                    if(tooLarge) {
+                        Timber.d("http$id body of $contentLength bytes exceeds $maximumMessageSize bytes, not caching it")
+                        state.tooLarge = true
+                        state.headerBytes = assembledPayload.copyOf(bodyStart)
+                    } else {
+                        state.chunkCache.add(assembledPayload)
+                    }
                 }
             } else if(isOutbound) {
                 // a request with neither a length nor chunked encoding has no body, so anything
@@ -242,8 +257,11 @@ class HttpConnection(
         } else if(state.chunked) {
             handleChunkedBytes(assembledPayload, 0, isOutbound, state)
         } else {
-            // the message is overflowing: add the chunk to the cache
-            state.chunkCache.add(assembledPayload)
+            // the message is overflowing: add the chunk to the cache, unless the body is too
+            // large to keep, in which case its bytes are only counted
+            if(!state.tooLarge) {
+                state.chunkCache.add(assembledPayload)
+            }
 
             // check whether there's still content remaining after the current payload
             state.remainingContentLength -= assembledPayload.size
@@ -251,10 +269,16 @@ class HttpConnection(
                 Timber.d("http$id resolved overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
                 // a negative remainder means this payload also holds the start of the next message
                 val surplus = -state.remainingContentLength
-                val combined = combineChunks(state)
-                val messageEnd = combined.size - surplus
-                persistMessage(String(combined, 0, messageEnd, Charsets.UTF_8), isOutbound)
-                continueAfterMessage(combined, messageEnd, isOutbound)
+                if(state.tooLarge) {
+                    val headers = state.headerBytes?.toString(Charsets.UTF_8) ?: ""
+                    persistMessage(headers, isOutbound, oversizedBodyLength = state.statedContentLength.toLong())
+                    continueAfterMessage(assembledPayload, assembledPayload.size - surplus, isOutbound)
+                } else {
+                    val combined = combineChunks(state)
+                    val messageEnd = combined.size - surplus
+                    persistMessage(String(combined, 0, messageEnd, Charsets.UTF_8), isOutbound)
+                    continueAfterMessage(combined, messageEnd, isOutbound)
+                }
             } else {
                 Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
             }
