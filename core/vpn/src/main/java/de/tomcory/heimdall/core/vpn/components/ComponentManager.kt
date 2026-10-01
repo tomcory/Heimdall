@@ -167,7 +167,7 @@ class ComponentManager(
         // FIN/RST of its own to signal that a flow is done, so without this every UDP flow
         // would otherwise stay registered for the entire VPN session (see UdpConnection.sweepIdleConnections)
         // The same sweep reaps TCP connections whose client half-closed and whose remote side
-        // then neither sends nor closes (see TcpConnection.sweepHalfClosedConnections).
+        // then neither sends nor closes (see TcpConnection.sweepStaleConnections).
         idleSweepJob = componentScope.launch {
             while (isActive) {
                 delay(IDLE_SWEEP_INTERVAL_MS)
@@ -177,9 +177,9 @@ class ComponentManager(
                     Timber.e(e, "Error during UDP idle-connection sweep")
                 }
                 try {
-                    TcpConnection.sweepHalfClosedConnections()
+                    TcpConnection.sweepStaleConnections()
                 } catch (e: Throwable) {
-                    Timber.e(e, "Error during TCP half-closed-connection sweep")
+                    Timber.e(e, "Error during TCP stale-connection sweep")
                 }
             }
         }
@@ -314,7 +314,7 @@ class ComponentManager(
         /**
          * How often to check for connections to reap: idle UDP connections (see
          * [UdpConnection.sweepIdleConnections]) and stale half-closed TCP connections (see
-         * [TcpConnection.sweepHalfClosedConnections]).
+         * [TcpConnection.sweepStaleConnections]).
          */
         private const val IDLE_SWEEP_INTERVAL_MS = 30 * 1000L
     }

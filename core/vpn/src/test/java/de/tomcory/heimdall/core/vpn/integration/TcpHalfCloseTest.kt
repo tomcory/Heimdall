@@ -99,10 +99,10 @@ class TcpHalfCloseTest {
         serverThread.start()
     }
 
-    private fun sendFromDevice(seq: Int, payload: ByteArray = ByteArray(0), finFlag: Boolean = false, connection: TransportLayerConnection) {
+    private fun sendFromDevice(seq: Int, payload: ByteArray = ByteArray(0), finFlag: Boolean = false, ack: Int = 1, connection: TransportLayerConnection) {
         val packet = PacketFixtures.buildTcpDataPacket(
             localAddr = localAddr, localPort = LOCAL_PORT, remoteAddr = remoteAddr, remotePort = serverSocket.localPort,
-            seq = seq, ack = 1, payload = payload, pshFlag = payload.isNotEmpty(), finFlag = finFlag
+            seq = seq, ack = ack, payload = payload, pshFlag = payload.isNotEmpty(), finFlag = finFlag
         )
         connection.unwrapOutbound(packet.payload)
     }
@@ -186,7 +186,7 @@ class TcpHalfCloseTest {
         )
 
         // the device acknowledges our FIN, which ends the connection
-        sendFromDevice(seq = 2 + request.size, connection = connection)
+        sendFromDevice(seq = 2 + request.size, ack = segments.last().header.sequenceNumber + 1, connection = connection)
         assertEquals(TransportLayerState.CLOSED, connection.state)
         assertNull("the connection must leave the cache once the close completes", ConnectionCache.findConnection(synPacket))
 
@@ -248,10 +248,10 @@ class TcpHalfCloseTest {
         assertEquals(TransportLayerState.HALF_CLOSED, connection.state)
 
         // not yet stale
-        TcpConnection.sweepHalfClosedConnections(timeoutMs = 60_000, now = System.currentTimeMillis())
+        TcpConnection.sweepStaleConnections(halfClosedTimeoutMs = 60_000, now = System.currentTimeMillis())
         assertNotNull("a recently half-closed connection must not be reaped", ConnectionCache.findConnection(synPacket))
 
-        TcpConnection.sweepHalfClosedConnections(timeoutMs = 60_000, now = System.currentTimeMillis() + 120_000)
+        TcpConnection.sweepStaleConnections(halfClosedTimeoutMs = 60_000, now = System.currentTimeMillis() + 120_000)
 
         assertNull("expected the stale half-closed connection to be removed from the cache", ConnectionCache.findConnection(synPacket))
         assertTrue(
@@ -265,7 +265,7 @@ class TcpHalfCloseTest {
         startServer(replyAndClose = false)
         val connection = connect()
 
-        TcpConnection.sweepHalfClosedConnections(timeoutMs = 0, now = System.currentTimeMillis() + 1_000_000)
+        TcpConnection.sweepStaleConnections(halfClosedTimeoutMs = 0, now = System.currentTimeMillis() + 1_000_000)
 
         assertEquals(TransportLayerState.CONNECTED, connection.state)
         assertNotNull(ConnectionCache.findConnection(synPacket))

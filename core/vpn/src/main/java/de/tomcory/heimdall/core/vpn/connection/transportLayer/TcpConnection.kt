@@ -71,10 +71,27 @@ class TcpConnection internal constructor(
 
     /**
      * Wall-clock time of the last sign of life while [TransportLayerState.HALF_CLOSED]: entering
-     * the state, or inbound data arriving in it. Used by [sweepHalfClosedConnections].
+     * the state, or inbound data arriving in it. Used by [sweepStaleConnections].
      */
     @Volatile
     private var halfClosedActivityAt: Long = 0
+
+    // The closing handshake is complete once both of these are true: the device has sent its
+    // FIN (and we have acknowledged it), and the device has acknowledged ours. Which of the two
+    // happens first depends on who closes. Both are only touched under closeLock.
+
+    /** Whether the device's FIN has been received and counted in [theirSeqNum]. */
+    private var deviceFinReceived = false
+
+    /** Whether the device has acknowledged our FIN. */
+    private var ourFinAcknowledged = false
+
+    /** The acknowledgement number that covers our FIN, as it appears in a TCP header. Only meaningful once our FIN was sent. */
+    private var ourFinAckNumber = 0
+
+    /** Wall-clock time at which our FIN was sent, used by [sweepStaleConnections]. */
+    @Volatile
+    private var closingSince: Long = 0
 
     override val protocol = Protocol.TCP
     override val appId: Int?
@@ -172,15 +189,15 @@ class TcpConnection internal constructor(
             if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
                 handleAckData(outgoingPacket) // data was sent and needs to be forwarded
             } else if (!tcpHeader.syn && !tcpHeader.fin) {
-                handleAckEmpty()
+                handleAckEmpty(tcpHeader.acknowledgmentNumber)
             }
             if (tcpHeader.syn) {
                 handleSynAck() // this should not happen, since we never initiate a handshake
             } else if (tcpHeader.fin) {
-                handleFinAck() // this is either the first or second packet of the closing handshake
+                handleFin(tcpHeader.acknowledgmentNumber) // this is either the first or second packet of the closing handshake
             }
         } else if (tcpHeader.fin) {
-            handleFin() // closing handshake was initiated
+            handleFin(null) // closing handshake was initiated
         }
     }
 
@@ -292,7 +309,10 @@ class TcpConnection internal constructor(
         }
     }
 
-    private fun handleAckEmpty() {
+    /**
+     * @param ackNumber The acknowledgement number of the device's segment.
+     */
+    private fun handleAckEmpty(ackNumber: Int) {
         when (state) {
             TransportLayerState.CONNECTING -> {
                 // establishing handshake complete, set status to CONNECTED
@@ -301,11 +321,14 @@ class TcpConnection internal constructor(
             TransportLayerState.CONNECTED, TransportLayerState.HALF_CLOSED, TransportLayerState.CLOSED -> {
                 // ignore empty ACK packets, there is no packet loss that would make acknowledgements useful
             }
-            TransportLayerState.CLOSING -> {
-                // closing handshake complete, set status to CLOSED and remove the connection from the cache
-                closeChannel()
-                state = TransportLayerState.CLOSED
-                ConnectionCache.removeConnection(this)
+            TransportLayerState.CLOSING -> synchronized(closeLock) {
+                // Only the ACK that covers our FIN moves the closing handshake forward. Others
+                // acknowledge data sent before the FIN and say nothing about the close
+                // (docs/vpn-mitm-audit.md PKT-35).
+                if (state == TransportLayerState.CLOSING && ackNumber == ourFinAckNumber) {
+                    ourFinAcknowledged = true
+                    finishCloseIfComplete()
+                }
             }
             else -> {
                 // there is no good reason for an acknowledgement in any other flow state, abort
@@ -336,26 +359,30 @@ class TcpConnection internal constructor(
         closeHard(abortClientSession = false)
     }
 
-    private fun handleFinAck() {
-        if (state == TransportLayerState.CLOSING) {
-            // we already sent our FIN-ACK and are awaiting the device's final (plain) ACK; a
-            // FIN(+ACK) arriving in this state is a retransmission of the device's original
-            // closing FIN, not a new event - resend our cached FIN-ACK rather than advancing
-            // sequence numbers again for something we've already accounted for.
-            pendingFinAck?.let { writeToDevice(it) }
-        } else {
-            // we're not expecting a FIN ACK, so we treat it like a normal FIN packet and start closing the connection
-            handleFin()
-        }
-    }
-
-    private fun handleFin() {
+    /**
+     * Handles a FIN from the device.
+     *
+     * @param ackNumber The acknowledgement number of the segment, or null if it has no ACK flag.
+     */
+    private fun handleFin(ackNumber: Int?) {
         synchronized(closeLock) {
-            handleFinLocked()
+            handleFinLocked(ackNumber)
         }
     }
 
-    private fun handleFinLocked() {
+    /**
+     * Sets the connection to CLOSED and removes it from the cache once the closing handshake is
+     * complete in both directions. Must be called under [closeLock].
+     */
+    private fun finishCloseIfComplete() {
+        if (deviceFinReceived && ourFinAcknowledged) {
+            closeChannel()
+            state = TransportLayerState.CLOSED
+            ConnectionCache.removeConnection(this)
+        }
+    }
+
+    private fun handleFinLocked(ackNumber: Int?) {
         when (state) {
             TransportLayerState.CLOSED, TransportLayerState.ABORTED -> {
                 // the connection is already closed, abort
@@ -373,6 +400,7 @@ class TcpConnection internal constructor(
                 notifyClientClosed()
                 if (encryptionLayerSupportsHalfClose() && shutdownOutwardOutput()) {
                     increaseTheirSeqNum(1)
+                    deviceFinReceived = true
                     halfClosedActivityAt = System.currentTimeMillis()
                     state = TransportLayerState.HALF_CLOSED
                     writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
@@ -381,11 +409,26 @@ class TcpConnection internal constructor(
                 }
             }
             TransportLayerState.CLOSING -> {
-                // a duplicate/retransmitted FIN while we're already waiting for the device's final
-                // ACK to our own FIN-ACK (e.g. the original FIN-ACK was lost) - the outward-facing
-                // channel is already closed and the sequence numbers already advanced, so resend
-                // the exact same FIN-ACK segment rather than building a fresh (higher-sequenced) one.
-                pendingFinAck?.let { writeToDevice(it) }
+                if (deviceFinReceived) {
+                    // a duplicate/retransmitted FIN while we're already waiting for the device's final
+                    // ACK to our own FIN-ACK (e.g. the original FIN-ACK was lost) - the outward-facing
+                    // channel is already closed and the sequence numbers already advanced, so resend
+                    // the exact same FIN-ACK segment rather than building a fresh (higher-sequenced) one.
+                    pendingFinAck?.let { writeToDevice(it) }
+                } else {
+                    // The remote host closed first, we sent our FIN, and this is the device's
+                    // own FIN: count it and acknowledge it. It usually acknowledges our FIN in
+                    // the same segment, which completes the handshake.
+                    deviceFinReceived = true
+                    increaseTheirSeqNum(1)
+                    // the cached FIN-ACK predates the device's FIN, so it must not be resent
+                    pendingFinAck = null
+                    writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+                    if (ackNumber == ourFinAckNumber) {
+                        ourFinAcknowledged = true
+                    }
+                    finishCloseIfComplete()
+                }
             }
             else -> {
                 // the outward-facing channel isn't connected yet, so there is nothing to keep
@@ -406,6 +449,7 @@ class TcpConnection internal constructor(
     private fun closeFully() {
         closeSoft(abortClientSession = false, finalizeState = false)
         increaseTheirSeqNum(1)
+        deviceFinReceived = true
         sendFinAck()
     }
 
@@ -416,6 +460,9 @@ class TcpConnection internal constructor(
     private fun sendFinAck() {
         val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())
         increaseOurSeqNum(1)
+        // our FIN occupies one sequence number, so the ACK that covers it carries the next one
+        ourFinAckNumber = ourSeqNum.get().toInt()
+        closingSince = System.currentTimeMillis()
         pendingFinAck = finAckResponse
         writeToDevice(finAckResponse)
     }
@@ -485,12 +532,14 @@ class TcpConnection internal constructor(
                 state = TransportLayerState.CLOSING
                 sendFinAck()
             } else {
-                // connection closed by server, move to CLOSING state and send a FIN to initiate the local closing handshake
+                // The remote host closed first: move to CLOSING and start the closing handshake
+                // with a FIN-ACK. It has to carry the ACK flag like every segment of an
+                // established connection, or the device discards it and never learns that the
+                // remote host is done (docs/vpn-mitm-audit.md PKT-35). The device's ACK for it
+                // and the device's own FIN complete the handshake.
                 Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
                 state = TransportLayerState.CLOSING
-                val finPacket = ipPacketBuilder.buildPacket(buildFin())
-                increaseOurSeqNum(1)
-                writeToDevice(finPacket)
+                sendFinAck()
             }
         }
     }
@@ -626,13 +675,6 @@ class TcpConnection internal constructor(
     }
 
     /**
-     * Convenience method that calls [buildTcpPayload] with the required flags to construct a FIN packet.
-     */
-    private fun buildFin(): TcpPacket.Builder {
-        return buildTcpPayload(urg = false, ack = false, psh = false, rst = false, syn = false, fin = true, rawPayload = ByteArray(0))
-    }
-
-    /**
      * Convenience method that calls [buildTcpPayload] with the required flags to construct a FIN-ACK packet.
      */
     private fun buildFinAck(): TcpPacket.Builder {
@@ -642,28 +684,56 @@ class TcpConnection internal constructor(
     companion object {
         /**
          * How long a connection may stay [TransportLayerState.HALF_CLOSED] without any inbound
-         * data before [sweepHalfClosedConnections] aborts it.
+         * data before [sweepStaleConnections] aborts it.
          */
         const val DEFAULT_HALF_CLOSED_TIMEOUT_MS = 2 * 60 * 1000L
 
         /**
-         * Aborts every cached [TcpConnection] that has been [TransportLayerState.HALF_CLOSED]
-         * without inbound data for longer than [timeoutMs]. A half-closed connection normally
-         * ends when the remote host closes its side. One whose remote host neither sends nor
-         * closes would otherwise stay registered, holding its SocketChannel, until the VPN stops.
+         * How long a connection may stay [TransportLayerState.CLOSING] before
+         * [sweepStaleConnections] drops it. An app is free to keep its side of a connection open
+         * long after the remote host has closed, e.g. in a connection pool.
+         */
+        const val DEFAULT_CLOSING_TIMEOUT_MS = 2 * 60 * 1000L
+
+        /**
+         * Removes cached [TcpConnection]s that are waiting for something that may never come:
+         *
+         * - [TransportLayerState.HALF_CLOSED] without inbound data for longer than
+         *   [halfClosedTimeoutMs]. Such a connection normally ends when the remote host closes
+         *   its side. One whose remote host neither sends nor closes would otherwise keep its
+         *   SocketChannel until the VPN stops. It is aborted, which resets the device's side.
+         * - [TransportLayerState.CLOSING] for longer than [closingTimeoutMs]: our FIN is out, but
+         *   the device hasn't finished its part of the closing handshake. The outward-facing
+         *   channel is already closed, so only the cache entry is dropped, without a reset.
          *
          * @param now Injectable for testing; defaults to the real current time.
          */
-        fun sweepHalfClosedConnections(timeoutMs: Long = DEFAULT_HALF_CLOSED_TIMEOUT_MS, now: Long = System.currentTimeMillis()) {
-            ConnectionCache.allConnections()
-                .filterIsInstance<TcpConnection>()
-                .filter { it.state == TransportLayerState.HALF_CLOSED && now - it.halfClosedActivityAt > timeoutMs }
+        fun sweepStaleConnections(
+            halfClosedTimeoutMs: Long = DEFAULT_HALF_CLOSED_TIMEOUT_MS,
+            closingTimeoutMs: Long = DEFAULT_CLOSING_TIMEOUT_MS,
+            now: Long = System.currentTimeMillis()
+        ) {
+            val connections = ConnectionCache.allConnections().filterIsInstance<TcpConnection>()
+
+            connections
+                .filter { it.state == TransportLayerState.HALF_CLOSED && now - it.halfClosedActivityAt > halfClosedTimeoutMs }
                 .forEach { connection ->
                     try {
-                        Timber.d("tcp${connection.id} aborting half-closed TCP connection to ${connection.remoteHost ?: connection.ipPacketBuilder.remoteAddress.hostAddress}:${connection.remotePort} (no inbound data for over ${timeoutMs}ms)")
+                        Timber.d("tcp${connection.id} aborting half-closed TCP connection to ${connection.remoteHost ?: connection.ipPacketBuilder.remoteAddress.hostAddress}:${connection.remotePort} (no inbound data for over ${halfClosedTimeoutMs}ms)")
                         connection.closeHard()
                     } catch (e: Throwable) {
                         Timber.e(e, "Error closing half-closed TCP connection during sweep")
+                    }
+                }
+
+            connections
+                .filter { it.state == TransportLayerState.CLOSING && it.closingSince > 0 && now - it.closingSince > closingTimeoutMs }
+                .forEach { connection ->
+                    try {
+                        Timber.d("tcp${connection.id} dropping TCP connection to ${connection.remoteHost ?: connection.ipPacketBuilder.remoteAddress.hostAddress}:${connection.remotePort} whose closing handshake the device never finished")
+                        connection.closeHard(abortClientSession = false)
+                    } catch (e: Throwable) {
+                        Timber.e(e, "Error dropping closing TCP connection during sweep")
                     }
                 }
         }

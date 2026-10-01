@@ -202,10 +202,20 @@ class ConnectionTeardownTest {
             ConnectionCache.findConnection(synPacket) === connection
         )
 
-        // the device sends the final ACK, completing the closing handshake
+        // an ACK that doesn't cover our FIN (e.g. one for earlier data that was still in flight)
+        // must not be mistaken for the end of the handshake (docs/vpn-mitm-audit.md PKT-35)
+        val ourFin = newSegments.last { it.header.fin }
+        val staleAckPacket = PacketFixtures.buildTcpDataPacket(
+            localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
+            seq = 2, ack = ourFin.header.sequenceNumber, payload = ByteArray(0), pshFlag = false
+        )
+        connection?.unwrapOutbound(staleAckPacket.payload)
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, connection?.state)
+
+        // the device acknowledges our FIN, completing the closing handshake
         val finalAckPacket = PacketFixtures.buildTcpDataPacket(
             localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
-            seq = 2, ack = 2, payload = ByteArray(0), pshFlag = false
+            seq = 2, ack = ourFin.header.sequenceNumber + 1, payload = ByteArray(0), pshFlag = false
         )
         connection?.unwrapOutbound(finalAckPacket.payload)
 
@@ -506,10 +516,10 @@ class ConnectionTeardownTest {
         val remoteAddr: Inet4Address,
         val remotePort: Int
     ) {
-        fun sendFromDevice(finFlag: Boolean = false, rstFlag: Boolean = false) {
+        fun sendFromDevice(finFlag: Boolean = false, rstFlag: Boolean = false, seq: Int = 1, ack: Int = 1) {
             val packet = PacketFixtures.buildTcpDataPacket(
                 localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
-                seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false,
+                seq = seq, ack = ack, payload = ByteArray(0), pshFlag = false,
                 ackFlag = !rstFlag, finFlag = finFlag, rstFlag = rstFlag
             )
             connection.unwrapOutbound(packet.payload)
@@ -608,5 +618,102 @@ class ConnectionTeardownTest {
         flow.sendFromDevice(rstFlag = true)
 
         assertEquals(0, flow.recorder.clientClosedCalls.get())
+    }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-35 (V-47): the remote-initiated close
+    // -----------------------------------------------------------------------
+
+    /** Closes the fake server's side and returns the segment our transport sends to the device in response. */
+    private fun remoteCloses(flow: EstablishedFlow): TcpPacket {
+        val before = flow.deviceWriter.sentMessages.size
+        closeAcceptedSocket()
+        awaitState(flow.connection, TransportLayerConnection.TransportLayerState.CLOSING)
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && flow.deviceWriter.sentMessages.size == before) {
+            Thread.sleep(20)
+        }
+        assertEquals("a remote close must produce exactly one segment", before + 1, flow.deviceWriter.sentMessages.size)
+        return (flow.deviceWriter.sentMessages.last().obj as IpPacket).payload as TcpPacket
+    }
+
+    private fun lastSegment(flow: EstablishedFlow) = (flow.deviceWriter.sentMessages.last().obj as IpPacket).payload as TcpPacket
+
+    private fun isCached(flow: EstablishedFlow): Boolean {
+        val syn = PacketFixtures.buildTcpSynPacket(flow.localAddr, flow.localPort, flow.remoteAddr, flow.remotePort)
+        return ConnectionCache.findConnection(syn) === flow.connection
+    }
+
+    @Test
+    fun `remote close is announced with a FIN that carries the ACK flag`() {
+        val flow = establishFlowWithRecorder(localPort = 41700)
+
+        val fin = remoteCloses(flow)
+
+        // a segment of an established connection without ACK is discarded by the device, which
+        // then never learns that the remote host is done
+        assertTrue("expected a FIN", fin.header.fin)
+        assertTrue("the FIN must carry the ACK flag", fin.header.ack)
+        assertFalse(fin.header.rst)
+    }
+
+    @Test
+    fun `after a remote close the handshake completes with the device's ACK and FIN`() {
+        val flow = establishFlowWithRecorder(localPort = 41701)
+        val fin = remoteCloses(flow)
+        val coversOurFin = fin.header.sequenceNumber + 1
+
+        // the device acknowledges our FIN but keeps its own side open for now
+        flow.sendFromDevice(seq = 1, ack = coversOurFin)
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, flow.connection.state)
+        assertTrue("the connection must stay cached until the device has closed too", isCached(flow))
+
+        // the app closes its socket: the device sends its FIN
+        val messagesBeforeFin = flow.deviceWriter.sentMessages.size
+        flow.sendFromDevice(finFlag = true, seq = 1, ack = coversOurFin)
+
+        assertEquals("the device's FIN must be acknowledged with one segment", messagesBeforeFin + 1, flow.deviceWriter.sentMessages.size)
+        val ack = lastSegment(flow)
+        assertTrue(ack.header.ack)
+        assertFalse("our FIN must not be sent a second time", ack.header.fin)
+        assertFalse(ack.header.rst)
+        assertEquals("the ACK must cover the device's FIN", 2, ack.header.acknowledgmentNumber)
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSED, flow.connection.state)
+        assertFalse(isCached(flow))
+    }
+
+    @Test
+    fun `an ACK for earlier data does not complete the close`() {
+        val flow = establishFlowWithRecorder(localPort = 41702)
+        val fin = remoteCloses(flow)
+
+        // acknowledges everything before our FIN, but not the FIN itself
+        flow.sendFromDevice(seq = 1, ack = fin.header.sequenceNumber)
+        flow.sendFromDevice(finFlag = true, seq = 1, ack = fin.header.sequenceNumber)
+
+        // the device's FIN is acknowledged, but ours is still outstanding
+        assertEquals(2, lastSegment(flow).header.acknowledgmentNumber)
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, flow.connection.state)
+        assertTrue(isCached(flow))
+
+        flow.sendFromDevice(seq = 2, ack = fin.header.sequenceNumber + 1)
+
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSED, flow.connection.state)
+        assertFalse(isCached(flow))
+    }
+
+    @Test
+    fun `a closing connection the device never finishes is dropped by the sweep without a reset`() {
+        val flow = establishFlowWithRecorder(localPort = 41703)
+        remoteCloses(flow)
+        val messagesBefore = flow.deviceWriter.sentMessages.size
+
+        TcpConnection.sweepStaleConnections(now = System.currentTimeMillis() + 1_000)
+        assertTrue("a connection that only just started closing must be kept", isCached(flow))
+
+        TcpConnection.sweepStaleConnections(now = System.currentTimeMillis() + TcpConnection.DEFAULT_CLOSING_TIMEOUT_MS + 1_000)
+
+        assertFalse(isCached(flow))
+        assertEquals("the device's side is not reset: the app may simply not have closed yet", messagesBefore, flow.deviceWriter.sentMessages.size)
     }
 }
