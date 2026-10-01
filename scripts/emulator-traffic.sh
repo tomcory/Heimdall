@@ -24,6 +24,7 @@
 # its forged ServerHello (the "bytes back"), then sees the client give up mid-handshake and
 # learns passthrough for (shell, host) for the rest of the VPN session. Cases:
 #   tracker       SNI of a listed tracker host, ALPN h2,http/1.1       -> tracker label from the SNI
+#   early-alert   ClientHello followed at once by a close_notify alert   -> no reply, clean close
 #   no-alpn       SNI, no ALPN extension
 #   no-sni        no server_name extension
 #   tls12         TLS 1.2-only ClientHello (no supported_versions)
@@ -54,6 +55,8 @@ ALL_GROUPS="dns http raw tls apps"
 TRACKER_HOST="googleads.g.doubleclick.net"
 HTTP_HOSTS="example.com connectivitycheck.gstatic.com"
 TLS_HOST="www.wikipedia.org"
+# served from the same addresses and certificate as $TLS_HOST
+EARLY_ALERT_HOST="en.wikipedia.org"
 MISMATCH_DNS_HOST="example.org"
 APPS="${HEIMDALL_APPS:-com.android.vending com.google.android.youtube}"
 APP_WAIT="${HEIMDALL_APP_WAIT:-25}"
@@ -214,8 +217,8 @@ make_client_hello() {
     kill "$client" "$listener" 2>/dev/null
     wait "$client" "$listener" 2>/dev/null
     [ -s "$out" ] || return 1
-    # keep only the first TLS record: openssl appends a close_notify alert when it exits, and
-    # an alert right behind the ClientHello makes Heimdall drop the connection at once
+    # keep only the first TLS record: openssl may append a close_notify alert when it exits,
+    # depending on timing. The early-alert case adds one deliberately instead.
     local high low
     high="$(od -An -tu1 -j3 -N1 "$out" | tr -d ' ')"
     low="$(od -An -tu1 -j4 -N1 "$out" | tr -d ' ')"
@@ -230,6 +233,10 @@ tls_case() {
     if ! make_client_hello "$file" "$@"; then
         info "$name: could not generate a ClientHello, skipped"
         return
+    fi
+    if [ "$name" = "early-alert" ]; then
+        # a close_notify alert right behind the ClientHello (docs/vpn-mitm-audit.md PKT-31)
+        printf '\x15\x03\x03\x00\x02\x01\x00' >> "$file"
     fi
     adb push "$file" "$DEVICE_TMP/$name.bin" >/dev/null 2>&1
     adb shell "{ cat $DEVICE_TMP/$name.bin; sleep $HOLD_OPEN; } | timeout 12 nc -w 5 $address 443 | wc -c" \
@@ -247,6 +254,8 @@ group_tls() {
     [ -n "$tracker_ip" ] && [ -n "$tls_ip" ] && [ -n "$mismatch_ip" ] || die "could not resolve the test hosts on this machine"
 
     tls_case tracker      "$tracker_ip"  -servername "$TRACKER_HOST" -alpn h2,http/1.1
+    # its own host name, so no passthrough has been learned for it and the MitM path is taken
+    tls_case early-alert  "$tls_ip"      -servername "$EARLY_ALERT_HOST" -alpn http/1.1
     tls_case no-alpn      "$tls_ip"      -servername "$TLS_HOST"
     tls_case no-sni       "$tls_ip"      -noservername
     tls_case tls12        "$tls_ip"      -servername "$TLS_HOST" -tls1_2 -alpn http/1.1

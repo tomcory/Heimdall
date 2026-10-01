@@ -278,7 +278,11 @@ class TlsConnection(
         // if the record is an ALERT, handle it and return
         if(recordType == RecordType.ALERT) {
             if(log) Timber.w("tls$id outbound alert in state $state ${ByteUtils.bytesToHex(record)}")
-            handleUnwrap(record, true)
+            if(clientSSLEngine == null) {
+                handleEarlyClientAlert(record)
+            } else {
+                handleUnwrap(record, true)
+            }
             return
         }
 
@@ -597,9 +601,52 @@ class TlsConnection(
     //////////////////////////////////////////////////////////////////////
 
     /**
+     * Handles an alert the client sent before the client-facing SSLEngine exists, i.e. while we
+     * are still busy with the server-facing handshake (docs/vpn-mitm-audit.md PKT-31). There is
+     * no engine to unwrap it with, and no need for one: the client has no keys yet, so the alert
+     * is plaintext.
+     *
+     * Whatever the alert says, the client is abandoning the handshake, so the TLS side of the
+     * connection is shut down. The transport layer is left open: the client follows its alert
+     * with a TCP FIN, and answering that FIN closes the connection cleanly instead of with an
+     * RST. This is not counted toward passthrough learning, because the client hasn't seen our
+     * forged certificate yet and so cannot have rejected it.
+     *
+     * @param record The alert record, including its header.
+     */
+    private fun handleEarlyClientAlert(record: ByteArray) {
+        val level = record.getOrNull(TLS_RECORD_HEADER_SIZE)?.toInt()?.and(0xFF)
+        val description = record.getOrNull(TLS_RECORD_HEADER_SIZE + 1)?.toInt()?.and(0xFF)
+        val levelName = when (level) {
+            1 -> "warning"
+            2 -> "fatal"
+            else -> "level $level"
+        }
+        val descriptionName = when (description) {
+            0 -> "close_notify"
+            90 -> "user_canceled"
+            else -> "description $description"
+        }
+        Timber.d("tls$id client sent a $levelName alert ($descriptionName) before the client-facing handshake in state $state, closing the TLS session")
+        closeConnection(closeTransport = false)
+    }
+
+    /**
      * Closes the connection by initiating the close handshake for both the client-facing and server-facing TLS sessions and closing the transport layer.
+     *
      */
     private fun closeConnection() {
+        closeConnection(closeTransport = true)
+    }
+
+    /**
+     * Closes both TLS sessions like [closeConnection], and the transport layer only if asked to.
+     *
+     * @param closeTransport Whether to also abort the transport layer, which resets the client's
+     * TCP connection. Pass `false` when the client is closing the connection itself and the
+     * transport layer should complete that close on its own.
+     */
+    private fun closeConnection(closeTransport: Boolean) {
         if(log) Timber.d("tls$id closeConnection in state $state")
 
         switchState(ConnectionState.CLOSED)
@@ -619,7 +666,9 @@ class TlsConnection(
         }
 
         // close the transport layer
-        transportLayer.closeHard()
+        if(closeTransport) {
+            transportLayer.closeHard()
+        }
 
         // drop any not-yet-run queued work (e.g. a late NEED_TASK follow-up, or a stray
         // unwrapOutbound/unwrapInbound call that arrives after this connection already closed
@@ -645,8 +694,9 @@ class TlsConnection(
             serverSSLEngine?.closeOutbound()
         }
 
-        // wrap the resulting close message and forward it to the remote host
-        val (wrappedRecord, _) = handleWrap(isOutbound = false, closing = true)
+        // wrap the resulting close message with the engine of the session being closed
+        // (handleWrap's "outbound" engine is the server-facing one) and forward it to that peer
+        val (wrappedRecord, _) = handleWrap(isOutbound = !isClientFacing, closing = true)
         wrappedRecord?.let {
             if(isClientFacing) {
                 transportLayer.wrapInbound(wrappedRecord)
