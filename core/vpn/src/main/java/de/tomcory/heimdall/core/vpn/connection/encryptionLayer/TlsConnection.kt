@@ -203,6 +203,21 @@ class TlsConnection(
         }
     }
 
+    override fun onRemoteClosed(deliverClose: () -> Unit) {
+        // Inbound payloads are processed on connectionScope, strictly in the order they were
+        // dispatched, and each one is passed on to the device before its coroutine ends. Queuing
+        // the close behind them therefore delivers it after the last byte of data.
+        val job = connectionScope.launch { deliverClose() }
+        // If this connection closes itself first, connectionScope is cancelled and the coroutine
+        // never runs. Nothing is pending any more in that case, so deliver the close directly;
+        // the transport layer ignores it if it has been torn down in the meantime.
+        job.invokeOnCompletion { cause ->
+            if(cause != null) {
+                deliverClose()
+            }
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////
     ///// Traffic handler methods /////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////
@@ -643,16 +658,20 @@ class TlsConnection(
      * Closes both TLS sessions like [closeConnection], and the transport layer only if asked to.
      *
      * @param closeTransport Whether to also abort the transport layer, which resets the client's
-     * TCP connection. Pass `false` when the client is closing the connection itself and the
-     * transport layer should complete that close on its own.
+     * TCP connection. Pass `false` when one of the peers is closing the connection itself and
+     * the transport layer should complete that close on its own.
+     * @param closeServerSession Whether to send the server a close_notify. Pass `false` when the
+     * server is the one that closed the session.
      */
-    private fun closeConnection(closeTransport: Boolean) {
+    private fun closeConnection(closeTransport: Boolean, closeServerSession: Boolean = true) {
         if(log) Timber.d("tls$id closeConnection in state $state")
 
         switchState(ConnectionState.CLOSED)
 
         // close the server-facing TLS session if it's still open
-        if(serverSessionOpen) {
+        if(!closeServerSession) {
+            serverSessionOpen = false
+        } else if(serverSessionOpen) {
             closeSession(isClientFacing = false)
         } else {
             if(log) Timber.d("tls$id closeConnection server session already closed or not initialized")
@@ -993,8 +1012,16 @@ class TlsConnection(
                 if(isOutbound) {
                     // the client sent close_notify
                     recordPinningSuspect()
+                    closeConnection()
+                } else {
+                    // The server sent close_notify: it has said everything it had to say and is
+                    // about to close, or has already closed, its TCP connection. End the
+                    // client-facing session with our own close_notify, and leave the transport
+                    // layer to pass the TCP close on after it (docs/vpn-mitm-audit.md PKT-36).
+                    // Resetting the client here instead would race that close_notify, and
+                    // answering the server would mean writing to a channel that may be gone.
+                    closeConnection(closeTransport = false, closeServerSession = false)
                 }
-                closeConnection()
                 return Pair(null, res)
             }
 

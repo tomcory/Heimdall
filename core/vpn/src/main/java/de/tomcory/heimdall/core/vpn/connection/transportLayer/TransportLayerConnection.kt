@@ -167,6 +167,15 @@ abstract class TransportLayerConnection protected constructor(
     }
 
     /**
+     * Tells the encryption layer that the remote host has closed the connection and lets it
+     * decide when [deliverClose] runs, i.e. when the device is told. Without an encryption layer
+     * nothing can be pending, so the close is delivered at once.
+     */
+    protected fun notifyRemoteClosed(deliverClose: () -> Unit) {
+        encryptionLayer?.onRemoteClosed(deliverClose) ?: deliverClose()
+    }
+
+    /**
      * Whether the connection can stay open for inbound data after the client has finished
      * sending. True until an encryption layer exists, since nothing above the transport layer
      * can object yet.

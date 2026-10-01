@@ -147,6 +147,22 @@ abstract class EncryptionLayerConnection(
      */
     open fun onClientClosed() {}
 
+    /**
+     * Called by the transport layer when the remote host has closed the connection, on the
+     * transport layer's thread. The transport layer does not tell the device about the close
+     * itself: it hands that step over as [deliverClose], and this layer must call it once
+     * everything it was given before the close has been passed on to the device
+     * (docs/vpn-mitm-audit.md PKT-36). Otherwise the close would overtake data that is still
+     * being processed here, and the device would discard that data.
+     *
+     * The default suits layers that process inbound data synchronously: nothing is pending, so
+     * the close is delivered at once. [deliverClose] is safe to call from any thread and more
+     * than once.
+     */
+    open fun onRemoteClosed(deliverClose: () -> Unit) {
+        deliverClose()
+    }
+
     companion object {
 
         /**

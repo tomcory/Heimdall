@@ -15,6 +15,24 @@ Line numbers drift — use the surrounding quoted code to re-locate if they no l
 **Addendum 2026-09-30:** V-32–V-35 / PKT-20–PKT-24, found during the QUIC analysis
 (`docs/quic_mitm.md`), plus V-36 / PKT-25, found while implementing PKT-23. References were checked against branch `bugfix/mitm-vpn` at `cb7cc22`.
 
+**Addendum 2026-10-01:** V-37–V-41 / PKT-26–PKT-29 and PKT-46–PKT-49, the implementation
+packets for phases Q0 to Q2 of `docs/quic_mitm.md` (detection hardening, passive Initial
+inspection, QUIC block policy). References were checked against `bugfix/mitm-vpn` at `3454f48`.
+PKT-26 to PKT-29 are implemented; PKT-46 to PKT-49 are not.
+
+**Addendum 2026-10-01 (traffic script):** V-42–V-46 / PKT-30–PKT-33 and PKT-36, found by running
+`scripts/emulator-traffic.sh` against a rooted emulator. They are numbered ahead of the remaining
+QUIC packets, which moved from PKT-30–PKT-33 to PKT-46–PKT-49, because they should be done first.
+References for V-42–V-45 were checked against `bugfix/mitm-vpn` at `4eb2013`, for V-46 at
+`84667ca`. PKT-30 to PKT-33 are implemented; PKT-36 is not.
+
+**Addendum 2026-10-01 (stress test):** V-47–V-56 / PKT-34, PKT-35 and PKT-37–PKT-45, found by
+stress-testing the VPN on a rooted emulator with `scripts/stress/run-stress.sh` (see "Stress-test
+findings"). V-17 is raised from Medium to High on the same evidence. The packets are numbered in
+the order they should be done, so the packet for V-46 moved from PKT-34 to PKT-36 and the QUIC
+packets to PKT-46–PKT-49. References were checked against `bugfix/mitm-vpn` at `ebba1f8`. None
+of them is implemented.
+
 ---
 
 ## 1. Findings register
@@ -45,7 +63,7 @@ dead code, misleading comments — see the Appendix, not given a full write-up h
 | V-07 | M | Per-host fake-cert cache is keyed only by CN, ignoring the actual SAN set |
 | V-08 | M | `getCommonName()` naively substring-scans the untrusted upstream cert's Subject DN |
 | V-09 | M | Leaf certs omit `KeyUsage`/`ExtendedKeyUsage`/`AuthorityKeyIdentifier` |
-| V-17 | M | No validation of incoming TCP segments against the tracked sequence number |
+| V-17 | H | No validation of incoming TCP segments against the tracked sequence number (raised from M on 2026-10-01, see "V-17 revisited") |
 | V-19 | M | `dechunkHttpMessage` corrupts (persisted-only) bodies whose chunk data contains a literal CRLF |
 | V-20 | M | `HttpConnection`'s request/response correlation channel has no key and can leak or mismatch |
 | V-23 | M | `TlsPassthroughCache` is an unbounded `HashSet` with no eviction |
@@ -62,6 +80,26 @@ dead code, misleading comments — see the Appendix, not given a full write-up h
 | V-34 | H | `TlsPassthroughCache` is read but never written — apps rejecting the forged cert fail on every connection |
 | V-35 | M | MitM app/host scope preferences are editable in the UI but never read by the VPN |
 | V-36 | H | Handshake records arriving while delegated tasks are pending are silently dropped — the MitM handshake hangs |
+| V-37 | M | `detectQuic()` accepts any long-header packet: version 0, non-Initial types, undersized datagrams |
+| V-38 | M | The encryption-layer protocol (PLAIN/TLS/QUIC), SNI and ALPN are never persisted |
+| V-39 | M | `remoteHost`/`isTracker` come from `DnsCache` only and are never corrected once an SNI is known |
+| V-40 | M | QUIC flows carry no hostname of their own although the Initial packet exposes SNI and ALPN |
+| V-41 | H | With MitM on, HTTP/3 traffic bypasses decryption entirely; there is no way to force the TLS fallback |
+| V-42 | M | A client-side TCP half-close tears down the upstream connection, so the server's response is lost |
+| V-43 | L | A client alert that arrives before the client-facing TLS engine exists is fed to a null engine and logged as an engine failure |
+| V-44 | H | Chunked HTTP messages are never recognised as complete — they are not persisted and stall the parser for the rest of the connection |
+| V-45 | M | HTTP responses without a body (HEAD, 1xx, 204, 304) and bodies delimited by connection close stall or bloat the parser |
+| V-46 | H | On a MitM'd connection, the FIN for a remote close overtakes response data still queued in the TLS layer — the client loses the end of the response |
+| V-47 | H | A remote close never reaches the client: the FIN is sent without the ACK flag and the device discards it |
+| V-48 | M | Upstream connect failures and resets are not signalled to the client: a refused connection looks like a timeout, a reset like a hang |
+| V-49 | H | The device's TCP receive window is ignored and nothing is retransmitted — a client that reads slowly loses data and stalls |
+| V-50 | H | Writes to a slow upstream busy-wait on the shared outbound thread, freezing every connection |
+| V-51 | H | Blocking per-connection setup on the single outbound thread delays ACKs by hundreds of milliseconds under load |
+| V-52 | H | HTTP bodies with `Content-Length` are buffered whole in memory — large transfers exhaust the heap and freeze the VPN |
+| V-53 | H | Socket receive buffers are shrunk to 16 KB: UDP bursts are dropped by the kernel and TCP throughput is halved |
+| V-54 | M | Fragmented IP packets are not handled, so UDP datagrams above the MTU never arrive |
+| V-55 | M | Throughput through the VPN is a fraction of the direct path, most of all for uploads |
+| V-56 | M | Stopping the VPN leaks file descriptors: the selector is never closed, so every connection open at that moment keeps its descriptor |
 
 ---
 
@@ -750,6 +788,492 @@ connection's single-threaded dispatcher, and retry rather than drop a record the
 
 ---
 
+## QUIC findings (V-37–V-41)
+
+Background, protocol details and the reasoning behind the phases are in `docs/quic_mitm.md`
+(§1 to §3.3). The findings here are the parts of it that Q0 to Q2 resolve.
+
+### V-37 — `detectQuic()` is too permissive to act on (Medium)
+
+`EncryptionLayerConnection.detectQuic()` (`EncryptionLayerConnection.kt:157-173`) returns true
+for any payload of at least 5 bytes whose first byte has the long-header and fixed bits set
+(`:170`). PKT-19 relaxed it on purpose, on the grounds that `QuicConnection` only passes data
+through. Once QUIC flows are inspected and possibly blocked, that is too loose:
+
+- Version 0 is Version Negotiation, which only servers send. It is never a client's first packet.
+- Handshake, 0-RTT and Retry packets pass, although a client's first packet is always an Initial.
+- There is no size check. RFC 9000 §14.1 requires client datagrams carrying an Initial to be at
+  least 1200 bytes, which cheaply rejects other UDP protocols whose first byte happens to be
+  `0xC0` or above.
+
+**Recommendation:** require a non-zero version, the Initial packet type and 1200 bytes (PKT-26).
+
+### V-38 — Security protocol, SNI and ALPN are not persisted (Medium)
+
+`Connection` stores only the transport protocol (`Protocol.TCP`/`UDP`). `Protocol.kt`'s kdoc
+states that the encryption-layer label is "logging-only and never persisted". The SNI that
+`TlsConnection` parses is kept in a private field, and ALPN is not parsed at all. The database
+therefore cannot tell a QUIC flow from DNS-less UDP noise, or TLS from plaintext TCP, and the UI
+and exports cannot show it.
+
+**Recommendation:** add `securityProtocol`, `sni`, `alpn`, `echOffered` and `blocked` to
+`Connection` in one schema bump, with update methods on `DatabaseConnector` (PKT-27).
+
+### V-39 — Hostname and tracker label are never corrected by the SNI (Medium)
+
+`TransportLayerConnection.getInstance()` resolves `remoteHost` by reverse lookup of the
+destination IP in `DnsCache` (`TransportLayerConnection.kt:282`), and `isTracker` is computed
+once from it in the constructor (`:119`). Both are immutable. The lookup fails or is wrong when
+the app uses DoH/DoT or Private DNS, when the DNS answer was cached before the VPN started, or
+when several hosts share one IP. `TlsConnection` learns the real name from the ClientHello but
+only uses it for the MitM decision.
+
+**Recommendation:** let the encryption layer refine the transport connection's hostname and
+re-run the tracker label (PKT-28).
+
+### V-40 — QUIC flows have no hostname of their own (Medium)
+
+QUIC Initial packets are protected with keys derived from public values (the Destination
+Connection ID and a per-version salt, RFC 9001 §5.2), so any on-path observer can read the
+ClientHello inside. `QuicConnection` does not: it forwards every datagram unread
+(`QuicConnection.kt:27-35`). A QUIC flow is therefore labelled only by V-39's DNS lookup, and
+its ALPN (`h3`, `doq`, …) is unknown.
+
+**Recommendation:** decrypt the client Initial passively and record SNI and ALPN, with MitM on
+or off (PKT-29, PKT-46, PKT-47).
+
+### V-41 — HTTP/3 bypasses the MitM entirely (High)
+
+`QuicConnection` sets `doMitm = false` unconditionally (`QuicConnection.kt:22`). With MitM
+enabled, every app that speaks HTTP/3 sends that traffic past the decryption pipeline; only its
+TCP traffic is intercepted. Almost all such clients fall back to TCP+TLS when UDP/443 fails, and
+for Chromium-based clients (Chrome, Cronet) a fallback is the only possible outcome anyway,
+because they refuse QUIC certificates that do not chain to a public root
+(`docs/quic_mitm.md` §2.6). There is currently no way to trigger that fallback.
+
+**Recommendation:** a user preference to block h3 QUIC while MitM is on, enforced only where
+the TLS fallback would actually be intercepted (PKT-48, PKT-49).
+
+---
+
+## Traffic-script findings (V-42–V-45)
+
+Found on 2026-10-01 by running `scripts/emulator-traffic.sh` against a rooted API 33 emulator
+with MitM on. V-42 to V-44 were observed on the device and traced to the code below. V-45 came
+out of reading the same HTTP parser and has **not** been reproduced yet.
+
+### V-42 — Client-side TCP half-close loses the response (Medium)
+
+`TcpConnection.handleFin()` (`TcpConnection.kt:336-365`, also reached through `handleFinAck()`
+at `:323-334`) treats the device's FIN as the end of the connection. Its `else` branch calls
+`closeSoft(abortClientSession = false, finalizeState = false)`, which cancels the selection key
+and **closes the upstream `SocketChannel`**, and then answers the device with a FIN-ACK:
+
+```kotlin
+notifyClientClosed()
+closeSoft(abortClientSession = false, finalizeState = false)
+increaseTheirSeqNum(1)
+val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())
+```
+
+A FIN only says "I have finished sending". A client may send its request, shut down its sending
+side and then read the reply. With the upstream socket closed, that reply has nowhere to go.
+
+Observed: `printf 'GET / HTTP/1.1…' | nc host 80` (netcat sends a FIN at end of input) returned
+nothing and the connection row had `bytesIn = 0`. The same request with the sending side held
+open returned `HTTP/1.1 403 Forbidden`.
+
+Affected are clients that half-close before reading: HTTP/1.0-style clients, code that calls
+`Socket.shutdownOutput()`, netcat-like tools and several non-HTTP protocols. Mainstream Android
+HTTP stacks do not do this, hence Medium.
+
+**Recommendation:** shut down only the sending side of the upstream socket and keep relaying
+inbound data until the remote closes (PKT-30).
+
+### V-43 — Client alert before the client-facing engine exists (Low)
+
+`TlsConnection.handleOutboundRecord()` passes every outbound `ALERT` record to
+`handleUnwrap(record, true)` whatever the state (`TlsConnection.kt:271-275`). In `NEW`,
+`SERVER_HANDSHAKE` and `SERVER_ESTABLISHED` the client-facing `SSLEngine` has not been created
+yet, so `sslEngine?.unwrap(...)` (`:875`) evaluates to `null`. The `null ->` branch then logs
+`handleUnwrap (outbound) unexpected res.status: NULL` (`:945`) and calls `closeConnection()`,
+which resets the client.
+
+Observed: a ClientHello followed directly by OpenSSL's `close_notify` alert produced that log
+line and an immediate close.
+
+The connection ends, which is what the client asked for, so nothing breaks. The defects are:
+- an error-level log that reads like an engine failure;
+- an RST where a clean close would do;
+- the alert's level and description are never read, although the alert is plaintext at that
+  point.
+
+**Recommendation:** handle alerts explicitly in the states that have no client-facing engine
+(PKT-31).
+
+### V-44 — Chunked HTTP messages are never completed (High)
+
+`HttpConnection.handleData()` has two independent defects.
+
+1. **A message that arrives whole in one payload is never checked.** In the first-payload
+   branch a chunked message is added to `chunkCache` and the method returns
+   (`HttpConnection.kt:143-153`). The last-chunk test exists only in the branch for later
+   payloads (`:169-177`). If no further payload arrives, the message waits forever.
+2. **The last-chunk test does not match a correct terminator.**
+
+   ```kotlin
+   val lines = assembledPayload.toString(Charsets.UTF_8).split("\r\n")
+   if(lines.size >= 2 && (lines[lines.size - 2].trim().toIntOrNull(16) ?: -1) == 0) {
+   ```
+
+   (`:171-172`). A chunked body ends with `0\r\n\r\n`. Split on CRLF, the second-to-last
+   element of that is the empty string, not `0`. The test only fires for a payload that ends
+   with exactly `0\r\n`, which is what `HttpParsingTest.kt:147` feeds it.
+
+Consequences:
+- The message is never persisted.
+- `state.chunked` stays true, so every later payload in that direction is appended to
+  `chunkCache`. The cache grows without bound and no later message on the connection is
+  persisted either.
+- For a response, the matching entry in `pendingRequestIds` is never consumed.
+
+Observed: `http://example.com/` answers with `Transfer-Encoding: chunked`. Heimdall logged
+`http127 Processing http in: 1037 bytes` and `http127 chunked`, never `last chunk`, and the
+request row has no response. A response with `Content-Length` from another host was recorded.
+
+Chunked encoding is the normal framing for dynamic HTTP/1.1 responses, and the same parser
+handles decrypted HTTPS traffic, so this hits the data the MitM exists to capture.
+
+**Recommendation:** determine completion by walking the declared chunk sizes, after every
+payload including the first (PKT-32).
+
+### V-45 — Bodiless and close-delimited responses stall or bloat the parser (Medium)
+
+From reading `HttpConnection.handleData()`; not reproduced on a device or in a test yet.
+
+- **Responses that never carry a body.** A response to `HEAD`, and any 1xx, 204 or 304
+  response, may state a `Content-Length` without sending a body. `handleData()` derives
+  `remainingContentLength > 0` from the header, sets `overflowing` and waits for body bytes
+  that never arrive (`HttpConnection.kt:119-140`). The parser is then stuck in the same way as
+  in V-44.
+- **Bodies delimited by connection close.** With neither `Content-Length` nor chunked encoding,
+  the message is persisted immediately with whatever body bytes shared the first payload. Every
+  later payload fails the search for the end of the headers and is prepended to
+  `previousPayload` (`:97-102`). That buffer grows for the rest of the connection and is decoded
+  to a `String` again on every read.
+
+**Recommendation:** reproduce both as failing tests first, then take the request method and
+status code into account and stop parsing once a body runs until close (PKT-33).
+
+### V-46 — A remote close overtakes inbound data still in the TLS layer (High)
+
+Found on 2026-10-01 while verifying PKT-33 on the emulator. Observed once, cause traced in the
+code; no test reproduces it yet.
+
+`TcpConnection.unwrapInboundReadable()` hands every chunk it reads to the encryption layer
+(`TcpConnection.kt:459`) and, when the read returns end-of-stream, immediately moves to
+`CLOSING` and writes a FIN to the device (`:486-491`). For a plaintext connection that is fine,
+because the chunk has been processed and written to the device by the time the call returns.
+`TlsConnection.unwrapInbound()` only enqueues the chunk on `connectionScope`
+(`TlsConnection.kt:163-164`) and returns. So when the server sends its response and closes
+right away, the sequence is:
+
+1. The transport reads the last encrypted bytes and enqueues them.
+2. The transport sees end-of-stream and sends the FIN, using the current `ourSeqNum`.
+3. The device ACKs the FIN. `handleAckEmpty()` closes the connection and removes it from the
+   cache.
+4. The TLS layer gets round to decrypting the queued bytes and writes them to the device with
+   sequence numbers *after* the FIN. The device discards them, and its replies hit an unknown
+   flow and are answered with a stray RST.
+
+Observed (connection 269, `POST /play/log` to `play.googleapis.com`, decrypted):
+
+```
+16:41:39.270 TcpConnection: tcp269 SocketChannel closed, state transition CONNECTED -> CLOSING
+16:41:39.270 HttpConnection: http269 Processing http in: 1002 bytes
+16:41:39.272 HttpConnection: http269 chunked
+16:41:39.274 HttpConnection: http269 Processing http in: 98 bytes
+16:41:39.275 TransportLayerConnection: Resetting unknown TCP packet (ACK) to 172.217.119.4:443
+```
+
+The FIN went out before any of the response had been decrypted, and the connection was gone
+five milliseconds later. The response's final chunk never reached the HTTP layer either, so the
+request row has no response. The app repeated the request on a new connection.
+
+Affected is every MitM'd connection on which the server closes directly after responding, which
+is what `Connection: close` responses and many API endpoints do. The app sees a truncated or
+missing response.
+
+**Recommendation:** let the encryption layer decide when the remote close reaches the device,
+after it has drained what it was given (PKT-36).
+
+---
+
+## Stress-test findings (V-47–V-56, V-17 revisited)
+
+Found on 2026-10-01 with `scripts/stress/run-stress.sh` against a rooted API 33 emulator, MitM
+on. The script runs a Java client from the adb shell, so its traffic passes through the VPN like
+an app's. Plain HTTP, TCP and UDP tests go to deterministic test servers on the development
+machine and verify every body by SHA-256. TLS tests go to public HTTPS servers. Every test was
+first run with the VPN stopped: all passed except a paced UDP burst, of which the emulator's own
+NAT drops about a tenth.
+
+What held up, for the record:
+- Bulk integrity: downloads up to 50 MB with `Content-Length` and 5 MB chunked, uploads up to
+  20 MB, all hash-identical.
+- 250 simultaneous connections, and 1500 short connections at about 106 per second, the same
+  rate as without the VPN.
+- 300 requests on one keep-alive connection, a response trickling in over 20 s, a connection
+  idle for 75 s, 30 client-side resets mid-download.
+- TLS MitM of 17 of 18 public sites, a 25 MB TLS download and a 5 MB TLS upload.
+- Stopping and restarting the VPN three times with over 100 connections active: no crash.
+- Leak check: see the note at the end of this section.
+
+### V-47 — A remote close never reaches the client (High)
+
+When the remote host closes, `TcpConnection.unwrapInboundReadable()` sends the device a FIN built
+by `buildFin()` (`TcpConnection.kt:486-491`, `:629-631`):
+
+```kotlin
+return buildTcpPayload(urg = false, ack = false, psh = false, rst = false, syn = false, fin = true, …)
+```
+
+The segment has no ACK flag. Every segment of an established TCP connection must carry one, and
+Linux discards those that don't. A capture on `tun0` shows it:
+
+```
+10.0.2.2.18080 > 10.120.0.1.46234: Flags [P.], seq 1:125, ack 45      response
+10.120.0.1.46234 > 10.0.2.2.18080: Flags [.], ack 125
+10.0.2.2.18080 > 10.120.0.1.46234: Flags [F], seq 88824064            our FIN, no ACK flag
+10.120.0.1.46234 > 10.0.2.2.18080: Flags [F.], seq 45, ack 125        6 s later: still ack 125
+10.120.0.1.46234 > 10.0.2.2.18080: Flags [F.], seq 45, ack 125        retransmitted, unanswered
+```
+
+The device never acknowledges the FIN (`ack` stays 125), so the client never sees end-of-stream.
+Two more flaws in the same handshake:
+- In `CLOSING`, `handleAckEmpty()` treats *any* empty ACK as the final one and removes the
+  connection (`:302-307`), including ACKs for data that were still in flight.
+- After a remote close, the device's own FIN finds `pendingFinAck == null` and is not answered
+  (`handleFinAck`/`handleFin`, `CLOSING` branches), so the device retransmits it.
+
+Observed: every response delimited by connection close hangs until the client's read timeout
+(`download-close-*`: all bytes received, then a 30 s timeout). Any protocol in which the server
+ends the conversation by closing is affected.
+
+**Recommendation:** send FIN-ACK, and complete the handshake on the ACK that covers our FIN
+(PKT-35).
+
+### V-48 — Upstream failures are not signalled to the client (Medium)
+
+- **Connection refused.** When the upstream connect fails, `unwrapInboundConnectable()` calls
+  `closeHard()` (`:516-520`), which sends an RST built by `buildRst()` with no ACK flag
+  (`:622-624`). The client is still in SYN-SENT, where an RST is only accepted if it
+  acknowledges the SYN. Observed: connecting to a closed port fails with a timeout after the
+  client's full connect timeout instead of `ECONNREFUSED` at once.
+- **Upstream reset.** A read that throws is mapped to end-of-stream (`:461-463`) and then takes
+  the FIN path of V-47. Observed: after a server reset mid-response the client waits for its
+  read timeout (31 s) instead of seeing a reset.
+- **RST answered with RST.** `TransportLayerConnection.getInstance()` answers any packet for an
+  unknown flow that has FIN, ACK or RST set with a stray RST (`TransportLayerConnection.kt:353`).
+  A reset must never be answered. In one run a single closed flow drew 18 RSTs in a row.
+
+**Recommendation:** build resets that are valid for the client's state, map upstream errors to a
+reset, and never answer an RST (PKT-42).
+
+### V-49 — The device's receive window is ignored (High)
+
+`TcpConnection` reads the window once, from the SYN (`:50`), and only to echo it in its own
+segments. It never looks at the window the device advertises afterwards, and it never
+retransmits (`handleAckEmpty`: "there is no packet loss that would make acknowledgements
+useful"). Inbound data is written to the TUN as fast as the upstream delivers it. Once the
+client's receive buffer is full, the kernel drops what arrives, and those bytes are gone.
+
+Captured during `slowclient` (a 3 MB download read at a throttled rate):
+
+```
+zero-window announcements from the device: 244
+data segments the VPN sent while the window was 0: 243
+highest byte sent: 3000121, highest byte acknowledged: 787681 → 2.2 MB lost
+```
+
+The client stalled after 787 kB and timed out. The full-duplex echo test (`duplex`, 10 MB each
+way) stalled the same way at 9.47 MB. Any app that reads slower than its server sends is
+affected: media players that buffer, downloads to slow storage, busy main threads.
+
+**Recommendation:** track the device's acknowledgements and window, and stop reading from the
+upstream channel while the window is exhausted (PKT-40).
+
+### V-50 — A slow upstream freezes the shared outbound thread (High)
+
+`TcpConnection.wrapOutbound()` writes to the non-blocking upstream channel in a loop until
+everything is written (`:215-223`, `:231-243`). When the upstream socket's send buffer is full,
+`write()` returns 0 and the loop spins. It runs on `OutboundTrafficHandler`, the one thread that
+processes every packet from every app.
+
+Observed (`slowupload`: a 4 MB upload to a server reading 400 kB/s, with small requests on other
+connections alongside):
+- the upload did not complete within 125 s (10.6 s without the VPN);
+- an unrelated request took 30 s and another failed.
+
+The device keeps sending because every segment is acknowledged at once and the advertised
+window never changes, so nothing tells it to slow down.
+
+**Recommendation:** queue outbound data per connection, write on `OP_WRITE`, and advertise a
+receive window that reflects the queue (PKT-41).
+
+### V-17 revisited — Duplicate segments are processed as new data (High)
+
+V-17 was deferred as needing "an actively hostile or badly-behaved TCP peer". The stress test
+shows the trigger is routine: whenever an ACK from the VPN is late (V-51), the device
+retransmits, and `handleAckData()` (`:275-290`) forwards the retransmitted bytes as new data and
+advances `theirSeqNum` again.
+
+Captured during `tlsparallel` (72 HTTPS requests, 24 at a time):
+- 30 of 293 data segments from the device were retransmissions;
+- Heimdall logged `DECRYPTION_FAILED_OR_BAD_RECORD_MAC` on client records of connections that
+  had decrypted earlier records fine, which is what a replayed TLS record produces;
+- 10 to 12 of the 72 requests failed with a connection reset.
+
+On a plaintext connection the same duplicate is forwarded to the server silently, as a repeated
+part of the request.
+
+**Recommendation:** accept only the segment that starts at the expected sequence number, and
+re-ACK anything else (PKT-38).
+
+### V-51 — Blocking connection setup on the outbound thread delays ACKs (High)
+
+Everything a new connection needs is done on `OutboundTrafficHandler` before the next packet of
+any connection is looked at:
+- `AppFinder.getAppId()` and `getAppPackage()`: two binder calls
+  (`ConnectivityManager.getConnectionOwnerUid`, `PackageManager.getPackagesForUid`);
+- `createDatabaseEntity()`: a Room insert inside `runBlocking`
+  (`TransportLayerConnection.kt:182-196`);
+- `protectSocket()`: a binder call to `VpnService.protect`, then the socket setup.
+
+For plaintext connections the application-layer parsing and the upstream write happen on the
+same thread too.
+
+Measured from the `tlsparallel` capture (time from a data segment leaving the device to the
+ACK that covers it):
+
+```
+median 24 ms, p90 558 ms, p99 779 ms, max 802 ms; over 200 ms: 58 of 256; never acknowledged: 7
+```
+
+200 ms is roughly the device's minimum retransmission timeout, so a fifth of the segments were
+retransmitted needlessly, which then triggers V-17. The lag also shows at close: ACKs from the
+device were still queued when their connection had already been removed, and each was answered
+with a stray RST (297 RSTs in that capture).
+
+Which of the steps costs most was **not** measured.
+
+**Recommendation:** measure first, then move the blocking steps off the handler thread (PKT-39).
+
+### V-52 — HTTP bodies with Content-Length are buffered whole (High)
+
+A body that does not fit its first payload is collected in `chunkCache`
+(`HttpConnection.kt:227`, `:246`) until it is complete, then joined into one array
+(`combineChunks`, `:587`), decoded into a `String`, and only then compared with
+`maximumMessageSize` to decide that it is "too large" to store. PKT-32 capped this for chunked
+bodies; bodies with `Content-Length` have no cap. The parser sees decrypted HTTPS as well.
+
+Observed:
+- **300 MB download** (`bigbody`): Heimdall's Java heap grew from 141 MB to 420 MB, then
+  `OutOfMemoryError` in `combineChunks`. The connection was reset 2 kB before the end, so the
+  download failed. `InboundTrafficHandler` caught the error this time; an allocation on any
+  other thread at that moment would have taken the process down.
+- **20 MB upload**: completed, but joining and decoding the body ran on the outbound thread
+  with the heap at its limit (`235MB/235MB` in the GC log). No packet of any app was processed
+  for the next 10 s; a new connection's SYN went unanswered and the client's connect timed out.
+
+**Recommendation:** count the remaining bytes without keeping them once the cap is exceeded, as
+the chunked path does, and keep large-body work off the handler threads (PKT-37).
+
+### V-53 — Socket receive buffers are shrunk to 16 KB (High)
+
+Both transports set the upstream socket's receive buffer to `componentManager.maxPacketSize`
+(16413 bytes): `TcpConnection.kt:138`, `UdpConnection.kt:115`. The platform default is far
+larger.
+
+- **UDP.** A burst overflows the buffer before the selector thread reads it, and the kernel
+  drops the rest. In the paced 500-datagram burst, 234 came back through the VPN against 443
+  without it, and `/proc/net/udp6` showed 144 drops on that one Heimdall socket. QUIC is
+  exactly this kind of traffic, so passed-through QUIC flows lose packets here.
+- **TCP.** The buffer bounds the receive window the upstream server sees. Plain downloads ran at
+  6.2 MB/s through the VPN against 13.8 MB/s without it.
+
+**Recommendation:** leave TCP at the platform default and give UDP a large buffer (PKT-34).
+
+### V-54 — Fragmented IP packets are not handled (Medium)
+
+A UDP datagram larger than the TUN's MTU reaches Heimdall as IP fragments. `DevicePollThread`
+only forwards packets whose payload parses as TCP or UDP (`DevicePollThread.kt:109-111`), and
+nothing reassembles fragments. In the other direction a datagram larger than the MTU is written
+to the TUN as one oversized packet.
+
+Observed: UDP echoes of 4000 and 8000 bytes time out through the VPN and work without it; up to
+1472 bytes they work. Which direction fails first was not traced. QUIC stays within the MTU by
+design; affected are DNS with large EDNS answers, some VoIP/media and game protocols.
+
+**Recommendation:** reassemble outbound fragments and fragment oversized inbound datagrams
+(PKT-44).
+
+### V-55 — Throughput is a fraction of the direct path (Medium)
+
+| Transfer | Without VPN | Through VPN |
+|---|---|---|
+| Plain download, 50 MB | 13.8 MB/s | 6.2 MB/s |
+| Plain upload, 20 MB | 12.4 MB/s | 1.6 MB/s |
+| TLS download, 25 MB (MitM) | 13.3 MB/s | 7.4 MB/s |
+
+Likely contributors, none measured on its own:
+- V-53 for downloads.
+- For uploads, every segment is acknowledged individually and triggers its own coroutine and
+  database `UPDATE` (`recordBytesOut`, `TransportLayerConnection.kt:245-251`; the same for
+  inbound).
+- For plain HTTP, `HttpConnection` copies and logs every payload.
+
+**Recommendation:** profile an upload, then batch the byte counters (PKT-43).
+
+### V-56 — Stopping the VPN leaks file descriptors (Medium)
+
+`ComponentManager.stopComponents()` closes the interrupter pipe's read end, stops the threads,
+closes the TUN streams and calls `ConnectionCache.closeAllAndClear()`
+(`ComponentManager.kt:186-218`). It never closes the `Selector`, and the pipe's write end
+(`pipes[1]`, `:106-110`) is never closed either.
+
+Closing a channel that is still registered with a selector does not release its descriptor:
+NIO redirects it to `/dev/null` and releases it when the selector next processes its cancelled
+keys. With the selector thread stopped and the selector never closed, that never happens.
+
+Observed after the stress session (about a dozen VPN stops, three of them with more than 100
+connections open): the Heimdall process held 441 descriptors pointing at `/dev/null`, 63 pipes
+and 5 epoll instances, against 17 live sockets. Each stop leaks one descriptor per connection
+open at that moment plus the selector's own. The process limit on Android is 32768, so it takes
+many cycles to hit, but the VPN restarts on every settings change and network switch.
+
+**Recommendation:** close the selector and both pipe ends on stop (PKT-45).
+
+### Leak check within a running session
+
+No significant leak while the VPN keeps running. Measured on the Heimdall process around a
+mixed workload (1500 short connections, UDP tests, 72 TLS requests, client and server aborts,
+unreachable destinations):
+
+| | Descriptors | Sockets | Threads |
+|---|---|---|---|
+| Before | 571 | 17 | 48 |
+| Right after | 709 | 125 | 38 |
+| 2.5 min later | 683 | 119 | 37 |
+| 6.5 min later | 580 | 22 | 36 |
+
+The roughly 100 sockets that linger are UDP flows waiting for the five-minute idle sweep
+(PKT-13), which then reaps them. Five sockets were still open at the end. That is within what
+connections waiting on an unanswered upstream connect or on a close would explain, but it was
+not traced to specific connections. The baseline of 571 descriptors is V-56.
+
+---
+
 ## 2. Packets
 
 ### PKT-01 — Fix the TCP split-payload sequence number bug
@@ -1205,10 +1729,10 @@ connection's single-threaded dispatcher, and retry rather than drop a record the
       `app/.../service/` and passes the result into `ComponentManager`.
     - Extract the existing system-app query (`HeimdallVpnService.kt:343-360`) into a helper
       shared by the VPN scope and the MitM scope.
-  - **Open, confirm before implementing:** `mitm_appLayer_passthrough` has no defined meaning
-    today. The proposal is to make it the on/off switch for PKT-23's learning
-    (`ComponentManager(learnPassthrough = …)`) and relabel it "Automatically skip MitM for
-    hosts that reject Heimdall's certificate".
+  - **Decided (2026-09-30):** `mitm_appLayer_passthrough` is the on/off switch for PKT-23's
+    learning (`ComponentManager(learnPassthrough = …)`, default on). The UI label is now "Auto-skip
+    MitM on cert rejection". The proto field keeps its historical name for storage compatibility
+    and has a comment documenting the new meaning.
   - **Out of scope:** a UI editor for the MitM host lists. Only the app lists are editable today
     (`PreferencesScreen.kt:316-327`).
 - **Files:** new `mitm/MitmScope.kt`, `components/ComponentManager.kt`,
@@ -1249,6 +1773,703 @@ connection's single-threaded dispatcher, and retry rather than drop a record the
   that the server-facing handshake completes, i.e. the client-facing handshake starts. The test
   fails on the old code.
 - **Commit:** `fix(vpn): run TLS delegated tasks inline so multi-record handshake flights aren't dropped`
+
+### PKT-26 — Only classify genuine client Initial datagrams as QUIC
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** V-37 · **Phase:** Q0.1 of `docs/quic_mitm.md`
+- **Approach:** in `detectQuic()`, keep the long-header and fixed-bit test and additionally
+  require:
+  - a version other than 0;
+  - the Initial packet type: bits `0x30` of byte 0 are `0b01` for QUIC v2 (`0x6b3343cf`) and
+    `0b00` for v1 and for unknown versions;
+  - a payload of at least 1200 bytes.
+
+  Unknown versions that otherwise look like an Initial stay classified as QUIC; PKT-47 simply
+  cannot decrypt them. Replace the comment that justifies the lax check with the new rules.
+- **Files:** `connection/encryptionLayer/EncryptionLayerConnection.kt`.
+- **Tests:** `ProtocolDetectionTest`:
+  - Pad the existing positive cases to 1200 bytes.
+  - Version 0 → `false` (the current test asserts `true` and flips).
+  - A Handshake-type first packet → `false`.
+  - A 1199-byte Initial → `false`.
+  - v2 with type `0b01` → `true`, v2 with type `0b00` → `false`.
+- **Commit:** `fix(vpn): only classify genuine QUIC client Initial datagrams as QUIC`
+
+### PKT-27 — Persist security protocol, SNI, ALPN and a blocked flag
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** V-38 · **Phase:** Q0.2
+- **Approach:**
+  - **Schema.** New `core/database/.../entity/SecurityProtocol.kt` (`PLAIN, TLS, QUIC`) with a
+    converter in `HeimdallTypeConverters`. `Connection` gains:
+    - `securityProtocol: SecurityProtocol?` (null until the first payload is classified),
+    - `sni: String?`,
+    - `alpn: String?` (the client's offer, comma-separated),
+    - `echOffered: Boolean = false`,
+    - `blocked: Boolean = false`.
+
+    Bump `HeimdallDatabase` to **version 8**. This wipes local data (no migrations by design,
+    see PKT-00 in `docs/database-schema-audit.md`), so every column Q1 and Q2 need lands here
+    and no later packet bumps the version again. Rewrite `Protocol.kt`'s kdoc, which says the
+    opposite.
+  - **DAO.** `ConnectionDao.updateSecurity(id, securityProtocol, sni, alpn, echOffered)`,
+    `updateHost(id, remoteHost, isTracker)` (used by PKT-28) and `markBlocked(id)` (used by
+    PKT-49).
+  - **Connector.** `DatabaseConnector.updateConnectionSecurity`, `updateConnectionHost` and
+    `markConnectionBlocked`, implemented in `RoomDatabaseConnector` in the style of
+    `updateConnectionBytesOut`.
+  - **Callers.** `EncryptionLayerConnection` gets a `protected fun persistSecurity(...)` that
+    runs asynchronously on `Dispatchers.IO` with the same `id > 0` guard as
+    `TransportLayerConnection.recordBytesOut` (DNS flows have id 0 and are skipped).
+    `PlaintextConnection` calls it in `init`, `TlsConnection` at the ClientHello with the SNI,
+    `QuicConnection` in `init` (PKT-47 adds SNI and ALPN).
+  - **UI.** `DatabaseScreen` shows the security protocol, SNI, ALPN and "QUIC blocked" as
+    further `ConnectionMetadataRow`s.
+- **Files:** `core/database/.../entity/Connection.kt`, new `entity/SecurityProtocol.kt`,
+  `entity/Protocol.kt`, `HeimdallTypeConverters.kt`, `HeimdallDatabase.kt`,
+  `dao/ConnectionDao.kt`; `components/DatabaseConnector.kt`, `components/RoomDatabaseConnector.kt`,
+  `connection/encryptionLayer/{EncryptionLayerConnection,PlaintextConnection,TlsConnection,QuicConnection}.kt`;
+  `app/.../ui/database/DatabaseScreen.kt`; `CLAUDE.md` (schema version).
+- **Tests:**
+  - Extend `RecordingDatabaseConnector` and `RecordedConnection` with the new fields and methods.
+  - `TlsMitmHttpFlowTest`: the connection row ends up `TLS` with the SNI.
+  - A plaintext HTTP flow ends up `PLAIN`.
+- **Commit:** `feat(db,vpn): persist security protocol, SNI and ALPN per connection`
+
+### PKT-28 — Let the SNI correct the hostname and tracker label
+
+- **Priority:** Medium · **Depends on:** PKT-27
+- **Resolves:** V-39 · **Phase:** Q0.3
+- **Approach:**
+  - In `TransportLayerConnection`, make `remoteHost` a `@Volatile var` with a private setter and
+    `isTracker` mutable, and add `fun refineRemoteHost(sni: String, echOffered: Boolean)`:
+    - No-op if the SNI equals the current name.
+    - If `echOffered` and a DNS-derived name already exists, keep the DNS name. With real ECH
+      the outer SNI is only the provider's public name. Chrome also sends a GREASE ECH
+      extension on ordinary connections, where SNI and DNS name agree anyway, so the extension
+      alone cannot tell the two cases apart.
+    - Otherwise set the name, recompute `componentManager.labelConnection(...)` and persist
+      both through `updateConnectionHost`.
+  - `TlsConnection.handleOutboundRecord()` calls it where it assigns `hostname` from `findSni`.
+    ECH detection for TLS arrives with PKT-29; until then pass `echOffered = false`.
+- **Files:** `connection/transportLayer/TransportLayerConnection.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`.
+- **Tests:** new `connection/transportLayer/RemoteHostRefinementTest.kt`, built on
+  `ComponentManagerFixtures`:
+  - A DNS-derived name is replaced by a differing SNI and the row is updated.
+  - The tracker label flips when the SNI is a tracker host and the DNS name was not.
+  - A missing DNS name is filled from the SNI even when ECH is offered.
+  - An existing DNS name survives when ECH is offered.
+- **Commit:** `feat(vpn): refresh a connection's hostname and tracker label from the SNI`
+
+### PKT-29 — Extract a ClientHello parser shared by TLS and QUIC
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** — (enabler for PKT-47; also gives the TLS path ALPN and ECH detection)
+- **Approach:**
+  - New `connection/encryptionLayer/ClientHelloParser.kt`. It parses a bare TLS handshake
+    message (type 1, 24-bit length; no record header) into
+    `ClientHelloInfo(sni: String?, alpn: List<String>, echOffered: Boolean, supportedVersions: List<Int>)`.
+    Extensions read: `server_name` (0), ALPN (16), `supported_versions` (43),
+    `encrypted_client_hello` (`0xfe0d`). Every length is bounds-checked; malformed input returns
+    `null` instead of throwing.
+  - `TlsConnection.findSni()` hardcodes offset 43 into a *record*. Keep its signature, strip the
+    5-byte record header and delegate. `TlsConnection` then passes ALPN and `echOffered` to
+    `persistSecurity` and `refineRemoteHost` when PKT-27/PKT-28 are in.
+- **Files:** new `connection/encryptionLayer/ClientHelloParser.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`.
+- **Tests:** new `ClientHelloParserTest`: SNI only; several ALPN entries; ECH extension present;
+  no SNI; truncated at every extension boundary. The existing `findSni` cases in
+  `TlsRecordHandlingTest` must stay green unchanged.
+- **Commit:** `refactor(vpn): extract a ClientHello parser shared by TLS and QUIC`
+
+### PKT-30 — Support client-side TCP half-close
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** V-42
+- **Approach:**
+  - **State.** Add `TransportLayerState.HALF_CLOSED`: the device has finished sending, the
+    remote may still send.
+  - **Device FIN in `CONNECTED`.** In `handleFin()`: advance `theirSeqNum`, answer with a plain
+    ACK, call `selectableChannel.shutdownOutput()` (available on API 24) instead of closing the
+    channel, and move to `HALF_CLOSED`. Keep the `notifyClientClosed()` call.
+  - **While `HALF_CLOSED`.**
+    - Inbound data keeps flowing through `unwrapInboundReadable()` and `wrapInbound()`.
+    - Empty ACKs from the device are ignored (`handleAckEmpty`).
+    - A retransmitted FIN is ACKed again without advancing sequence numbers.
+    - Data from the device is a protocol violation and takes the existing `closeHard()` path
+      in `handleAckData`.
+  - **Remote EOF while `HALF_CLOSED`.** Send our FIN-ACK, keep it in `pendingFinAck`, move to
+    `CLOSING`. The device's final ACK completes the close through the existing `CLOSING` branch
+    of `handleAckEmpty`.
+  - **Only where the encryption layer can carry it.** Add
+    `EncryptionLayerConnection.supportsHalfClose` (default `true`); `TlsConnection` returns
+    `!doMitm`. A MitM'd TLS connection keeps today's full close. Mapping a half-close onto two
+    separate TLS sessions is out of scope.
+  - **Bound it.** Record when a connection entered `HALF_CLOSED` and reap connections that
+    have been there for more than two minutes, from `ComponentManager`'s existing 30-second
+    sweep job next to `UdpConnection.sweepIdleConnections`.
+- **Files:** `connection/transportLayer/TransportLayerConnection.kt`,
+  `connection/transportLayer/TcpConnection.kt`,
+  `connection/encryptionLayer/EncryptionLayerConnection.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`, `components/ComponentManager.kt`,
+  `scripts/emulator-traffic.sh`.
+- **Tests:**
+  - `integration/ConnectionTeardownTest.kt`, against a local `ServerSocket` that reads to EOF
+    and only then replies:
+    - The reply reaches the device after its FIN, followed by our FIN-ACK; the device's final
+      ACK removes the connection from the cache.
+    - A retransmitted FIN in `HALF_CLOSED` is ACKed again and nothing else changes.
+    - A server that never closes is reaped by the sweep.
+    - A MitM'd TLS connection still closes fully on the device's FIN.
+  - The existing `graceful FIN close writes only a FIN-ACK, not an RST` and retransmitted-FIN
+    tests change to the new sequence (ACK first, FIN-ACK after the remote closes).
+  - Script: make the hold time overridable (`HEIMDALL_HOLD_OPEN=0`) and add one request to the
+    `http` group that half-closes right after sending. On the emulator it must get its response.
+- **Commit:** `fix(vpn): keep a TCP connection open for the response after the client half-closes`
+
+### PKT-31 — Handle a client alert that precedes the client-facing TLS handshake
+
+- **Priority:** Low · **Depends on:** —
+- **Resolves:** V-43
+- **Approach:** in `handleOutboundRecord()`, when an `ALERT` arrives in a state without a
+  client-facing engine (`NEW`, `SERVER_HANDSHAKE`, `SERVER_ESTABLISHED`), do not call
+  `handleUnwrap`. The alert is plaintext at that point, so:
+  - read its level and description from the record and log them at debug level;
+  - close the connection without sending an RST to the client;
+  - do not count it toward passthrough learning. No certificate has been presented yet, so the
+    alert says nothing about whether the app accepts the forged one.
+
+  Later states keep the existing path.
+- **Files:** `connection/encryptionLayer/TlsConnection.kt`.
+- **Tests:** `TlsRecordHandlingTest`:
+  - A ClientHello followed by `close_notify` in one payload closes the connection, never
+    touches the client-facing engine and records no passthrough failure.
+  - The same for a fatal alert while the server-facing handshake is running.
+  - Script: once this is in, `make_client_hello` no longer has to strip the trailing alert.
+    Keep one `tls` case that sends it.
+- **Found while implementing (2026-10-01):** `closeSession(isClientFacing = false)` wrapped the
+  server-facing close message with the **client-facing** engine, because it always called
+  `handleWrap(isOutbound = false, …)` and `handleWrap` picks its engine from that flag. Two
+  effects:
+  - Before the client-facing engine exists, the wrap returned `null`, which re-entered
+    `closeConnection()` and reset the client. This is what kept an early alert during the
+    server-facing handshake from closing cleanly, so it is fixed in this packet.
+  - In every other close, the upstream server never received a `close_notify` from the
+    server-facing session. It now does.
+- **Implementation notes:** the transport layer is left open after an early alert, and the
+  client's following FIN closes it (a full close, since a MitM'd connection cannot half-close,
+  PKT-30). If the client never sends a FIN, the connection ends when the upstream gives up on the
+  abandoned handshake.
+- **Commit:** `fix(vpn): close cleanly on a client alert that precedes the client-facing TLS handshake`
+
+### PKT-32 — Detect the end of chunked HTTP messages correctly
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** V-44
+- **Approach:**
+  - Replace the CRLF-split heuristic with a walk over the declared chunk sizes, the logic
+    `dechunkHttpMessage()` already uses. Extract it into
+    `chunkedBodyEnd(bytes: ByteArray, bodyStart: Int): Int?`. It returns the offset just past
+    the terminating zero-size chunk and its trailer section, or `null` while the body is
+    incomplete.
+  - Call it after every payload while `state.chunked`, **including the first one**.
+  - On completion, persist the message. Bytes after the end belong to the next message on a
+    keep-alive connection: feed them back into `handleData`.
+  - Cap the cached size at `maximumMessageSize`. Beyond the cap, persist with the existing
+    "too large" marker and stop caching, but keep tracking chunk boundaries so the end of the
+    message is still found.
+- **Files:** `connection/appLayer/HttpConnection.kt`.
+- **Tests:** `HttpParsingTest`:
+  - A chunked response complete in a single payload.
+  - The terminator `0\r\n\r\n` arriving in its own payload.
+  - The terminator split across payloads as `0\r\n` and `\r\n`.
+  - A trailer section after the zero chunk.
+  - Two chunked responses back to back on one connection, each paired with its own request.
+  - A body larger than the cap.
+  - The existing test that feeds only `0\r\n` is corrected to send a real terminator.
+  - Device check: in the traffic script's report, `GET http://example.com/` shows status 200.
+- **Commit:** `fix(vpn): complete chunked HTTP messages on the real terminator, including single-payload ones`
+
+### PKT-33 — Stop the HTTP parser stalling on bodiless and close-delimited responses
+
+- **Priority:** Medium · **Depends on:** PKT-32 (same function)
+- **Resolves:** V-45
+- **Approach:**
+  - **Reproduce first.** Write both cases of V-45 as failing unit tests. If one does not
+    reproduce, drop its bullet and correct V-45.
+  - **No body by definition.** Carry the request method alongside each entry in
+    `pendingRequestIds`. For an inbound message, treat the body as absent when the pending
+    request is `HEAD` or the status code is 1xx, 204 or 304, whatever the headers state.
+  - **Body until close.** For a response with neither `Content-Length` nor chunked encoding,
+    persist the headers and the bytes at hand as today, mark the inbound direction "body until
+    close", and from then on forward payloads without parsing or caching them. The stored body
+    stays truncated; the unbounded buffer goes away.
+- **Files:** `connection/appLayer/HttpConnection.kt`.
+- **Tests:** `HttpParsingTest`:
+  - A `HEAD` response with `Content-Length` is persisted, and so is the next response on the
+    same connection.
+  - The same for a 304 with `Content-Length`.
+  - A close-delimited response followed by ten more payloads is persisted once and leaves no
+    growing buffer.
+- **Commit:** `fix(vpn): handle HTTP responses without a body and bodies delimited by connection close`
+
+- **Implementation notes (2026-10-01):** both cases of V-45 reproduced as failing tests. Beyond
+  the approach above, the same change also:
+  - skips interim responses (100, 102, 103) without using up the pending request;
+  - treats `101 Switching Protocols` and a successful `CONNECT` as the end of HTTP on the
+    connection, in both directions;
+  - splits a payload at the end of a `Content-Length` body, so a message that follows in the
+    same payload is parsed on its own;
+  - treats a request with neither `Content-Length` nor chunked encoding as having no body, so
+    pipelined requests in one payload are recorded separately;
+  - stops collecting bytes once 64 KB have arrived without the end of a header block.
+
+### PKT-34 — Stop shrinking the upstream sockets' receive buffers
+
+- **Priority:** High (trivial) · **Depends on:** —
+- **Resolves:** V-53
+- **Approach:**
+  - `TcpConnection.openChannel()`: remove the `receiveBufferSize` line and leave the kernel's
+    default and autotuning in place.
+  - `UdpConnection.openChannel()`: request a large receive buffer (start with 1 MB; the kernel
+    caps it at `rmem_max`) instead of `maxPacketSize`.
+  - `inBuffer` stays at `maxPacketSize`; it only bounds one read.
+- **Files:** `connection/transportLayer/TcpConnection.kt`, `connection/transportLayer/UdpConnection.kt`.
+- **Tests:** a unit test that the opened channels' `receiveBufferSize` is not below the
+  platform default (TCP) and at least 256 KB (UDP). Device: `run-stress.sh udp` — the burst
+  comes back at about the rate measured without the VPN, and `/proc/net/udp6` shows no drops on
+  Heimdall's sockets; `run-stress.sh download` — note the 50 MB rate before and after.
+- **Result on the emulator (2026-10-01):**
+
+  | | Before | After | Without VPN |
+  |---|---|---|---|
+  | UDP burst, datagrams echoed of 500 | 58 to 234 | 438 to 500 (four runs) | 443 |
+  | Plain download, 50 MB | 6.2 MB/s | 7.5 MB/s | 13.8 MB/s |
+  | TLS download, 25 MB (MitM) | 7.4 MB/s | 9.8 MB/s | 13.3 MB/s |
+
+  The emulator's kernel caps the UDP request at 524 KB (`rmem_max` is 262144, doubled by the
+  kernel). 70 datagrams were still dropped across three bursts, on two sockets: a burst can
+  still outrun the selector thread, only far less often. The download gain is smaller than
+  V-53 suggested, so the receive buffer was one contributor to V-55, not the main one.
+- **Commit:** `fix(vpn): stop shrinking upstream socket receive buffers to 16 KB`
+
+### PKT-35 — Make the remote-initiated close reach the client
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** V-47
+- **Approach:**
+  - On remote end-of-stream in `CONNECTED`, send a FIN-ACK (`buildFinAck()`), remember the
+    sequence number that acknowledges it (`finSeq + 1`), and keep the segment in
+    `pendingFinAck` for retransmission. Remove `buildFin()`.
+  - In `CLOSING`, `handleAckEmpty()` only completes the close when the ACK number covers our
+    FIN. Earlier ACKs are ignored.
+  - A FIN from the device in `CLOSING` after a remote close is acknowledged (advance
+    `theirSeqNum`, send an ACK); if it also covers our FIN, the connection is done. The existing
+    retransmission of `pendingFinAck` stays for the device-initiated close.
+  - Bound the wait: a connection that stays `CLOSING` for more than 30 s is removed by the
+    sweep that PKT-30 added.
+- **Files:** `connection/transportLayer/TcpConnection.kt`, `components/ComponentManager.kt`.
+- **Tests:** `ConnectionTeardownTest`:
+  - The segment sent on remote close has FIN and ACK set.
+  - An ACK below our FIN's sequence number does not close the connection; the one that covers
+    it does.
+  - The device's FIN after a remote close is acknowledged and nothing is retransmitted.
+  - Device: `run-stress.sh download` — the `download-close-*` checks pass.
+- **Implementation notes (2026-10-01):**
+  - The handshake is complete once the device has acknowledged our FIN **and** sent its own;
+    the two are tracked separately because either can come first.
+  - Deviation: a connection stuck in `CLOSING` is dropped after two minutes, not 30 s, and
+    without a reset. Its upstream channel is already closed, so the entry costs nothing, and an
+    app may legitimately keep its side open for a while (connection pools do).
+  - `sweepHalfClosedConnections` became `sweepStaleConnections` and covers both states.
+  - On the emulator all `download-close-*` checks pass, and a capture shows
+    `[F.] seq 125` from the VPN, `[F.] ack 126` from the device and the final `ack 46`.
+    `serverabort-rst` passes as well, because the client now sees the end of the stream; it is
+    still a FIN where a reset would be right (PKT-42).
+- **Commit:** `fix(vpn): send FIN-ACK on remote close and complete the closing handshake correctly`
+
+### PKT-36 — Deliver queued inbound data before passing a remote close on to the device
+
+- **Priority:** High · **Depends on:** PKT-35 (same end-of-stream branch; its FIN-ACK is what gets deferred)
+- **Resolves:** V-46
+- **Approach:**
+  - **Reproduce first.** An integration test in the style of `TlsMitmHttpFlowTest` whose fake
+    upstream writes its response and closes the socket at once. Assert that the device receives
+    the complete decrypted response *before* the FIN, that the FIN's sequence number follows
+    the last data byte, and that the response is persisted. It should fail on the current code;
+    slow the connection's dispatcher down in the test if the race needs help.
+  - **Hook.** Add `EncryptionLayerConnection.onRemoteClosed(deliverClose: () -> Unit)`. The
+    default calls `deliverClose` straight away, which keeps today's behaviour for plaintext and
+    QUIC. `TlsConnection` launches it on `connectionScope`, so it runs after every inbound
+    payload that was enqueued before the end-of-stream.
+  - **Transport.** In `TcpConnection.unwrapInboundReadable()`, on end-of-stream, close the
+    channel as today but hand the rest (state change, FIN or FIN-ACK, cache removal) to the
+    encryption layer as `deliverClose`. That block keeps running under `closeLock`. If there is
+    no encryption layer yet, run it directly.
+  - **If the TLS connection has already closed itself**, `connectionScope` is cancelled and the
+    launch is dropped. That path has already called `transportLayer.closeHard()`, so nothing is
+    left to deliver.
+  - A passed-through TLS connection (`doMitm == false`) forwards synchronously but still goes
+    through `connectionScope`, so it needs the same ordering.
+- **Files:** `connection/encryptionLayer/EncryptionLayerConnection.kt`,
+  `connection/encryptionLayer/TlsConnection.kt`, `connection/transportLayer/TcpConnection.kt`.
+- **Tests:** the reproduction above; the same for a half-closed connection (PKT-30), where the
+  close is a FIN-ACK; `ConnectionTeardownTest` and `TcpHalfCloseTest` stay green. Device check:
+  in the traffic script's report, no decrypted request of the `apps` group is left without a
+  status because its connection closed, and logcat shows no
+  `Resetting unknown TCP packet (ACK)` directly after a `CONNECTED -> CLOSING` transition.
+- **Implementation notes (2026-10-01):**
+  - The new `TlsRemoteCloseOrderingTest` reproduced the bug for MitM'd and for passed-through
+    TLS before the fix, without slowing the dispatcher down.
+  - The hook alone fixed passed-through TLS. MitM'd connections needed a second change: on the
+    server's `close_notify`, `TlsConnection` called `closeConnection()`, which first tried to
+    answer the server on a channel that was already closed (the write failed and reset the
+    client) and only then sent the client-facing `close_notify`. It now ends the client-facing
+    session with `close_notify`, does not answer the server, and leaves the TCP close to the
+    transport layer, so the client sees data, `close_notify`, FIN-ACK in that order.
+  - If the TLS connection has cancelled its scope, the queued close is delivered from the
+    job's completion handler; `deliverRemoteClose()` is idempotent and does nothing once the
+    transport has been torn down.
+  - On the emulator `run-stress.sh tlsclose` went from 3 of 40 to 40 of 40, and the
+    `stackoverflow.com` check (a 403 followed by a close) passes.
+- **Commit:** `fix(vpn): deliver decrypted inbound data to the device before the remote close`
+
+- **Stress-test evidence (2026-10-01):** with `Connection: close`, 37 of 40 HTTPS responses
+  through the MitM were lost (`run-stress.sh tlsclose`); all 40 arrive without the VPN. That
+  test is the device check for this packet.
+
+### PKT-37 — Stop buffering whole HTTP bodies that have a Content-Length
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** V-52
+- **Approach:**
+  - Give the `Content-Length` path the cap PKT-32 gave the chunked path: once the cached bytes
+    of a message exceed `maximumMessageSize`, drop the cache, keep only the header bytes, and
+    just count down `remainingContentLength`. At the end persist with the `<too large: N bytes>`
+    marker and the real length.
+  - A body whose `Content-Length` already exceeds the cap is never cached at all.
+  - `persistMessage` must not be handed megabytes: with the cap in place the largest string it
+    sees is `maximumMessageSize`.
+- **Files:** `connection/appLayer/HttpConnection.kt`.
+- **Tests:** `HttpParsingTest`: a 5 MB response and a 5 MB request with `Content-Length`,
+  delivered in 16 KB payloads, are persisted with the marker and the correct length while the
+  bytes held by the parser never exceed the cap (reflection helper from PKT-33); the message
+  after them on the same connection is parsed. Device: `run-stress.sh bigbody` passes and
+  Heimdall's Java heap stays flat; `run-stress.sh upload,keepalive` shows no connect timeout
+  after the 20 MB upload.
+- **Commit:** `fix(vpn): cap the memory used for HTTP bodies that have a Content-Length`
+
+### PKT-38 — Accept only in-order segments from the device
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** V-17
+- **Approach:** in `TcpConnection.unwrapOutbound()`, before a data segment is handled:
+  - If its sequence number equals `theirSeqNum`, process it as today.
+  - If it lies entirely below `theirSeqNum` (a retransmission), do not forward it; answer with
+    an ACK for `theirSeqNum`.
+  - If it overlaps, forward only the part from `theirSeqNum` on.
+  - If it lies above (a gap), drop it and answer with an ACK for `theirSeqNum`, which makes the
+    device retransmit from there. No reordering buffer.
+  - Compare with 32-bit wrap-around in mind. The same check applies to a FIN.
+- **Files:** `connection/transportLayer/TcpConnection.kt`.
+- **Tests:** new `TcpSegmentValidationTest` against a local `ServerSocket`: a duplicated
+  segment, an overlapping one, an out-of-order pair and a wrap-around case each deliver the
+  byte stream to the server exactly once and in order. Device: `run-stress.sh tlsparallel` — no
+  `BAD_RECORD_MAC` lines in logcat.
+- **Commit:** `fix(vpn): drop retransmitted and out-of-order segments from the device instead of forwarding them`
+
+### PKT-39 — Take blocking connection setup off the outbound handler thread
+
+- **Priority:** High · **Depends on:** PKT-38 (until then late ACKs corrupt streams)
+- **Resolves:** V-51
+- **Approach:**
+  - **Measure first.** Wrap the steps of connection creation (`getAppId`, `getAppPackage`,
+    `createDatabaseEntity`, `protectSocket`, `connect`) in timing logs, run
+    `run-stress.sh tlsparallel` and record the numbers here. Fix what the numbers point at;
+    the items below are the expected outcome.
+  - Allocate connection IDs in memory (an `AtomicLong` seeded from the highest stored ID at
+    start-up) and insert the row asynchronously, so no `runBlocking` remains on the handler.
+    `DatabaseConnector.persistTransportLayerConnection` then takes the ID as a parameter.
+  - Cache the UID-to-package lookup.
+  - Resolve the app asynchronously and patch it into the row when known, if
+    `getConnectionOwnerUid` turns out to be the slow step. `TlsConnection` needs the package
+    for the MitM scope decision, which it takes at the ClientHello, so it must wait for the
+    lookup there.
+- **Files:** `connection/transportLayer/TransportLayerConnection.kt`, `TcpConnection.kt`,
+  `UdpConnection.kt`, `components/DatabaseConnector.kt`, `components/RoomDatabaseConnector.kt`,
+  `core/util/.../AppFinder.kt`.
+- **Tests:** existing suites stay green with the ID change. Device: rerun the capture analysis
+  from V-51 with `scripts/stress/tcp-capture-stats.py` — p90 time-to-ACK under `tlsparallel`
+  below 50 ms and no retransmissions from the device.
+- **Commit:** `perf(vpn): keep database inserts and binder calls off the outbound packet thread`
+
+### PKT-40 — Respect the device's receive window
+
+- **Priority:** High · **Depends on:** PKT-35 (the close must wait for unsent data too)
+- **Resolves:** V-49
+- **Approach:**
+  - Parse the window-scale option from the device's SYN and offer none ourselves unless we
+    honour it (today's SYN-ACK carries no options, so the device's scale is in effect only for
+    what it advertises; verify in a capture).
+  - Track, per connection, the highest ACK from the device and its current window. The bytes
+    we may still send are `lastAck + window - nextSeq`.
+  - `unwrapInboundReadable()` reads at most that many bytes. When the budget is zero, clear
+    `OP_READ` on the upstream key; an ACK or window update from the device restores it. Selector
+    interest changes go through `selectorMonitor` as the registrations do.
+  - Answer zero-window probes from the device with an ACK.
+  - Because the TUN does not lose packets, staying inside the window makes retransmission
+    unnecessary. State that assumption in the code.
+  - The encryption layer sits between read and write: for TLS the plaintext is re-encrypted, so
+    the budget has to be applied to what `wrapInbound()` emits. Bytes already read but not yet
+    sendable are queued per connection (bounded by the read budget).
+- **Files:** `connection/transportLayer/TcpConnection.kt`, `TransportLayerConnection.kt`.
+- **Tests:** an integration test with a device side that advertises a small window and opens it
+  step by step: nothing is sent beyond the window, everything arrives in order, the upstream is
+  not read while the window is closed. Device: `run-stress.sh slowclient,duplex` pass.
+- **Commit:** `fix(vpn): honour the device's TCP receive window instead of sending regardless`
+
+### PKT-41 — Queue outbound data per connection and apply backpressure
+
+- **Priority:** High · **Depends on:** PKT-38, PKT-40 (shares the selector-interest handling)
+- **Resolves:** V-50
+- **Approach:**
+  - `wrapOutbound()` writes what the channel takes. What is left goes into a per-connection
+    queue, and `OP_WRITE` is set; `InboundTrafficHandler` drains the queue when the channel is
+    writable. No loop that waits for the channel.
+  - The window we advertise to the device is the free space of that queue (bounded, e.g.
+    256 KB), so a slow upstream slows the app down instead of the handler thread. Segments that
+    arrive beyond it are dropped and re-ACKed, as in PKT-38.
+  - A half-close (PKT-30) and a close wait until the queue is drained.
+  - The same for `UdpConnection.wrapOutbound()`: a datagram the channel does not take is
+    dropped, not retried in a loop.
+- **Files:** `connection/transportLayer/TcpConnection.kt`, `UdpConnection.kt`,
+  `components/InboundTrafficHandler.kt`.
+- **Tests:** an integration test with an upstream that does not read: the handler thread
+  returns from `unwrapOutbound()` promptly, the advertised window shrinks to zero, and the data
+  arrives intact once the upstream reads. Device: `run-stress.sh slowupload` passes both checks.
+- **Commit:** `fix(vpn): queue outbound data per connection instead of busy-waiting on a slow upstream`
+
+### PKT-42 — Signal upstream connect failures and resets to the client
+
+- **Priority:** Medium · **Depends on:** PKT-35
+- **Resolves:** V-48
+- **Approach:**
+  - A reset for a client still in its handshake (our state `CONNECTING`) is an RST-ACK with
+    sequence number 0 and `ack = theirInitSeqNum + 1`. In every other state keep sequence
+    number `ourSeqNum`, and set the ACK flag as well.
+  - An `IOException` while reading from the upstream (other than a clean end-of-stream) closes
+    with a reset instead of a FIN.
+  - `TransportLayerConnection.getInstance()` does not answer packets that have RST set.
+- **Files:** `connection/transportLayer/TcpConnection.kt`, `TransportLayerConnection.kt`.
+- **Tests:** `ConnectionTeardownTest`: a refused upstream connect produces an RST-ACK that
+  acknowledges the SYN; an upstream reset produces an RST, not a FIN; an RST for an unknown
+  flow draws no reply. Device: `run-stress.sh unreachable,serverabort` pass.
+- **Commit:** `fix(vpn): reset the client correctly when the upstream refuses or resets the connection`
+
+### PKT-43 — Find and remove the upload bottleneck
+
+- **Priority:** Medium · **Depends on:** PKT-34, PKT-39, PKT-41
+- **Resolves:** V-55
+- **Approach:**
+  - Profile a 20 MB plain upload on the emulator (method tracing or simpleperf on the outbound
+    handler thread) after the packets above are in, and record where the time goes.
+  - Expected: batch the byte counters. Accumulate `bytesOut`/`bytesIn` per connection in
+    memory and flush at most once a second and at close, instead of one coroutine and one
+    `UPDATE` per segment.
+  - Demote the per-payload `Timber.d` lines in `HttpConnection` to a debug flag.
+- **Files:** `connection/transportLayer/TransportLayerConnection.kt`,
+  `connection/appLayer/HttpConnection.kt`.
+- **Tests:** byte counters in `RecordingDatabaseConnector` still match the bytes transferred
+  after close. Device: record `run-stress.sh download,upload,tlsbulk` rates in the V-55 table.
+- **Commit:** `perf(vpn): batch per-connection byte counter updates`
+
+### PKT-44 — Handle UDP datagrams larger than the MTU
+
+- **Priority:** Low · **Depends on:** —
+- **Resolves:** V-54
+- **Approach:**
+  - Trace first which direction fails and what the server receives today.
+  - Outbound: collect IPv4 fragments by (source, destination, identification, protocol) in
+    `DevicePollThread`, with a short timeout and a size cap, and reassemble them with pcap4j's
+    `IpV4Helper.defragment` before the packet goes to the handler.
+  - Inbound: split datagrams larger than the TUN's MTU with `IpV4Helper.fragment`.
+- **Files:** `components/DevicePollThread.kt`, `connection/transportLayer/UdpConnection.kt`,
+  `connection/inetLayer/IpV4PacketBuilder.kt`.
+- **Tests:** unit tests for reassembly (in order, out of order, incomplete set times out) and
+  for inbound fragmentation. Device: `run-stress.sh udp` — the 4000- and 8000-byte echoes pass.
+- **Commit:** `feat(vpn): reassemble and fragment UDP datagrams larger than the MTU`
+
+### PKT-45 — Release the selector and pipe descriptors when the VPN stops
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** V-56
+- **Approach:** in `ComponentManager.stopComponents()`, after the handler threads have stopped
+  and `ConnectionCache.closeAllAndClear()` has run, call `selector.close()`, which deregisters
+  every key and releases the channels' descriptors. Keep both ends of the interrupter pipe and
+  close both. Join `InboundTrafficHandler` before closing the selector, so it is not inside
+  `select()` at that moment (this also resolves V-28).
+- **Files:** `components/ComponentManager.kt`, `components/InboundTrafficHandler.kt`.
+- **Tests:** an instrumentation-free check is hard here (`ComponentManager` needs `Os.pipe`).
+  Device: note `ls /proc/<pid>/fd | wc -l`, start and stop the VPN ten times with
+  `run-stress.sh parallel` running, and compare; `run-stress.sh` prints the count before and
+  after each run.
+- **Commit:** `fix(vpn): close the selector and the interrupter pipe when the VPN stops`
+
+**Order for PKT-30 to PKT-45:** PKT-30 to PKT-33 are done. The rest are numbered in the order
+they should be done. PKT-34 is a two-line change with a large effect. PKT-35 to PKT-38 each fix
+a failure that real traffic hits today. PKT-39 to PKT-41 rework how the transport paces itself
+and are the larger pieces. PKT-42 to PKT-45 can follow in any order. All of them come before the
+QUIC packets (PKT-46 to PKT-49): passed-through and blocked QUIC both rely on the UDP path and
+on a TLS fallback that works.
+
+### PKT-46 — Decrypt QUIC v1/v2 client Initial packets
+
+- **Priority:** Medium · **Depends on:** —
+- **Resolves:** — (enabler for PKT-47) · **Phase:** Q1, part 1
+- **Approach:** new package `quic/`. Plain JCA only (`Mac "HmacSHA256"`, `AES/ECB/NoPadding`,
+  `AES/GCM/NoPadding`), all available on API 24. No new dependency.
+  - `QuicVarInt.kt`: variable-length integer decoding (RFC 9000 §16).
+  - `QuicInitialKeys.kt`: HKDF-Extract and HKDF-Expand-Label, and the client Initial `key`,
+    `iv` and `hp` for a given version and Destination Connection ID.
+    - v1: salt `38762cf7f55934b34d179ae6a4c80cadccbb7f0a`, labels `quic key`, `quic iv`,
+      `quic hp`.
+    - v2 (RFC 9369 §3.3): its own salt, labels `quicv2 key`, `quicv2 iv`, `quicv2 hp`.
+  - `QuicInitialPacket.kt`: parse one long-header packet at an offset in a datagram (version,
+    DCID, SCID, token, length, packet-number offset), remove header protection, AEAD-decrypt
+    and return the plaintext payload plus the number of bytes consumed, so a caller can iterate
+    coalesced packets. Failures are a typed result (unknown version, not an Initial,
+    authentication failed, malformed); nothing throws.
+- **Files:** new `quic/QuicVarInt.kt`, `quic/QuicInitialKeys.kt`, `quic/QuicInitialPacket.kt`.
+- **Tests:** pure JVM, raw byte arrays as in the existing packet tests.
+  - `QuicInitialKeysTest`: RFC 9001 Appendix A.1 and RFC 9369 Appendix A key vectors.
+  - `QuicInitialPacketTest`: the protected client Initial of RFC 9001 Appendix A.2 decrypts to
+    the listed payload; the same for RFC 9369; a flipped ciphertext byte yields "authentication
+    failed"; a truncated header yields "malformed".
+  - New test helper `integration/support/QuicInitialFixtures.kt` that *protects* a given
+    ClientHello into Initial datagrams, optionally split over two packets and with shuffled
+    CRYPTO frames. Validate it by reproducing the RFC 9001 A.2 packet. PKT-47 and PKT-49 use it.
+- **Commit:** `feat(vpn): decrypt QUIC v1/v2 client Initial packets`
+
+### PKT-47 — Record SNI and ALPN of QUIC flows from the Initial packet
+
+- **Priority:** Medium · **Depends on:** PKT-26, PKT-27, PKT-28, PKT-29, PKT-46
+- **Resolves:** V-40 · **Phase:** Q1, part 2
+- **Approach:**
+  - New `quic/QuicInitialInspector.kt`, one instance per flow. `offer(datagram)` returns
+    `Pending`, `Complete(ClientHelloInfo, quicVersion)` or `GaveUp(reason)`.
+    - Derive keys from the DCID of the first Initial and keep them. Later client Initials carry
+      a different DCID field once the server has answered, but the keys do not change.
+    - If authentication fails and the packet's DCID differs from the first one, try once with
+      that DCID and adopt it on success. This covers a server Retry.
+    - Iterate coalesced packets; skip everything that is not an Initial.
+    - Skip PADDING, PING and ACK frames. Collect CRYPTO frames by offset. Complete when
+      `[0, handshakeLength)` is contiguous, then call `ClientHelloParser`. Do not assume one
+      packet or ordered frames: hybrid key shares push the ClientHello over one datagram, and
+      Chrome shuffles CRYPTO frames deliberately.
+    - Limits: 4 datagrams and a 16 KB reassembly buffer, then `GaveUp`.
+  - `QuicConnection`: feed each outbound datagram to the inspector until it is terminal.
+    **Forward the datagram unchanged first, then inspect**, so inspection can never delay or
+    alter traffic (PKT-49 changes this order only under the Block policy). On `Complete`, call
+    `persistSecurity(QUIC, sni, alpn, echOffered)` and `transportLayer.refineRemoteHost(...)`.
+    The inspector is touched only from the outbound handler thread. Remove the `//TODO`
+    placeholders this replaces; keep the unconditional `doMitm = false`.
+- **Files:** new `quic/QuicInitialInspector.kt`, `connection/encryptionLayer/QuicConnection.kt`.
+- **Tests:**
+  - `QuicInitialInspectorTest`: single-packet ClientHello; ClientHello over two datagrams;
+    shuffled CRYPTO frames with PING and PADDING between them; an unknown version and random
+    bytes both give up without throwing; the datagram limit is honoured.
+  - `integration/QuicPassthroughInspectionTest`, in the style of `TlsMitmHttpFlowTest`: push
+    fixture datagrams through a `UdpConnection` towards a local `DatagramSocket`. Assert the
+    socket receives them byte-identical and in order, and that `RecordingDatabaseConnector`
+    holds `QUIC`, the SNI, the ALPN and the refined hostname.
+- **Commit:** `feat(vpn): record SNI and ALPN of QUIC flows from the Initial packet`
+
+### PKT-48 — Add the QUIC policy preference
+
+- **Priority:** High · **Depends on:** —
+- **Resolves:** — (enabler for PKT-49) · **Phase:** Q2, part 1
+- **Decided (2026-10-01):** the policy is a user preference with two values, Block and
+  Passthrough. The default is Block. It only takes effect while MitM is enabled.
+- **Approach:**
+  - **Proto.** `enum MitmQuicPolicy { QUIC_BLOCK = 0; QUIC_PASSTHROUGH = 1; }` and field
+    `MitmQuicPolicy mitm_quic_policy = 50` in `preferences.proto`. Block is the zero value, so
+    existing installs, which have no stored value, get the default as well. Flipping the
+    default later means swapping the two enum numbers before release, or setting it explicitly
+    in the serializer.
+  - **Datastore.** `PreferencesInitialValues.mitmQuicPolicyInitial`, the serializer default,
+    and `PreferencesDataSource.mitmQuicPolicy` with a setter, following
+    `mitmTrustAllUpstreamCerts`.
+  - **Core.** New `quic/QuicPolicy.kt` (`PASSTHROUGH, BLOCK`). `core:vpn` must not depend on the
+    preference schema, as with `MitmScope`. Add `ComponentManager(quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH)`.
+  - **App.** `HeimdallVpnService.launchServiceComponents()` maps the preference and forces
+    `PASSTHROUGH` when MitM is off. `MitMPreferences` in `TrafficScannerPreferences.kt` gets a
+    `BooleanPreference` "Block QUIC (force TLS fallback)".
+- **Files:** `core/datastore-proto/.../preferences.proto`,
+  `core/datastore/.../{PreferencesInitialValues,PreferencesSerializer,PreferencesDataSource}.kt`,
+  new `quic/QuicPolicy.kt`, `components/ComponentManager.kt`,
+  `app/.../service/HeimdallVpnService.kt`,
+  `app/.../ui/scanner/traffic/TrafficScannerPreferences.kt`.
+- **Tests:** stub `componentManager.quicPolicy` explicitly in `ComponentManagerFixtures` (a
+  relaxed mock would return a mock enum) with a `quicPolicy` parameter defaulting to
+  `PASSTHROUGH`. Behaviour is covered by PKT-49.
+- **Commit:** `feat(prefs): add a QUIC policy preference (block or passthrough)`
+
+### PKT-49 — Block HTTP/3 over QUIC while MitM is on
+
+- **Priority:** High · **Depends on:** PKT-47, PKT-48
+- **Resolves:** V-41 · **Phase:** Q2, part 2
+- **Approach:**
+  - **Decision.** Taken in `QuicConnection` once the inspector is terminal. Block only if all
+    of these hold, which together mean "the TLS fallback would actually be intercepted":
+    - `componentManager.quicPolicy == BLOCK` and `componentManager.doMitm`;
+    - the remote port is 443;
+    - the inspector completed and the ALPN offer contains `h3` or an `h3-*` draft token;
+    - `componentManager.mitmScope.shouldIntercept(appPackage, host)`;
+    - no learned passthrough: `tlsPassthroughCache.get(appId, host)` is false.
+
+    `host` is the transport connection's refined hostname. If the inspector gave up, forward.
+  - **Holding.** Under the Block policy, hold outbound datagrams until the verdict instead of
+    forwarding them first. The inspector's limit bounds this at 4 datagrams, and clients send
+    the datagrams of one flight back to back, so the hold lasts microseconds. On "forward",
+    flush them in order.
+  - **Blocking.** Drop the held and all later datagrams of the flow and call
+    `markConnectionBlocked(id)`. Answer the first three dropped datagrams with an ICMP
+    Destination Unreachable (port unreachable), so the client fails over at once instead of
+    waiting for its handshake timeout.
+    - New `connection/inetLayer/IcmpUnreachableBuilder.kt`, using pcap4j's
+      `IcmpV4CommonPacket`, `IcmpV4DestinationUnreachablePacket` and
+      `IcmpV4Code.PORT_UNREACHABLE`. The quoted "invoking packet" is the IPv4 header plus UDP
+      header, reconstructed from `ipPacketBuilder` and the two ports; that is what the kernel
+      matches against the app's socket. Source is the remote address, destination the local one.
+    - IPv4 only. An IPv6 flow is dropped silently; the VPN routes IPv4 only today.
+    - Post it with a new `DeviceWriteThread.WRITE_ICMP` code.
+  - **Lifecycle.** The flow stays in `ConnectionCache`, so the client's retransmissions hit the
+    blocked flag instead of creating new connections and rows. The existing UDP idle sweep
+    (PKT-13) reaps it after five minutes.
+  - **Out of scope:** stripping `h3` from `Alt-Svc` headers and from DNS HTTPS/SVCB records.
+    Both need rewriting that the application layer cannot do yet.
+- **Files:** `connection/encryptionLayer/QuicConnection.kt`, new
+  `connection/inetLayer/IcmpUnreachableBuilder.kt`, `components/DeviceWriteThread.kt`.
+- **Tests:**
+  - `IcmpUnreachableBuilderTest`: type and code, the quoted header, checksum, swapped addresses.
+  - `integration/QuicBlockPolicyTest`, with `RecordingDeviceWriter` and a local `DatagramSocket`:
+    - An in-scope h3 flow on port 443 is blocked: nothing reaches the socket, an ICMP packet is
+      written to the device, the row is marked blocked.
+    - Each of these forwards byte-identical instead: a non-h3 ALPN; a port other than 443; a
+      host outside the `MitmScope`; a host with learned passthrough; MitM off; the Passthrough
+      policy; an undecryptable Initial.
+    - A ClientHello spanning two datagrams is flushed in order when the verdict is "forward".
+    - Retransmitted datagrams of a blocked flow create no further connection rows.
+- **Manual check:** on a device, with MitM on and the policy set to Block, an HTTP/3-capable
+  app's requests appear as decrypted HTTP over TCP and its UDP/443 rows are marked blocked. This
+  is also the first real check that an ICMP error written to the TUN reaches the app's socket.
+  If it does not, fallback still happens, only after the client's own timeout.
+- **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
+
+**Order for the QUIC packets (PKT-26 to PKT-29, PKT-46 to PKT-49):** 26, 27, 29, 46 and 48 are
+independent of each other. Then 28, then 47, then 49. Only PKT-27 changes the database version.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either
 narrow-trigger (V-07 needs a CN shared across differing-SAN certs within a 5-minute window; V-17

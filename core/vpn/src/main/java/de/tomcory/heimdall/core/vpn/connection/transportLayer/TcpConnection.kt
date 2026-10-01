@@ -22,6 +22,7 @@ import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
 import java.util.Arrays
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -88,6 +89,9 @@ class TcpConnection internal constructor(
 
     /** The acknowledgement number that covers our FIN, as it appears in a TCP header. Only meaningful once our FIN was sent. */
     private var ourFinAckNumber = 0
+
+    /** Whether the remote host's close has been passed on to the device (see [deliverRemoteClose]). */
+    private val remoteCloseDelivered = AtomicBoolean(false)
 
     /** Wall-clock time at which our FIN was sent, used by [sweepStaleConnections]. */
     @Volatile
@@ -515,31 +519,47 @@ class TcpConnection internal constructor(
         recordBytesIn(totalBytesRead)
 
         // SocketChannel is closed
-        if (bytesRead == -1) synchronized(closeLock) {
-            selectionKey?.cancel()
-            // the remote side is done; release the socket/fd now regardless of which branch
-            // below we take, instead of only deregistering the SelectionKey and leaking it
-            closeChannel()
-            if (state == TransportLayerState.CLOSING) {
-                // client and server agree that the connection is close
-                state = TransportLayerState.CLOSED
-                ConnectionCache.removeConnection(this)
-            } else if (state == TransportLayerState.HALF_CLOSED) {
-                // the client finished sending earlier and now the remote host has too: complete
-                // the close with our FIN-ACK. The device's final ACK finalizes the state to
-                // CLOSED and removes the connection from the cache (handleAckEmpty).
-                Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
-                state = TransportLayerState.CLOSING
-                sendFinAck()
-            } else {
-                // The remote host closed first: move to CLOSING and start the closing handshake
-                // with a FIN-ACK. It has to carry the ACK flag like every segment of an
-                // established connection, or the device discards it and never learns that the
-                // remote host is done (docs/vpn-mitm-audit.md PKT-35). The device's ACK for it
-                // and the device's own FIN complete the handshake.
-                Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
-                state = TransportLayerState.CLOSING
-                sendFinAck()
+        if (bytesRead == -1) {
+            synchronized(closeLock) {
+                selectionKey?.cancel()
+                // the remote side is done; release the socket/fd now, instead of only
+                // deregistering the SelectionKey and leaking it
+                closeChannel()
+            }
+            // The device must not hear about the close before it has received everything the
+            // remote host sent. The layers above may still be working on that data, so they
+            // decide when the close is delivered (docs/vpn-mitm-audit.md PKT-36).
+            notifyRemoteClosed(::deliverRemoteClose)
+        }
+    }
+
+    /**
+     * Passes the remote host's close on to the device. Called once the encryption layer has
+     * handed on all inbound data it received before the close; possibly on another thread than
+     * the one that noticed the close, and possibly more than once.
+     */
+    private fun deliverRemoteClose() {
+        if (!remoteCloseDelivered.compareAndSet(false, true)) {
+            return
+        }
+        synchronized(closeLock) {
+            when (state) {
+                TransportLayerState.CONNECTING, TransportLayerState.CONNECTED, TransportLayerState.HALF_CLOSED -> {
+                    // Start (or, if the client had already finished sending, complete) the
+                    // closing handshake with a FIN-ACK. It has to carry the ACK flag like every
+                    // segment of an established connection, or the device discards it and never
+                    // learns that the remote host is done (docs/vpn-mitm-audit.md PKT-35). The
+                    // device's ACK for it and the device's own FIN complete the handshake
+                    // (handleAckEmpty, handleFin).
+                    Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
+                    state = TransportLayerState.CLOSING
+                    sendFinAck()
+                }
+                else -> {
+                    // CLOSING: the device closed in the meantime and our FIN is already out.
+                    // CLOSED, ABORTED: the connection was torn down in the meantime.
+                    // Either way there is nothing left to tell the device.
+                }
             }
         }
     }
