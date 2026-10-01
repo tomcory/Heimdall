@@ -20,6 +20,9 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLException
 
+/** Size of a TLS record header: content type (1), legacy version (2), length (2). */
+private const val TLS_RECORD_HEADER_SIZE = 5
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class TlsConnection(
     id: Long,
@@ -238,13 +241,18 @@ class TlsConnection(
 
         // grab the remote hostname from the CLIENT HELLO message
         if (recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
-            sni = findSni(record)
+            val clientHello = parseClientHello(record)
+            sni = clientHello?.sni
             sni?.let {
                 hostname = it
-                // ECH detection for TLS arrives with the shared ClientHello parser (PKT-29)
-                transportLayer.refineRemoteHost(it, echOffered = false)
+                transportLayer.refineRemoteHost(it, clientHello?.echOffered ?: false)
             }
-            persistSecurity(SecurityProtocol.TLS, sni = sni)
+            persistSecurity(
+                SecurityProtocol.TLS,
+                sni = sni,
+                alpn = clientHello?.alpn?.takeIf { it.isNotEmpty() }?.joinToString(","),
+                echOffered = clientHello?.echOffered ?: false
+            )
 
             // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)
             // that aren't marked for passthrough
@@ -1180,37 +1188,22 @@ class TlsConnection(
      * @return The SNI, or null if the SNI could not be extracted.
      */
     internal fun findSni(clientHello: ByteArray): String? {
-        return try {
-            val msg = clientHello.map { x -> x.toUByte().toInt() }.toIntArray()
-            var i = 43
+        return parseClientHello(clientHello)?.sni
+    }
 
-            val sessionLength = msg[i++]
-            i += sessionLength
-
-            val cipherLength = msg[i++] shl 8 or msg[i++]
-            i += cipherLength
-
-            val compressionLength = msg[i++]
-            i += compressionLength
-
-            val totalExtensionsLength = msg[i++] shl 8 or msg[i++]
-
-            var j = 0
-            while(j < totalExtensionsLength) {
-                val extensionValue = msg[i + j++] shl 8 or msg[i + j++]
-                val extensionLength = msg[i + j++] shl 8 or msg[i + j++]
-                if(extensionValue == 0) {
-                    val entryLength = msg[i + j] shl 8 or msg[i + j + 1]
-                    return String(msg.copyOfRange(i + j + 5, i + j + 2 + entryLength).map { x -> x.toChar() }.toCharArray())
-                }
-                j += extensionLength
-            }
-
-            null
-        } catch (e: ArrayIndexOutOfBoundsException) {
-            Timber.w("tls$id findSni: malformed ClientHello, could not extract SNI")
-            null
+    /**
+     * Parses the ClientHello handshake message inside a TLS record.
+     *
+     * @param record A TLS record (including its header) that starts with a ClientHello.
+     *
+     * @return The parsed ClientHello, or null if the record doesn't hold a well-formed one.
+     */
+    private fun parseClientHello(record: ByteArray): ClientHelloInfo? {
+        val clientHello = ClientHelloParser.parse(record, TLS_RECORD_HEADER_SIZE)
+        if (clientHello == null) {
+            Timber.w("tls$id malformed ClientHello, could not extract SNI or ALPN")
         }
+        return clientHello
     }
 
     /**
