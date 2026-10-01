@@ -56,6 +56,15 @@ class HttpConnection(
         /** The current chunked message outgrew the size limit, so its body is no longer cached. */
         var tooLarge = false
 
+        /**
+         * This direction no longer carries HTTP messages that can be told apart: the connection
+         * switched protocols, a response body runs until the connection closes, or the data
+         * turned out not to be HTTP. Payloads are forwarded without being parsed or kept. Set
+         * for both directions from the inbound thread on a protocol switch, hence [Volatile].
+         */
+        @Volatile
+        var opaque = false
+
         /** Clears everything that belongs to the message just completed, ready for the next one. */
         fun resetMessage() {
             overflowing = false
@@ -85,7 +94,15 @@ class HttpConnection(
      * [ConcurrentLinkedDeque] because pushes happen on the outbound-processing thread and pops on
      * the inbound-processing thread for the same connection.
      */
-    private val pendingRequestIds = ConcurrentLinkedDeque<CompletableDeferred<Long>>()
+    private val pendingRequests = ConcurrentLinkedDeque<PendingRequest>()
+
+    /**
+     * A request whose response hasn't been seen yet.
+     *
+     * @property method The request method, which decides whether its response can have a body.
+     * @property id Completes with the request's database ID once it is persisted.
+     */
+    private class PendingRequest(val method: String, val id: CompletableDeferred<Long>)
 
     init {
         if(id > 0) {
@@ -110,74 +127,117 @@ class HttpConnection(
     private fun handleData(payload: ByteArray, isOutbound: Boolean) {
         Timber.d("http$id Processing http ${if(isOutbound) "out" else "in"}: ${payload.size} bytes")
         val state = if (isOutbound) outboundState else inboundState
+
+        // nothing in this direction is an HTTP message any more, so there is nothing to parse or keep
+        if(state.opaque) {
+            if(state.previousPayload.isNotEmpty()) {
+                state.previousPayload = ByteArray(0)
+            }
+            return
+        }
+
         val assembledPayload = state.previousPayload + payload
 
         // distinguish between the first/only chuck and additional chunks
         if(!state.chunked && !state.overflowing) {
 
-            // parse the raw bytes
-            val message = assembledPayload.toString(Charsets.UTF_8)
-
-            val headerLength = message.indexOf("\r\n\r\n") + 4
-            if(headerLength < 4) {
+            val bodyStart = indexOfBytes(assembledPayload, DOUBLE_CRLF) + DOUBLE_CRLF.size
+            if(bodyStart < DOUBLE_CRLF.size) {
+                if(assembledPayload.size > MAX_HEADER_SIZE) {
+                    // whatever this is, it isn't an HTTP header block; stop collecting it
+                    Timber.w("http$id no end of headers within $MAX_HEADER_SIZE bytes, no longer parsing ${if(isOutbound) "outbound" else "inbound"} data")
+                    state.previousPayload = ByteArray(0)
+                    state.opaque = true
+                    return
+                }
                 // if the message doesn't contain the end of the headers, cache the chunk and wait for more
                 Timber.w("http$id incomplete headers")
                 state.previousPayload = assembledPayload
                 return
             } else {
                 if(state.previousPayload.isNotEmpty()) {
-                    Timber.w("http$id incomplete headers resolved (header length: ${message.length})")
+                    Timber.w("http$id incomplete headers resolved (header length: $bodyStart)")
                 }
                 state.previousPayload = ByteArray(0)
             }
 
-            val lowercaseHeaders = message.substring(0, headerLength).lowercase()
+            // the status line and headers, up to and including the empty line that ends them
+            val headerBlock = String(assembledPayload, 0, bodyStart, Charsets.UTF_8)
+            val lowercaseHeaders = headerBlock.lowercase()
+
+            // Some responses have no body whatever their headers say, and some end HTTP on this
+            // connection altogether (docs/vpn-mitm-audit.md PKT-33). Both depend on the status
+            // code and on the method of the request being answered (RFC 9112 section 6.3).
+            if(!isOutbound) {
+                val statusCode = parseStatusCode(headerBlock)
+                val requestMethod = pendingRequests.peekFirst()?.method
+
+                if(statusCode in 100..199 && statusCode != 101) {
+                    // an interim response such as 100 Continue: the real response to the same
+                    // request is still to come, so this one must not use up the pending request
+                    Timber.d("http$id skipping interim response $statusCode")
+                    continueAfterMessage(assembledPayload, bodyStart, isOutbound)
+                    return
+                }
+
+                val switchesProtocol = statusCode == 101 || (requestMethod == "CONNECT" && statusCode in 200..299)
+                if(switchesProtocol) {
+                    // an upgrade (e.g. WebSocket) or a tunnel: from here on neither direction
+                    // carries HTTP messages
+                    Timber.d("http$id connection switches protocols ($statusCode), no longer parsing it as HTTP")
+                    persistMessage(headerBlock, isOutbound)
+                    outboundState.opaque = true
+                    inboundState.opaque = true
+                    return
+                }
+
+                if(statusCode == 204 || statusCode == 304 || requestMethod == "HEAD") {
+                    persistMessage(headerBlock, isOutbound)
+                    continueAfterMessage(assembledPayload, bodyStart, isOutbound)
+                    return
+                }
+            }
 
             // the message is "officially" chunked only if this header is present
             state.chunked = lowercaseHeaders.contains("transfer-encoding: chunked")
             if(state.chunked) {
                 Timber.d("http$id chunked")
-            }
-
-            // messages can still overflow, which we can check by comparing the stated and actual content lengths
-            state.overflowing = if(!state.chunked) {
-                val lengthIndex = lowercaseHeaders.indexOf("content-length: ")
-
-                state.statedContentLength = if(lengthIndex > 0) {
-                    val endOfContentLength = lowercaseHeaders.indexOf("\r\n", lengthIndex + 16)
-                    lowercaseHeaders.substring(lengthIndex + 16, endOfContentLength).toIntOrNull() ?: -1
-                } else {
-                    -1
-                }
-
-                // if there was no Content-Length header, we have to assume that there's no overflow since we cannot determine the intended length
-                if(state.statedContentLength > 0) {
-                    val bodyIndex = message.indexOf("\r\n\r\n") + 4
-                    val actualContentLength = assembledPayload.size - bodyIndex
-                    state.remainingContentLength = state.statedContentLength - actualContentLength
-                    state.remainingContentLength > 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-
-
-            // check whether the message is chunked or overflowing
-            if(state.chunked) {
                 // the body may already be complete within this payload, so look for its end
                 // right away instead of waiting for a later payload that might never come
-                val bodyStart = indexOfBytes(assembledPayload, DOUBLE_CRLF) + DOUBLE_CRLF.size
                 state.headerBytes = assembledPayload.copyOf(bodyStart)
                 handleChunkedBytes(assembledPayload, bodyStart, isOutbound, state)
-            } else if(state.overflowing) {
-                Timber.d("http$id starting overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                // cache this chunk and wait for more
-                state.chunkCache.add(assembledPayload)
+                return
+            }
+
+            val contentLength = parseContentLength(lowercaseHeaders)
+            val availableBodyBytes = assembledPayload.size - bodyStart
+
+            if(contentLength >= 0) {
+                if(availableBodyBytes >= contentLength) {
+                    // the message is complete; anything behind it belongs to the next one
+                    val messageEnd = bodyStart + contentLength
+                    persistMessage(String(assembledPayload, 0, messageEnd, Charsets.UTF_8), isOutbound)
+                    continueAfterMessage(assembledPayload, messageEnd, isOutbound)
+                } else {
+                    // the body overflows this payload: cache it and wait for more
+                    state.overflowing = true
+                    state.statedContentLength = contentLength
+                    state.remainingContentLength = contentLength - availableBodyBytes
+                    Timber.d("http$id starting overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
+                    state.chunkCache.add(assembledPayload)
+                }
+            } else if(isOutbound) {
+                // a request with neither a length nor chunked encoding has no body, so anything
+                // behind its headers is the next (pipelined) request
+                persistMessage(headerBlock, isOutbound)
+                continueAfterMessage(assembledPayload, bodyStart, isOutbound)
             } else {
-                // otherwise persist the message
-                persistMessage(message, isOutbound)
+                // A response with neither a length nor chunked encoding: its body runs until the
+                // server closes the connection. Persist what is here and stop parsing, because
+                // nothing that follows is a new message and the rest of the body isn't kept.
+                Timber.d("http$id response body is delimited by connection close, persisting its start only")
+                persistMessage(assembledPayload.toString(Charsets.UTF_8), isOutbound)
+                state.opaque = true
             }
         } else if(state.chunked) {
             handleChunkedBytes(assembledPayload, 0, isOutbound, state)
@@ -189,12 +249,39 @@ class HttpConnection(
             state.remainingContentLength -= assembledPayload.size
             if(state.remainingContentLength <= 0) {
                 Timber.d("http$id resolved overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                // if there isn't, flatten the cache and persist the message
-                persistMessage(combineChunks(state).toString(Charsets.UTF_8), isOutbound)
+                // a negative remainder means this payload also holds the start of the next message
+                val surplus = -state.remainingContentLength
+                val combined = combineChunks(state)
+                val messageEnd = combined.size - surplus
+                persistMessage(String(combined, 0, messageEnd, Charsets.UTF_8), isOutbound)
+                continueAfterMessage(combined, messageEnd, isOutbound)
             } else {
                 Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
             }
         }
+    }
+
+    /**
+     * Parses whatever follows a completed message in the same payload as the start of the next
+     * message. On a keep-alive connection one read can hold the end of one message and the
+     * beginning of another.
+     *
+     * @param messageEnd Index in [bytes] just past the completed message.
+     */
+    private fun continueAfterMessage(bytes: ByteArray, messageEnd: Int, isOutbound: Boolean) {
+        if(messageEnd < bytes.size) {
+            handleData(bytes.copyOfRange(messageEnd, bytes.size), isOutbound)
+        }
+    }
+
+    /** The status code of a response's status line, or -1 if there is none. */
+    private fun parseStatusCode(headerBlock: String): Int {
+        return headerBlock.substringBefore("\r\n").split(" ", limit = 3).getOrNull(1)?.toIntOrNull() ?: -1
+    }
+
+    /** The value of the Content-Length header in an already lowercased header block, or -1 if there is no valid one. */
+    private fun parseContentLength(lowercaseHeaders: String): Int {
+        return CONTENT_LENGTH_HEADER.find(lowercaseHeaders)?.groupValues?.get(1)?.toIntOrNull() ?: -1
     }
 
     /**
@@ -285,7 +372,7 @@ class HttpConnection(
             // persist, so a response processed while the persist is still in flight still
             // correlates with the right request regardless of how long the DB write takes
             val pendingId = CompletableDeferred<Long>()
-            pendingRequestIds.addLast(pendingId)
+            pendingRequests.addLast(PendingRequest(statusLine?.get(0) ?: "", pendingId))
 
             CoroutineScope(Dispatchers.IO).launch {
                 try {
@@ -317,7 +404,7 @@ class HttpConnection(
             // responses pair with the right request even if their persist coroutines complete
             // out of order; a response with no pending request at all is dropped immediately
             // instead of suspending forever waiting for one that will never arrive
-            val pendingId = pendingRequestIds.pollFirst()
+            val pendingId = pendingRequests.pollFirst()?.id
             if (pendingId == null) {
                 Timber.w("http$id Received a response with no matching pending request, discarding it")
                 return
@@ -518,6 +605,15 @@ class HttpConnection(
          * can't leave a response coroutine suspended forever.
          */
         private const val REQUEST_CORRELATION_TIMEOUT_MS = 30_000L
+
+        /**
+         * Upper bound on the bytes collected while looking for the end of a header block. Real
+         * header blocks are a few kilobytes; a stream that exceeds this isn't HTTP.
+         */
+        private const val MAX_HEADER_SIZE = 64 * 1024
+
+        /** Matches the Content-Length header line in a lowercased header block. */
+        private val CONTENT_LENGTH_HEADER = Regex("\r\ncontent-length:[ \t]*(\\d+)[ \t]*\r\n")
 
         private val CRLF = "\r\n".toByteArray(Charsets.US_ASCII)
         private val DOUBLE_CRLF = "\r\n\r\n".toByteArray(Charsets.US_ASCII)

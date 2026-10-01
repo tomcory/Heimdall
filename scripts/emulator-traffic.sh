@@ -13,7 +13,8 @@
 #
 # Traffic groups (default: all of them, in this order):
 #   dns    plain DNS queries over UDP/53 to 8.8.8.8, which also fill Heimdall's DNS cache
-#   http   plaintext HTTP/1.1 requests over TCP/80, one of them with a TCP half-close
+#   http   plaintext HTTP/1.1 requests over TCP/80, including a pipelined HEAD + GET and a
+#          request with a TCP half-close
 #   raw    non-HTTP bytes over TCP, and an NTP query over UDP/123
 #   tls    TLS ClientHellos with chosen SNI/ALPN, replayed from the emulator's shell (see below)
 #   apps   launches real apps (Play Store, YouTube) for full TLS handshakes, HTTP/2 and QUIC
@@ -189,6 +190,11 @@ group_http() {
         adb shell "{ printf 'GET / HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\nConnection: close\\r\\n\\r\\n'; sleep $HOLD_OPEN; } | timeout 12 nc -w 5 -q 3 $host 80 | head -1" \
             | tr -d '\r' | { read -r status; info "GET http://$host/ -> ${status:-no response}"; }
     done
+    # A HEAD and a GET pipelined on one connection. The HEAD response states a Content-Length
+    # but has no body (docs/vpn-mitm-audit.md PKT-33), so both responses must be recorded.
+    host="${HTTP_HOSTS##* }"
+    adb shell "{ printf 'HEAD /head HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\n\\r\\nGET /after-head HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\nConnection: close\\r\\n\\r\\n'; sleep $HOLD_OPEN; } | timeout 12 nc -w 5 -q 3 $host 80 | grep -c '^HTTP/1.1 '" \
+        | tr -d '\r' | { read -r count; info "HEAD http://$host/head + GET /after-head on one connection -> ${count:-0} responses"; }
     # the client sends FIN right after the request and only then reads the response
     host="${HTTP_HOSTS##* }"
     adb shell "printf 'GET /half-close HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\nConnection: close\\r\\n\\r\\n' | timeout 12 nc -w 5 -q 8 $host 80 | head -1" \

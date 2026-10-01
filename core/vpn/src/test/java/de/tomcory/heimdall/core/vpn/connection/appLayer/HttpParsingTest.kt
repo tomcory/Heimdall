@@ -614,4 +614,203 @@ class HttpParsingTest {
 
         verifyResponse(200, "Hello")
     }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-33 (V-45): responses that have no body whatever their
+    // headers say, bodies that run until the connection closes, and connections that stop
+    // being HTTP
+    // -----------------------------------------------------------------------
+
+    private fun sendRequest(method: String, path: String) {
+        httpConnection.unwrapOutbound("$method $path HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(300)
+    }
+
+    /** Number of bytes the parser is holding on to for one direction, read through reflection. */
+    private fun bufferedBytes(isOutbound: Boolean): Int {
+        val stateField = HttpConnection::class.java.getDeclaredField(if (isOutbound) "outboundState" else "inboundState")
+        stateField.isAccessible = true
+        val state = stateField.get(httpConnection)
+        val previousPayload = state.javaClass.getDeclaredField("previousPayload").apply { isAccessible = true }.get(state) as ByteArray
+        @Suppress("UNCHECKED_CAST")
+        val chunkCache = state.javaClass.getDeclaredField("chunkCache").apply { isAccessible = true }.get(state) as List<ByteArray>
+        return previousPayload.size + chunkCache.sumOf { it.size }
+    }
+
+    @Test
+    fun `response to a HEAD request is complete without the body its Content-Length announces`() {
+        sendRequest("HEAD", "/file")
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+        verifyResponse(200, "")
+
+        // the parser must not be left waiting for those 1000 bytes
+        sendRequest("GET", "/next")
+        httpConnection.unwrapInbound("HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray())
+        Thread.sleep(500)
+        verifyResponse(404, "gone")
+    }
+
+    @Test
+    fun `304 response is complete without the body its Content-Length announces`() {
+        sendRequest("GET", "/cached")
+
+        httpConnection.unwrapInbound("HTTP/1.1 304 Not Modified\r\nContent-Length: 500\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+        verifyResponse(304, "")
+
+        sendRequest("GET", "/next")
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".toByteArray())
+        Thread.sleep(500)
+        verifyResponse(200, "ok")
+    }
+
+    @Test
+    fun `204 response without Content-Length does not end parsing of later responses`() {
+        sendRequest("GET", "/first")
+        httpConnection.unwrapInbound("HTTP/1.1 204 No Content\r\n\r\n".toByteArray())
+        sendRequest("GET", "/second")
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(204, "")
+        verifyResponse(200, "ok")
+    }
+
+    @Test
+    fun `100 Continue is skipped and the final response is paired with the request`() {
+        httpConnection.unwrapOutbound("POST /upload HTTP/1.1\r\nHost: example.com\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n".toByteArray())
+        httpConnection.unwrapInbound("HTTP/1.1 100 Continue\r\n\r\n".toByteArray())
+        httpConnection.unwrapOutbound("data".toByteArray())
+        Thread.sleep(300)
+
+        httpConnection.unwrapInbound("HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok".toByteArray())
+        Thread.sleep(500)
+
+        // the interim response is not a response to record, and it must not use up the request
+        verifyResponse(201, "ok", requestId = 42L)
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `an interim response and the final one in the same payload are told apart`() {
+        sendRequest("GET", "/")
+
+        httpConnection.unwrapInbound("HTTP/1.1 103 Early Hints\r\nLink: </a.css>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "ok")
+    }
+
+    @Test
+    fun `two pipelined requests in one payload are both persisted`() {
+        httpConnection.unwrapOutbound(
+            "HEAD /first HTTP/1.1\r\nHost: example.com\r\n\r\nGET /second HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray()
+        )
+        Thread.sleep(500)
+
+        for ((method, path) in listOf("HEAD" to "/first", "GET" to "/second")) {
+            coVerify(exactly = 1) {
+                connector.persistHttpRequest(
+                    method = method,
+                    remotePath = path,
+                    content = "",
+                    connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
+                    remoteHost = any(), remoteIp = any(), remotePort = any(),
+                    localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                )
+            }
+        }
+
+        // the HEAD response has no body, so the GET response right behind it is found
+        httpConnection.unwrapInbound(
+            "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".toByteArray()
+        )
+        Thread.sleep(500)
+
+        verifyResponse(200, "")
+        verifyResponse(200, "ok")
+    }
+
+    @Test
+    fun `two responses with Content-Length in one payload are both persisted`() {
+        sendRequest("GET", "/first")
+        sendRequest("GET", "/second")
+
+        httpConnection.unwrapInbound(
+            "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\noneHTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray()
+        )
+        Thread.sleep(500)
+
+        verifyResponse(200, "one")
+        verifyResponse(404, "gone")
+    }
+
+    @Test
+    fun `a body that ends mid-payload is separated from the response that follows it`() {
+        sendRequest("GET", "/first")
+        sendRequest("GET", "/second")
+
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabc".toByteArray())
+        httpConnection.unwrapInbound("defHTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "abcdef")
+        verifyResponse(404, "gone")
+    }
+
+    @Test
+    fun `a body delimited by connection close is persisted once and not buffered afterwards`() {
+        sendRequest("GET", "/stream")
+
+        httpConnection.unwrapInbound("HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\npart 0".toByteArray())
+        repeat(10) { httpConnection.unwrapInbound("part ${it + 1} of a long body\n".repeat(50).toByteArray()) }
+        Thread.sleep(500)
+
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        verifyResponse(200, "part 0")
+        assertEquals("nothing of the rest of the body may be held on to", 0, bufferedBytes(isOutbound = false))
+    }
+
+    @Test
+    fun `101 Switching Protocols ends HTTP parsing in both directions`() {
+        httpConnection.unwrapOutbound("GET /chat HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".toByteArray())
+        Thread.sleep(300)
+        httpConnection.unwrapInbound("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".toByteArray())
+        Thread.sleep(300)
+        verifyResponse(101, "")
+
+        // WebSocket frames in both directions are not HTTP messages
+        val frame = ByteArray(2000) { 0x55 }
+        repeat(10) {
+            httpConnection.unwrapOutbound(frame)
+            httpConnection.unwrapInbound(frame)
+        }
+        Thread.sleep(300)
+
+        assertEquals(0, bufferedBytes(isOutbound = true))
+        assertEquals(0, bufferedBytes(isOutbound = false))
+        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `bytes that never complete a header block stop being buffered beyond the limit`() {
+        sendRequest("GET", "/")
+        val garbage = ByteArray(16 * 1024) { 'x'.code.toByte() }
+
+        repeat(10) { httpConnection.unwrapInbound(garbage) }
+
+        assertTrue(
+            "expected the parser to give up instead of buffering ${bufferedBytes(isOutbound = false)} bytes",
+            bufferedBytes(isOutbound = false) <= 64 * 1024
+        )
+    }
 }
