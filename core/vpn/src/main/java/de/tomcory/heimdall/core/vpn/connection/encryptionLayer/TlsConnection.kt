@@ -239,7 +239,11 @@ class TlsConnection(
         // grab the remote hostname from the CLIENT HELLO message
         if (recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
             sni = findSni(record)
-            sni?.let { hostname = it }
+            sni?.let {
+                hostname = it
+                // ECH detection for TLS arrives with the shared ClientHello parser (PKT-29)
+                transportLayer.refineRemoteHost(it, echOffered = false)
+            }
             persistSecurity(SecurityProtocol.TLS, sni = sni)
 
             // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)

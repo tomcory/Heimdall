@@ -27,7 +27,7 @@ import java.nio.channels.Selector
  * @property componentManager The [ComponentManager] instance to use for this connection.
  * @property localPort Intercepted client's port.
  * @property remotePort Remote host's port.
- * @property remoteHost Remote host's IP address.
+ * @param remoteHost Remote host's name as known when the connection is created (from the DNS cache), if any.
  * @property ipPacketBuilder The [IpPacketBuilder] instance used to construct [IpPacket]s for this connection.
  */
 abstract class TransportLayerConnection protected constructor(
@@ -35,9 +35,19 @@ abstract class TransportLayerConnection protected constructor(
     val componentManager: ComponentManager,
     val localPort: Int,
     val remotePort: Int,
-    val remoteHost: String?,
+    remoteHost: String?,
     val ipPacketBuilder: IpPacketBuilder
 ) {
+
+    /**
+     * Remote host's name, or null if it is not known. Starts out as the name the DNS cache holds
+     * for the remote address and can later be corrected by the encryption layer through
+     * [refineRemoteHost]. Written on whichever thread the encryption layer runs on and read from
+     * others, hence [Volatile].
+     */
+    @Volatile
+    var remoteHost: String? = remoteHost
+        private set
 
     /**
      * Possible states of a [TransportLayerConnection].
@@ -116,7 +126,8 @@ abstract class TransportLayerConnection protected constructor(
      */
     private var encryptionLayer: EncryptionLayerConnection? = null
 
-    private val isTracker = remoteHost?.let { componentManager.labelConnection(it) } ?: false
+    @Volatile
+    private var isTracker = remoteHost?.let { componentManager.labelConnection(it) } ?: false
 
     protected fun passOutboundToEncryptionLayer(payload: ByteArray) {
         if(encryptionLayer == null) {
@@ -167,6 +178,41 @@ abstract class TransportLayerConnection protected constructor(
                     remotePort = remotePort,
                     isTracker = isTracker
                 )
+            }
+        }
+    }
+
+    /**
+     * Corrects the connection's hostname with the server name the client itself asked for in its
+     * ClientHello, re-evaluates the tracker label and persists both
+     * (docs/vpn-mitm-audit.md PKT-28). The name known at creation time is only a reverse lookup
+     * of the remote address in the DNS cache: it is missing when the app resolves names outside
+     * our view (DoH/DoT, Private DNS, lookups made before the VPN started) and ambiguous when
+     * several hosts share one address.
+     *
+     * @param sni The server name from the ClientHello.
+     * @param echOffered Whether the ClientHello carried an Encrypted Client Hello extension. If
+     * it did, [sni] may only be the ECH provider's public name rather than the real host, so it
+     * fills in a missing hostname but never replaces one we already have. Clients also send the
+     * extension as GREASE, where [sni] is the real host and matches the DNS-derived name anyway.
+     */
+    fun refineRemoteHost(sni: String, echOffered: Boolean) {
+        val refined = sni.trim().lowercase().removeSuffix(".")
+        val current = remoteHost
+        if (refined.isEmpty() || refined == current) {
+            return
+        }
+        if (echOffered && !current.isNullOrEmpty()) {
+            return
+        }
+
+        val refinedIsTracker = componentManager.labelConnection(refined)
+        remoteHost = refined
+        isTracker = refinedIsTracker
+
+        if (id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.updateConnectionHost(id, refined, refinedIsTracker)
             }
         }
     }
