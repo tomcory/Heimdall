@@ -87,73 +87,103 @@ class ProtocolDetectionTest {
     }
 
     // -----------------------------------------------------------------------
-    // detectQuic — long header form, QUIC version 0 or 1
+    // detectQuic — client Initial only: long header, version != 0, Initial packet type,
+    // datagram >= 1200 bytes (docs/vpn-mitm-audit.md PKT-26)
     // -----------------------------------------------------------------------
 
-    @Test
-    fun `detectQuic returns true for QUIC version 1 long header`() {
-        // byte[0]: 0xC0 = 1100_0000 → bit7=1 (long header), bit6=1 (fixed bit)
-        // bytes[1..4]: version 0x00000001
-        val quicV1 = byteArrayOf(
-            0xC0.toByte(),
-            0x00, 0x00, 0x00, 0x01,
-            0x00 // stub
-        )
-        assertTrue(EncryptionLayerConnection.detectQuic(quicV1))
+    /**
+     * Builds a datagram of [size] bytes that starts with a QUIC long header's first byte and
+     * version field. The rest is zero, which detectQuic doesn't look at.
+     */
+    private fun quicDatagram(firstByte: Int, version: Long, size: Int = 1200): ByteArray {
+        val datagram = ByteArray(size)
+        datagram[0] = firstByte.toByte()
+        datagram[1] = (version shr 24).toByte()
+        datagram[2] = (version shr 16).toByte()
+        datagram[3] = (version shr 8).toByte()
+        datagram[4] = version.toByte()
+        return datagram
     }
 
     @Test
-    fun `detectQuic returns true for QUIC version 0 long header`() {
-        val quicV0 = byteArrayOf(
-            0xC0.toByte(),
-            0x00, 0x00, 0x00, 0x00,
-            0x00
-        )
-        assertTrue(EncryptionLayerConnection.detectQuic(quicV0))
+    fun `detectQuic returns true for a QUIC version 1 Initial`() {
+        // byte[0]: 0xC0 = 1100_0000 → bit7=1 (long header), bit6=1 (fixed bit), type 00 (Initial)
+        assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000001)))
+    }
+
+    @Test
+    fun `detectQuic ignores the low bits of the first byte`() {
+        // the low four bits (reserved bits and packet number length) are header-protected, so
+        // they are effectively random on the wire
+        assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xCF, 0x00000001)))
+    }
+
+    @Test
+    fun `detectQuic returns false for version 0`() {
+        // version 0 is a Version Negotiation packet, which only servers send - it can never be
+        // the first packet a client sends
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000000)))
     }
 
     @Test
     fun `detectQuic returns false for short header form`() {
         // bit7=0 means short header
-        val shortHeader = byteArrayOf(
-            0x40.toByte(), // bit7=0, bit6=1
-            0x00, 0x00, 0x00, 0x01,
-            0x00
-        )
-        assertFalse(EncryptionLayerConnection.detectQuic(shortHeader))
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0x40, 0x00000001)))
     }
 
     @Test
-    fun `detectQuic returns true for a long header packet regardless of QUIC version`() {
-        // docs/vpn-mitm-audit.md PKT-19 (V-30): detectQuic used to require an exact version
-        // match (only 0/1 recognised), so any other QUIC version fell through to
-        // PlaintextConnection - QuicConnection never actually attempts MITM regardless of
-        // version, so any long-header packet should be recognised as QUIC
-        val arbitraryVersion = byteArrayOf(
-            0xC0.toByte(),
-            0x00, 0x00, 0x00, 0x02, // an arbitrary, unrecognised-by-the-old-code version
-            0x00
-        )
-        assertTrue(EncryptionLayerConnection.detectQuic(arbitraryVersion))
+    fun `detectQuic returns false when the fixed bit is not set`() {
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0x80, 0x00000001)))
     }
 
     @Test
-    fun `detectQuic returns true for a real QUIC v2 long header packet`() {
-        // QUIC Version 2's version number, per RFC 9369 section 3: 0x6b3343cf
-        val quicV2 = byteArrayOf(
-            0xC0.toByte(),
-            0x6B, 0x33, 0x43, 0xCF.toByte(),
-            0x00
-        )
-        assertTrue(EncryptionLayerConnection.detectQuic(quicV2))
+    fun `detectQuic returns true for an Initial of an unknown QUIC version`() {
+        // docs/vpn-mitm-audit.md PKT-19 (V-29): detectQuic used to require an exact version
+        // match, so any other QUIC version fell through to PlaintextConnection. Unknown versions
+        // are assumed to number their packet types like v1.
+        assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000002)))
+    }
+
+    @Test
+    fun `detectQuic returns true for a QUIC v2 Initial`() {
+        // QUIC v2 (0x6b3343cf) renumbered the long packet types: Initial is 0b01
+        // (RFC 9369 section 3.2), so the first byte is 1101_0000
+        assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xD0, 0x6B3343CF)))
+    }
+
+    @Test
+    fun `detectQuic returns false for a QUIC v2 packet with type 0b00`() {
+        // in v2, type 0b00 is a Retry packet
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x6B3343CF)))
+    }
+
+    @Test
+    fun `detectQuic returns false for non-Initial QUIC v1 long header packets`() {
+        // 0-RTT (0b01), Handshake (0b10) and Retry (0b11): seeing one of these first means we
+        // joined the flow mid-connection
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xD0, 0x00000001)))
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xE0, 0x00000001)))
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xF0, 0x00000001)))
+    }
+
+    @Test
+    fun `detectQuic returns false for an Initial in a datagram shorter than 1200 bytes`() {
+        // RFC 9000 section 14.1: clients must pad datagrams carrying an Initial to 1200 bytes
+        assertFalse(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000001, size = 1199)))
+    }
+
+    @Test
+    fun `detectQuic returns true for an Initial in a datagram longer than 1200 bytes`() {
+        assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000001, size = 1350)))
     }
 
     @Test
     fun `detectQuic returns false for TLS payload`() {
+        // padded to 1200 bytes so the size check alone can't be what rejects it
         val clientHello = byteArrayOf(
             0x16, 0x03, 0x03, 0x00, 0x05, 0x01,
             0x00, 0x00, 0x01, 0x00
-        )
+        ).copyOf(1200)
         assertFalse(EncryptionLayerConnection.detectQuic(clientHello))
     }
 
