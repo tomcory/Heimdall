@@ -43,6 +43,30 @@ class HttpConnection(
         var chunked = false
         var statedContentLength = -1
         var remainingContentLength = -1
+
+        /** Finds the end of a chunked message's body (only used while [chunked]). */
+        val chunkTracker = ChunkedBodyTracker()
+
+        /** Number of bytes of the current chunked message held in [chunkCache]. */
+        var cachedSize = 0
+
+        /** Status line and headers of the current chunked message, kept in case its body turns out to be [tooLarge]. */
+        var headerBytes: ByteArray? = null
+
+        /** The current chunked message outgrew the size limit, so its body is no longer cached. */
+        var tooLarge = false
+
+        /** Clears everything that belongs to the message just completed, ready for the next one. */
+        fun resetMessage() {
+            overflowing = false
+            chunked = false
+            statedContentLength = -1
+            remainingContentLength = -1
+            chunkTracker.reset()
+            cachedSize = 0
+            headerBytes = null
+            tooLarge = false
+        }
     }
 
     private val outboundState = ReassemblyState()
@@ -141,55 +165,120 @@ class HttpConnection(
 
 
             // check whether the message is chunked or overflowing
-            if(state.chunked || state.overflowing) {
-                if(state.overflowing) {
-                    Timber.d("http$id starting overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                }
-                // if it is, cache this chunk and wait for more
+            if(state.chunked) {
+                // the body may already be complete within this payload, so look for its end
+                // right away instead of waiting for a later payload that might never come
+                val bodyStart = indexOfBytes(assembledPayload, DOUBLE_CRLF) + DOUBLE_CRLF.size
+                state.headerBytes = assembledPayload.copyOf(bodyStart)
+                handleChunkedBytes(assembledPayload, bodyStart, isOutbound, state)
+            } else if(state.overflowing) {
+                Timber.d("http$id starting overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
+                // cache this chunk and wait for more
                 state.chunkCache.add(assembledPayload)
             } else {
                 // otherwise persist the message
                 persistMessage(message, isOutbound)
             }
+        } else if(state.chunked) {
+            handleChunkedBytes(assembledPayload, 0, isOutbound, state)
         } else {
-            // add the chunk to the cache
+            // the message is overflowing: add the chunk to the cache
             state.chunkCache.add(assembledPayload)
 
-            // we boldly assume that a message is overflowing XOR chunked - may the testers forgive us
-            if(state.overflowing) {
-                // check whether there's still content remaining after the current payload
-                state.remainingContentLength -= assembledPayload.size
-                if(state.remainingContentLength <= 0) {
-                    Timber.d("http$id resolved overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                    // if there isn't, flatten the cache and persist the message
-                    persistMessage(combineChunks(state).toString(Charsets.UTF_8), isOutbound)
-                } else {
-                    Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
-                }
+            // check whether there's still content remaining after the current payload
+            state.remainingContentLength -= assembledPayload.size
+            if(state.remainingContentLength <= 0) {
+                Timber.d("http$id resolved overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
+                // if there isn't, flatten the cache and persist the message
+                persistMessage(combineChunks(state).toString(Charsets.UTF_8), isOutbound)
             } else {
-                // check whether it's the last chunk
-                val lines = assembledPayload.toString(Charsets.UTF_8).split("\r\n")
-                if(lines.size >= 2 && (lines[lines.size - 2].trim().toIntOrNull(16) ?: -1) == 0) {
-                    Timber.d("http$id last chunk")
-                    // if it is, flatten the cache, recombine the message and persist it
-                    persistMessage(dechunkHttpMessage(combineChunks(state)), isOutbound)
+                Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
+            }
+        }
+    }
+
+    /**
+     * Handles bytes of a chunked message (docs/vpn-mitm-audit.md PKT-32). The end of the body is
+     * found by following the declared chunk sizes, since that is the only reliable way: chunk
+     * data may contain anything, and the terminating zero-size chunk can arrive in the same
+     * payload as the headers, on its own, or split across payloads.
+     *
+     * @param bytes The payload, or for the message's first payload the headers plus what follows.
+     * @param bodyStart Index in [bytes] at which body bytes begin.
+     */
+    private fun handleChunkedBytes(bytes: ByteArray, bodyStart: Int, isOutbound: Boolean, state: ReassemblyState) {
+        when (val end = state.chunkTracker.feed(bytes, bodyStart)) {
+            ChunkedBodyTracker.INCOMPLETE -> cacheChunkedBytes(bytes, state)
+
+            ChunkedBodyTracker.MALFORMED -> {
+                // the end of this message can't be found any more, so persist what there is
+                Timber.w("http$id malformed chunked body, persisting what was received so far")
+                cacheChunkedBytes(bytes, state)
+                persistChunkedMessage(isOutbound, state)
+            }
+
+            else -> {
+                cacheChunkedBytes(if(end == bytes.size) bytes else bytes.copyOf(end), state)
+                persistChunkedMessage(isOutbound, state)
+                // on a keep-alive connection the next message may start in the same payload
+                if(end < bytes.size) {
+                    handleData(bytes.copyOfRange(end, bytes.size), isOutbound)
                 }
             }
         }
     }
 
-    private fun persistMessage(message: String, isOutbound: Boolean) {
+    /**
+     * Adds bytes of a chunked message to the cache, unless that would exceed [maximumMessageSize].
+     * From then on the body is dropped and only its length is tracked.
+     */
+    private fun cacheChunkedBytes(bytes: ByteArray, state: ReassemblyState) {
+        if(state.tooLarge) {
+            return
+        }
+        if(state.cachedSize + bytes.size > maximumMessageSize) {
+            Timber.d("http$id chunked message exceeds $maximumMessageSize bytes, no longer caching its body")
+            state.tooLarge = true
+            state.chunkCache.clear()
+            state.cachedSize = 0
+        } else {
+            state.chunkCache.add(bytes)
+            state.cachedSize += bytes.size
+        }
+    }
+
+    private fun persistChunkedMessage(isOutbound: Boolean, state: ReassemblyState) {
+        val bodyLength = state.chunkTracker.bodyLength
+        Timber.d("http$id chunked message complete ($bodyLength body bytes)")
+        if(state.tooLarge) {
+            val headers = state.headerBytes?.toString(Charsets.UTF_8) ?: ""
+            persistMessage(headers, isOutbound, oversizedBodyLength = bodyLength)
+        } else {
+            persistMessage(dechunkHttpMessage(combineChunks(state)), isOutbound)
+        }
+    }
+
+    /**
+     * @param oversizedBodyLength If not null, the message's body was too large to keep and had
+     * this many bytes. [message] then only holds the status line and headers.
+     */
+    private fun persistMessage(message: String, isOutbound: Boolean, oversizedBodyLength: Long? = null) {
         // parse the three components of the message individually
         val statusLine = parseStatusLine(message, isOutbound)
         val headers = parseHeaders(message)
         val body = parseBody(message)
 
-        // reset flags for reuse
+        val content = when {
+            oversizedBodyLength != null -> "<too large: $oversizedBodyLength bytes>"
+            body == null -> ""
+            body.length > maximumMessageSize -> "<too large: ${body.length} bytes>"
+            else -> body
+        }
+        val contentLength = oversizedBodyLength?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: body?.length ?: 0
+
+        // reset the reassembly state for the next message
         val state = if (isOutbound) outboundState else inboundState
-        state.overflowing = false
-        state.chunked = false
-        state.statedContentLength = -1
-        state.remainingContentLength = -1
+        state.resetMessage()
 
         if (isOutbound) {
             // register this request's placeholder in wire order *before* launching the async
@@ -204,8 +293,8 @@ class HttpConnection(
                         connectionId = id,
                         timestamp = System.currentTimeMillis(),
                         headers = headers ?: emptyMap(),
-                        content = if(body == null) "" else if(body.length > maximumMessageSize) "<too large: ${body.length} bytes>" else body,
-                        contentLength = body?.length ?: 0,
+                        content = content,
+                        contentLength = contentLength,
                         method = statusLine?.get(0) ?: "",
                         remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
                         remotePath = statusLine?.get(1) ?: "",
@@ -251,8 +340,8 @@ class HttpConnection(
                     requestId = requestId,
                     timestamp = System.currentTimeMillis(),
                     headers = headers ?: emptyMap(),
-                    content = if(body == null) "" else if(body.length > maximumMessageSize) "<too large: ${body.length} bytes>" else body,
-                    contentLength = body?.length ?: 0,
+                    content = content,
+                    contentLength = contentLength,
                     statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
                     statusMsg = statusLine?.get(2) ?: "",
                     remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",

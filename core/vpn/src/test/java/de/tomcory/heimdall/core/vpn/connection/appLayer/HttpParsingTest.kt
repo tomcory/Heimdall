@@ -144,8 +144,8 @@ class HttpParsingTest {
 
         coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
-        // Terminating chunk on its own line triggers last-chunk detection
-        httpConnection.unwrapOutbound("0\r\n".toByteArray())
+        // The zero-size chunk and the empty line after it end the body
+        httpConnection.unwrapOutbound("0\r\n\r\n".toByteArray())
         Thread.sleep(500)
 
         coVerify {
@@ -173,7 +173,7 @@ class HttpParsingTest {
         Thread.sleep(200)
         coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
-        httpConnection.unwrapOutbound("0\r\n".toByteArray())
+        httpConnection.unwrapOutbound("0\r\n\r\n".toByteArray())
         Thread.sleep(500)
 
         coVerify {
@@ -388,5 +388,230 @@ class HttpParsingTest {
                 remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
             )
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-32 (V-44): the end of a chunked message is found by following
+    // the declared chunk sizes, after every payload including the first
+    // -----------------------------------------------------------------------
+
+    private fun sendRequest(path: String = "/") {
+        httpConnection.unwrapOutbound("GET $path HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(300)
+    }
+
+    private fun verifyResponse(statusCode: Int, content: String, requestId: Long? = null) {
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = content,
+                statusCode = statusCode,
+                requestId = requestId ?: any(),
+                connectionId = any(), timestamp = any(), headers = any(),
+                contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    private fun verifyNoResponse() {
+        coVerify(exactly = 0) {
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    private val chunkedHeaders = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+
+    @Test
+    fun `chunked response that arrives whole in one payload is persisted`() {
+        // the case that never completed before: there is no later payload to trigger a check
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5\r\nHello\r\n7\r\n, World\r\n0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello, World")
+    }
+
+    @Test
+    fun `chunked response is persisted when the terminator arrives in its own payload`() {
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5\r\nHello\r\n".toByteArray())
+        Thread.sleep(200)
+        verifyNoResponse()
+
+        httpConnection.unwrapInbound("0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello")
+    }
+
+    @Test
+    fun `chunked response is persisted when the terminator is split across payloads`() {
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5\r\nHello\r\n".toByteArray())
+        httpConnection.unwrapInbound("0\r\n".toByteArray())
+        Thread.sleep(200)
+        // the zero-size chunk alone does not end the body: the empty line after it does
+        verifyNoResponse()
+
+        httpConnection.unwrapInbound("\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello")
+    }
+
+    @Test
+    fun `chunk boundaries may fall anywhere within payloads`() {
+        sendRequest()
+        val wire = "${chunkedHeaders}5\r\nHello\r\n7\r\n, World\r\n0\r\n\r\n"
+
+        // deliver the headers, then the body one byte at a time
+        httpConnection.unwrapInbound(chunkedHeaders.toByteArray())
+        wire.substring(chunkedHeaders.length).forEach { httpConnection.unwrapInbound(byteArrayOf(it.code.toByte())) }
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello, World")
+    }
+
+    @Test
+    fun `chunk data that looks like a terminator does not end the body early`() {
+        sendRequest()
+        val data = "0\r\n\r\n"
+
+        httpConnection.unwrapInbound("${chunkedHeaders}${data.length.toString(16)}\r\n$data\r\n".toByteArray())
+        Thread.sleep(200)
+        verifyNoResponse()
+
+        httpConnection.unwrapInbound("0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, data)
+    }
+
+    @Test
+    fun `chunked response with a trailer section is persisted once the trailers end`() {
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5\r\nHello\r\n0\r\nX-Checksum: abc\r\n".toByteArray())
+        Thread.sleep(200)
+        verifyNoResponse()
+
+        httpConnection.unwrapInbound("\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello")
+    }
+
+    @Test
+    fun `chunk extensions after the size are ignored`() {
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5;name=value\r\nHello\r\n0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello")
+    }
+
+    @Test
+    fun `two chunked responses on one connection are each persisted and paired with their request`() {
+        coEvery {
+            connector.persistHttpRequest(
+                remotePath = "/first",
+                connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
+                method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        } returns 101L
+        coEvery {
+            connector.persistHttpRequest(
+                remotePath = "/second",
+                connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
+                method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        } returns 202L
+
+        sendRequest("/first")
+        httpConnection.unwrapInbound("${chunkedHeaders}3\r\none\r\n0\r\n\r\n".toByteArray())
+        sendRequest("/second")
+        httpConnection.unwrapInbound("${chunkedHeaders}3\r\ntwo\r\n0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        // before the fix the first response left the parser in chunked mode for good, so the
+        // second one was swallowed as well
+        verifyResponse(200, "one", requestId = 101L)
+        verifyResponse(200, "two", requestId = 202L)
+    }
+
+    @Test
+    fun `a message that follows a chunked one in the same payload is parsed too`() {
+        sendRequest("/first")
+        sendRequest("/second")
+
+        httpConnection.unwrapInbound(
+            "${chunkedHeaders}3\r\none\r\n0\r\n\r\nHTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray()
+        )
+        Thread.sleep(500)
+
+        verifyResponse(200, "one")
+        verifyResponse(404, "gone")
+    }
+
+    @Test
+    fun `chunked body over the size limit is persisted with a marker instead of its content`() {
+        sendRequest()
+        val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+        val chunkCount = 20 // 1.25 MB, above the 1 MB limit
+
+        httpConnection.unwrapInbound(chunkedHeaders.toByteArray())
+        repeat(chunkCount) {
+            httpConnection.unwrapInbound("${chunk.size.toString(16)}\r\n".toByteArray() + chunk + "\r\n".toByteArray())
+        }
+        Thread.sleep(200)
+        verifyNoResponse()
+
+        httpConnection.unwrapInbound("0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        val total = chunk.size * chunkCount
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = "<too large: $total bytes>",
+                contentLength = total,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    @Test
+    fun `a response after an oversized chunked one is still parsed`() {
+        sendRequest("/big")
+        sendRequest("/small")
+        val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
+
+        httpConnection.unwrapInbound(chunkedHeaders.toByteArray())
+        repeat(20) {
+            httpConnection.unwrapInbound("${chunk.size.toString(16)}\r\n".toByteArray() + chunk + "\r\n".toByteArray())
+        }
+        httpConnection.unwrapInbound("0\r\n\r\n".toByteArray())
+        httpConnection.unwrapInbound("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(204, "")
+    }
+
+    @Test
+    fun `a malformed chunk size persists what was received instead of waiting forever`() {
+        sendRequest()
+
+        httpConnection.unwrapInbound("${chunkedHeaders}5\r\nHello\r\nnot-hex\r\n".toByteArray())
+        Thread.sleep(500)
+
+        verifyResponse(200, "Hello")
     }
 }
