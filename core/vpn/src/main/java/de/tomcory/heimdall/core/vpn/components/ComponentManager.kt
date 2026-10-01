@@ -9,6 +9,7 @@ import de.tomcory.heimdall.core.vpn.R
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
@@ -78,10 +79,10 @@ class ComponentManager(
     // the interrupter pipe is used to stop the DevicePollThread's polling
     private val interrupter: FileDescriptor
 
-    // scope for this ComponentManager's own background work (currently just the UDP idle sweep),
+    // scope for this ComponentManager's own background work (currently just the idle sweep),
     // cancelled in stopComponents() alongside everything else
     private val componentScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var udpIdleSweepJob: Job? = null
+    private var idleSweepJob: Job? = null
 
     // set up the caches for DNS lookups and TLS passthrough connections
     val dnsCache = DnsCache()
@@ -165,21 +166,28 @@ class ComponentManager(
         // periodically reap UDP "connections" that have gone idle - unlike TCP, UDP has no
         // FIN/RST of its own to signal that a flow is done, so without this every UDP flow
         // would otherwise stay registered for the entire VPN session (see UdpConnection.sweepIdleConnections)
-        udpIdleSweepJob = componentScope.launch {
+        // The same sweep reaps TCP connections whose client half-closed and whose remote side
+        // then neither sends nor closes (see TcpConnection.sweepHalfClosedConnections).
+        idleSweepJob = componentScope.launch {
             while (isActive) {
-                delay(UDP_IDLE_SWEEP_INTERVAL_MS)
+                delay(IDLE_SWEEP_INTERVAL_MS)
                 try {
                     UdpConnection.sweepIdleConnections()
                 } catch (e: Throwable) {
                     Timber.e(e, "Error during UDP idle-connection sweep")
+                }
+                try {
+                    TcpConnection.sweepHalfClosedConnections()
+                } catch (e: Throwable) {
+                    Timber.e(e, "Error during TCP half-closed-connection sweep")
                 }
             }
         }
     }
 
     suspend fun stopComponents() {
-        // stop the periodic UDP idle sweep
-        udpIdleSweepJob?.cancel()
+        // stop the periodic idle sweep
+        idleSweepJob?.cancel()
 
         // closing the interrupter pipe stops the DevicePollThread's polling
         try {
@@ -303,7 +311,11 @@ class ComponentManager(
     companion object {
         val selectorMonitor: Any = Any()
 
-        /** How often to check for idle UDP connections to reap (see [UdpConnection.sweepIdleConnections]). */
-        private const val UDP_IDLE_SWEEP_INTERVAL_MS = 30 * 1000L
+        /**
+         * How often to check for connections to reap: idle UDP connections (see
+         * [UdpConnection.sweepIdleConnections]) and stale half-closed TCP connections (see
+         * [TcpConnection.sweepHalfClosedConnections]).
+         */
+        private const val IDLE_SWEEP_INTERVAL_MS = 30 * 1000L
     }
 }

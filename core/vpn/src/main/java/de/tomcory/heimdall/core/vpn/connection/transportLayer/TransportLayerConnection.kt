@@ -59,6 +59,12 @@ abstract class TransportLayerConnection protected constructor(
         /** The outward-facing channel connected and ready for data. */
         CONNECTED,
 
+        /**
+         * The client has finished sending (TCP FIN) and the outward-facing channel's sending side
+         * is shut down, but the remote host may still send data, which is relayed to the client.
+         */
+        HALF_CLOSED,
+
         /** The outward-facing channel is closing and no longer accepts data. */
         CLOSING,
 
@@ -158,6 +164,15 @@ abstract class TransportLayerConnection protected constructor(
      */
     protected fun notifyClientClosed() {
         encryptionLayer?.onClientClosed()
+    }
+
+    /**
+     * Whether the connection can stay open for inbound data after the client has finished
+     * sending. True until an encryption layer exists, since nothing above the transport layer
+     * can object yet.
+     */
+    protected fun encryptionLayerSupportsHalfClose(): Boolean {
+        return encryptionLayer?.supportsHalfClose ?: true
     }
 
     protected fun createDatabaseEntity(): Long {

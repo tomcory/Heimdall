@@ -44,6 +44,14 @@ class TlsConnection(
     override val protocol = "TLS"
 
     /**
+     * A MitM'd connection consists of two separate TLS sessions, and a half-close of the client's
+     * TCP connection has no counterpart on the server-facing session, so the whole connection is
+     * closed instead. Without MitM the records are only forwarded.
+     */
+    override val supportsHalfClose: Boolean
+        get() = !doMitm
+
+    /**
      * Confines every mutation of this connection's state/buffers to at most one task at a time,
      * regardless of which thread triggers it. Without this, `state`, the eight `ByteBuffer`
      * fields, and the reassembly caches below are mutated both by whichever thread calls

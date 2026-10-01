@@ -30,7 +30,16 @@ abstract class EncryptionLayerConnection(
     /**
      * Indicates whether to perform a man-in-the-middle attack on this connection.
      */
+    @Volatile
     var doMitm = componentManager.doMitm
+
+    /**
+     * Whether this connection keeps working when the client finishes sending but still expects
+     * inbound data (a TCP half-close, docs/vpn-mitm-audit.md PKT-30). Read on the transport
+     * layer's thread. Layers that merely forward bytes can always carry it.
+     */
+    open val supportsHalfClose: Boolean
+        get() = true
 
     /**
      * Asynchronously records how this connection is secured, along with what its ClientHello

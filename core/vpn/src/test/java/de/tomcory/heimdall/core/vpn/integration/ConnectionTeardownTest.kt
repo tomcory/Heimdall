@@ -119,7 +119,7 @@ class ConnectionTeardownTest {
     }
 
     @Test
-    fun `graceful FIN close writes only a FIN-ACK, not an RST`() {
+    fun `graceful FIN close is ACKed, then completed with a FIN-ACK once the remote closes, never an RST`() {
         acceptThread = Thread {
             try {
                 acceptedSocket.set(serverSocket.accept())
@@ -166,11 +166,21 @@ class ConnectionTeardownTest {
         )
         connection?.unwrapOutbound(finPacket.payload)
 
+        // docs/vpn-mitm-audit.md PKT-30: the FIN only ends the device's sending side. It is
+        // ACKed, and the connection stays open for whatever the remote host still sends.
         assertEquals(
-            "expected exactly one new segment (the FIN-ACK) to be written back to the device",
+            "expected exactly one new segment (the ACK for the FIN) to be written back to the device",
             messagesBeforeFin + 1,
             deviceWriter.sentMessages.size
         )
+        val finAck = (deviceWriter.sentMessages.last().obj as IpPacket).payload as TcpPacket
+        assertTrue("the device's FIN must be acknowledged", finAck.header.ack)
+        assertFalse("our own FIN must wait until the remote host closes", finAck.header.fin)
+        assertEquals(TransportLayerConnection.TransportLayerState.HALF_CLOSED, connection?.state)
+
+        // the remote host sees the end of the request stream and closes its side
+        closeAcceptedSocket()
+        awaitState(connection, TransportLayerConnection.TransportLayerState.CLOSING)
 
         val newSegments = deviceWriter.sentMessages.drop(messagesBeforeFin).map { msg ->
             (msg.obj as IpPacket).payload as TcpPacket
@@ -254,9 +264,14 @@ class ConnectionTeardownTest {
             seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false, finFlag = true
         )
         connection?.unwrapOutbound(finPacket.payload)
-        assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, connection?.state)
+        assertEquals(TransportLayerConnection.TransportLayerState.HALF_CLOSED, connection?.state)
+
+        // the remote host closes too, which makes us send our FIN-ACK and wait for the final ACK
+        closeAcceptedSocket()
+        awaitState(connection, TransportLayerConnection.TransportLayerState.CLOSING)
 
         val firstFinAck = (deviceWriter.sentMessages.last().obj as IpPacket).payload as TcpPacket
+        assertTrue(firstFinAck.header.fin)
         val messagesAfterFirstFin = deviceWriter.sentMessages.size
 
         // the device's TCP stack didn't see our FIN-ACK in time and retransmits its own FIN
@@ -449,6 +464,23 @@ class ConnectionTeardownTest {
     }
 
     // ---- docs/vpn-mitm-audit.md PKT-22: client-closed notification to the encryption layer ----
+
+    /** Waits for the fake server to accept the connection, then closes it from the remote side. */
+    private fun closeAcceptedSocket() {
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && acceptedSocket.get() == null) {
+            Thread.sleep(20)
+        }
+        acceptedSocket.get()!!.close()
+    }
+
+    private fun awaitState(connection: TransportLayerConnection?, expected: TransportLayerConnection.TransportLayerState) {
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && connection?.state != expected) {
+            Thread.sleep(20)
+        }
+        assertEquals(expected, connection?.state)
+    }
 
     /** Encryption layer stand-in that only counts [onClientClosed] calls. */
     private class RecordingEncryptionLayer(
