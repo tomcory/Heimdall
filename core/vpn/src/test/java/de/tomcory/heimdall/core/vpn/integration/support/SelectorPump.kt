@@ -23,23 +23,25 @@ class SelectorPump(private val selector: Selector) {
         }
         thread = Thread({
             while (running.get()) {
+                // as in InboundTrafficHandler: let a registration that is under way finish
+                // before selecting again, and process the keys outside the monitor
+                synchronized(ComponentManager.selectorMonitor) { }
+
                 val selectedChannels = try {
                     selector.select(50)
                 } catch (e: Exception) {
                     0
                 }
 
-                synchronized(ComponentManager.selectorMonitor) {
-                    if (selectedChannels > 0) {
-                        val iterator = selector.selectedKeys().iterator()
-                        while (iterator.hasNext()) {
-                            val key = iterator.next()
-                            val attachment = key.attachment()
-                            if (attachment is TransportLayerConnection) {
-                                attachment.unwrapInbound()
-                            }
-                            iterator.remove()
+                if (selectedChannels > 0) {
+                    val iterator = selector.selectedKeys().iterator()
+                    while (iterator.hasNext()) {
+                        val key = iterator.next()
+                        val attachment = key.attachment()
+                        if (attachment is TransportLayerConnection) {
+                            attachment.unwrapInbound()
                         }
+                        iterator.remove()
                     }
                 }
             }

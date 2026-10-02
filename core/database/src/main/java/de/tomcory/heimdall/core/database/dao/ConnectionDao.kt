@@ -37,6 +37,9 @@ interface ConnectionDao {
     @Query("UPDATE Connection SET blocked = 1 WHERE id = :id")
     suspend fun markBlocked(id: Long)
 
+    @Query("SELECT COALESCE(MAX(id), 0) FROM Connection")
+    suspend fun maxId(): Long
+
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>
 

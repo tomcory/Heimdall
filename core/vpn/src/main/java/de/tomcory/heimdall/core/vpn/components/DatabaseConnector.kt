@@ -14,7 +14,14 @@ interface DatabaseConnector {
         endTime: Long
     ): Int
 
-    suspend fun persistTransportLayerConnection(
+    /**
+     * Stores a new connection and returns its ID. Called on the thread that handles the
+     * device's packets for every new connection, so it must not block: implementations assign
+     * the ID themselves and may write the row in the background. They then have to make sure
+     * that every later call that names this ID takes effect after the row exists
+     * (docs/vpn-mitm-audit.md PKT-41).
+     */
+    fun persistTransportLayerConnection(
         sessionId : Long,
         protocol: Protocol,
         ipVersion: Int,

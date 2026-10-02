@@ -94,7 +94,7 @@ class RecordingDatabaseConnector : DatabaseConnector {
         return id.toInt()
     }
 
-    override suspend fun persistTransportLayerConnection(
+    override fun persistTransportLayerConnection(
         sessionId: Long,
         protocol: Protocol,
         ipVersion: Int,

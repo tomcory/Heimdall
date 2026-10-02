@@ -7,11 +7,48 @@ import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.database.entity.Session
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 class RoomDatabaseConnector(
     val database: HeimdallDatabase
 ): DatabaseConnector {
+
+    private val insertScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * The ID given to the most recent connection. Connection IDs are assigned here rather than
+     * by the database, so that a new connection has its ID without waiting for its row to be
+     * written. Seeded once from the stored connections; nothing else inserts connections while
+     * the VPN is running.
+     */
+    private val lastConnectionId = AtomicLong(
+        try {
+            runBlocking { database.connectionDao().maxId() }
+        } catch (e: Exception) {
+            Timber.e(e, "Error while reading the highest connection ID")
+            0L
+        }
+    )
+
+    /** Inserts of connection rows that are still under way, by connection ID. */
+    private val pendingConnectionInserts = ConcurrentHashMap<Long, Job>()
+
+    /**
+     * Waits until the row of the connection with the given ID has been written, if its insert
+     * is still under way. Everything that refers to a connection by ID calls this first.
+     */
+    private suspend fun awaitConnection(id: Long) {
+        pendingConnectionInserts[id]?.join()
+    }
     override suspend fun persistSession(startTime: Long): Long {
         val ids = try {
             database.sessionDao().insert(Session(startTime = startTime))
@@ -31,7 +68,7 @@ class RoomDatabaseConnector(
         }
     }
 
-    override suspend fun persistTransportLayerConnection(
+    override fun persistTransportLayerConnection(
         sessionId: Long,
         protocol: Protocol,
         ipVersion: Int,
@@ -44,30 +81,38 @@ class RoomDatabaseConnector(
         remotePort: Int,
         isTracker: Boolean
     ): Long {
-        val ids = try {
-            database.connectionDao().insert(
-                Connection(
-                    sessionId = sessionId,
-                    protocol = protocol,
-                    ipVersion = ipVersion,
-                    initialTimestamp = initialTimestamp,
-                    initiatorId = initiatorId,
-                    initiatorPkg = initiatorPkg,
-                    localPort = localPort,
-                    remoteHost = remoteHost,
-                    remoteIp = remoteIp,
-                    remotePort = remotePort,
-                    isTracker = isTracker
+        val id = lastConnectionId.incrementAndGet()
+        val insert = insertScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                database.connectionDao().insert(
+                    Connection(
+                        id = id,
+                        sessionId = sessionId,
+                        protocol = protocol,
+                        ipVersion = ipVersion,
+                        initialTimestamp = initialTimestamp,
+                        initiatorId = initiatorId,
+                        initiatorPkg = initiatorPkg,
+                        localPort = localPort,
+                        remoteHost = remoteHost,
+                        remoteIp = remoteIp,
+                        remotePort = remotePort,
+                        isTracker = isTracker
+                    )
                 )
-            )
-        } catch (e: Exception) {
-            Timber.e(e, "Error while persisting transport layer connection (sID: $sessionId)")
-            emptyList()
+            } catch (e: Exception) {
+                Timber.e(e, "Error while persisting transport layer connection (cID: $id, sID: $sessionId)")
+            }
         }
-        return if (ids.isNotEmpty()) ids.first() else -1
+        // registered before it starts, so that no later call for this ID can miss it
+        pendingConnectionInserts[id] = insert
+        insert.invokeOnCompletion { pendingConnectionInserts.remove(id, insert) }
+        insert.start()
+        return id
     }
 
     override suspend fun deleteTransportLayerConnection(id: Long): Int {
+        awaitConnection(id)
         return try {
             database.connectionDao().delete(id)
         } catch (e: Exception) {
@@ -77,6 +122,7 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun updateConnectionBytesOut(id: Long, delta: Long) {
+        awaitConnection(id)
         try {
             database.connectionDao().updateBytesOut(id, delta)
         } catch (e: Exception) {
@@ -85,6 +131,7 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun updateConnectionBytesIn(id: Long, delta: Long) {
+        awaitConnection(id)
         try {
             database.connectionDao().updateBytesIn(id, delta)
         } catch (e: Exception) {
@@ -99,6 +146,7 @@ class RoomDatabaseConnector(
         alpn: String?,
         echOffered: Boolean
     ) {
+        awaitConnection(id)
         try {
             database.connectionDao().updateSecurity(id, securityProtocol, sni, alpn, echOffered)
         } catch (e: Exception) {
@@ -107,6 +155,7 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun updateConnectionHost(id: Long, remoteHost: String, isTracker: Boolean) {
+        awaitConnection(id)
         try {
             database.connectionDao().updateHost(id, remoteHost, isTracker)
         } catch (e: Exception) {
@@ -115,6 +164,7 @@ class RoomDatabaseConnector(
     }
 
     override suspend fun markConnectionBlocked(id: Long) {
+        awaitConnection(id)
         try {
             database.connectionDao().markBlocked(id)
         } catch (e: Exception) {
@@ -138,6 +188,7 @@ class RoomDatabaseConnector(
         initiatorId: Int,
         initiatorPkg: String
     ): Long {
+        awaitConnection(connectionId)
         val ids = try {
             database.requestDao().insert(
                 Request(
@@ -181,6 +232,7 @@ class RoomDatabaseConnector(
         initiatorId: Int,
         initiatorPkg: String
     ): Long {
+        awaitConnection(connectionId)
         val ids = try {
             database.responseDao().insert(
                 Response(

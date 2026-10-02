@@ -10,7 +10,6 @@ import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
@@ -189,21 +188,21 @@ abstract class TransportLayerConnection protected constructor(
         return if(remotePort == 53) {
             0
         } else {
-            runBlocking {
-                return@runBlocking componentManager.databaseConnector.persistTransportLayerConnection(
-                    sessionId = componentManager.sessionId,
-                    protocol = protocol,
-                    ipVersion = ipPacketBuilder.ipVersion,
-                    initialTimestamp = System.currentTimeMillis(),
-                    initiatorId = appId ?: -1,
-                    initiatorPkg = appPackage ?: appId.toString(),
-                    localPort = localPort,
-                    remoteHost = remoteHost,
-                    remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                    remotePort = remotePort,
-                    isTracker = isTracker
-                )
-            }
+            // does not wait for the database: this runs on the thread that handles the device's
+            // packets, for every new connection (docs/vpn-mitm-audit.md PKT-41)
+            componentManager.databaseConnector.persistTransportLayerConnection(
+                sessionId = componentManager.sessionId,
+                protocol = protocol,
+                ipVersion = ipPacketBuilder.ipVersion,
+                initialTimestamp = System.currentTimeMillis(),
+                initiatorId = appId ?: -1,
+                initiatorPkg = appPackage ?: appId.toString(),
+                localPort = localPort,
+                remoteHost = remoteHost,
+                remoteIp = ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                remotePort = remotePort,
+                isTracker = isTracker
+            )
         }
     }
 
@@ -243,8 +242,10 @@ abstract class TransportLayerConnection protected constructor(
     }
 
     protected fun deleteDatabaseEntity() {
-        runBlocking {
-            componentManager.databaseConnector.deleteTransportLayerConnection(id)
+        if (id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.deleteTransportLayerConnection(id)
+            }
         }
     }
 

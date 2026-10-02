@@ -7,6 +7,11 @@ import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.TcpPacket
@@ -102,59 +107,84 @@ class TcpConnection internal constructor(
     private var closingSince: Long = 0
 
     override val protocol = Protocol.TCP
-    override val appId: Int?
-    override val appPackage: String?
-    override val id: Long
-    override val selectableChannel: SocketChannel
-    override val selectionKey: SelectionKey?
+    // Filled in by setUp(), which runs off the thread that handles the device's packets. Until
+    // then the connection is CONNECTING and the device has only sent its SYN, so nothing reads
+    // them for anything but log output.
+    @Volatile
+    override var appId: Int? = null
+        private set
+    @Volatile
+    override var appPackage: String? = null
+        private set
+    @Volatile
+    override var id: Long = 0
+        private set
+    @Volatile
+    override var selectionKey: SelectionKey? = null
+        private set
 
-    init {
-        // these values must be initialised in this order because they each depend on the previous one
-        appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
-        appPackage = componentManager.appFinder.getAppPackage(appId)
-        id = createDatabaseEntity()
+    override val selectableChannel: SocketChannel = try {
+        SocketChannel.open()
+    } catch (e: Exception) {
+        Timber.e("Error while creating TCP connection: ${e.message}")
+        state = TransportLayerState.ABORTED
+        // a placeholder that is never connected, so that the property is always usable
+        SocketChannel.open()
+    }
 
-        if(id > 0) {
-            Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
-        }
+    /**
+     * Does everything a new connection needs that can block: finding the app that owns the
+     * connection (a binder call), protecting the socket from the VPN (another one), connecting
+     * it (which involves netd) and registering it with the selector. On the thread that handles
+     * the device's packets this held up every other connection's packets, and with them their
+     * ACKs, for as long as new connections kept coming (docs/vpn-mitm-audit.md PKT-41).
+     *
+     * The device has only sent its SYN at this point and waits for our SYN-ACK, which is sent
+     * once the outward-facing channel is connected ([unwrapInboundConnectable]).
+     */
+    private fun setUp() {
+        try {
+            // these values must be initialised in this order because they each depend on the previous one
+            appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_TCP)
+            appPackage = componentManager.appFinder.getAppPackage(appId)
 
-        selectableChannel = try {
-            openChannel(ipPacketBuilder.remoteAddress)
+            if (state != TransportLayerState.CONNECTING) {
+                // closed in the meantime (the device reset the connection, or the VPN stopped)
+                return
+            }
+            id = createDatabaseEntity()
+
+            if(id > 0) {
+                Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
+            }
+
+            connectChannel(ipPacketBuilder.remoteAddress)
+            selectionKey = registerChannel(componentManager.selector)
+
+            // The connection may have been closed while the channel was being registered.
+            // Closing a channel cancels its keys; doing it again here covers a close that came
+            // just before the registration. (CONNECTED is possible by now and is fine: the
+            // selector thread may already have completed the handshake.)
+            when (state) {
+                TransportLayerState.CLOSING, TransportLayerState.CLOSED, TransportLayerState.ABORTED -> closeChannel()
+                else -> {}
+            }
         } catch (e: Exception) {
-            Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
-            state = TransportLayerState.ABORTED
-            deleteDatabaseEntity()
-            SocketChannel.open()
-        }
-        selectionKey = if(state != TransportLayerState.ABORTED) {
-            try {
-                connectChannel(componentManager.selector)
-            } catch (e: Exception) {
+            if (state == TransportLayerState.CONNECTING) {
                 Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
                 state = TransportLayerState.ABORTED
                 deleteDatabaseEntity()
-                try {
-                    selectableChannel.close()
-                } catch (closeException: Exception) {
-                    Timber.e("tcp$id Error while closing leaked SocketChannel: ${closeException.message}")
-                }
-                null
             }
-        } else {
-            null
+            closeChannel()
         }
     }
 
     /**
-     * Opens a [SocketChannel] and throws all exceptions that occur during the process.
+     * Protects and connects the [SocketChannel] and throws all exceptions that occur during the process.
      *
      * @param remoteAddress The remote address to connect to.
-     *
-     * @return the opened and protected [SocketChannel]
      */
-    private fun openChannel(remoteAddress: InetAddress): SocketChannel {
-        state = TransportLayerState.CONNECTING
-        val selectableChannel = SocketChannel.open()
+    private fun connectChannel(remoteAddress: InetAddress) {
         componentManager.protectSocket(selectableChannel.socket())
         selectableChannel.configureBlocking(false)
         selectableChannel.socket().keepAlive = true
@@ -164,20 +194,13 @@ class TcpConnection internal constructor(
         // the remote host may send into, and shrinking it (it used to be set to maxPacketSize)
         // halved download throughput (docs/vpn-mitm-audit.md PKT-34).
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
-        return selectableChannel
     }
 
-    private fun connectChannel(selector: Selector): SelectionKey? {
-        // register OP_READ interest for the channel
+    private fun registerChannel(selector: Selector): SelectionKey {
+        // register OP_CONNECT interest for the channel
         synchronized(ComponentManager.selectorMonitor) {
             selector.wakeup()
-            val selectionKey = try {
-                selectableChannel.register(selector, SelectionKey.OP_CONNECT)
-            } catch (e: Exception) {
-                null
-            }
-            selectionKey?.attach(this)
-            return selectionKey
+            return selectableChannel.register(selector, SelectionKey.OP_CONNECT, this)
         }
     }
 
@@ -274,6 +297,9 @@ class TcpConnection internal constructor(
         if(state == TransportLayerState.ABORTED) {
             return
         }
+        // The selector can report the channel before setUp() has stored the key it got from
+        // the registration, so ask the channel for it.
+        val selectionKey = this.selectionKey ?: selectableChannel.keyFor(componentManager.selector)
         if(selectionKey == null) {
             Timber.e("tcp$id SelectionKey is null")
             state = TransportLayerState.ABORTED
@@ -286,7 +312,7 @@ class TcpConnection internal constructor(
             return
         }
         if (selectionKey.isConnectable) {
-            unwrapInboundConnectable()
+            unwrapInboundConnectable(selectionKey)
         } else if (selectionKey.isReadable) {
             unwrapInboundReadable()
         }
@@ -608,7 +634,7 @@ class TcpConnection internal constructor(
         // SocketChannel is closed
         if (bytesRead == -1) {
             synchronized(closeLock) {
-                selectionKey?.cancel()
+                selectableChannel.keyFor(componentManager.selector)?.cancel()
                 // the remote side is done; release the socket/fd now, instead of only
                 // deregistering the SelectionKey and leaking it
                 closeChannel()
@@ -667,7 +693,7 @@ class TcpConnection internal constructor(
     /**
      * Handles the OP_CONNECT event on a connection's [SocketChannel], which means that the channel is connected and ready for outbound data.
      */
-    private fun unwrapInboundConnectable() {
+    private fun unwrapInboundConnectable(selectionKey: SelectionKey) {
         // complete the SocketChannel's connection process
         try {
             selectableChannel.finishConnect()
@@ -677,10 +703,8 @@ class TcpConnection internal constructor(
             return
         }
 
-        val socketChannel = selectionKey?.channel() as SocketChannel
-
         // make sure the SocketChannel is actually connected
-        if (socketChannel.isConnected) {
+        if (selectableChannel.isConnected) {
             // prepare SocketChannel for incoming data and complete local handshake
             selectionKey.interestOps(SelectionKey.OP_READ)
             // advance the client-facing TCP handshake by sending a SYN ACK packet
@@ -789,7 +813,22 @@ class TcpConnection internal constructor(
         return buildTcpPayload(urg = false, ack = true, psh = false, rst = false, syn = false, fin = true, rawPayload = ByteArray(0))
     }
 
+    init {
+        // Last in the class body, so that every property above is initialised before setUp()
+        // can touch the connection from another thread.
+        if (state != TransportLayerState.ABORTED) {
+            setupScope.launch { setUp() }
+        }
+    }
+
     companion object {
+        /**
+         * Runs [setUp] for new connections. A burst of new connections is a burst of binder
+         * calls, which a handful of threads serve as fast as many would.
+         */
+        @OptIn(ExperimentalCoroutinesApi::class)
+        private val setupScope = CoroutineScope(Dispatchers.IO.limitedParallelism(8) + SupervisorJob())
+
         /**
          * How long a connection may stay [TransportLayerState.HALF_CLOSED] without any inbound
          * data before [sweepStaleConnections] aborts it.
