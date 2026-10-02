@@ -93,6 +93,10 @@ class TcpConnection internal constructor(
     /** Whether the remote host's close has been passed on to the device (see [deliverRemoteClose]). */
     private val remoteCloseDelivered = AtomicBoolean(false)
 
+    /** Whether our SYN-ACK has been sent to the device, i.e. the outward-facing channel is connected. */
+    @Volatile
+    private var synAckSent = false
+
     /** Wall-clock time at which our FIN was sent, used by [sweepStaleConnections]. */
     @Volatile
     private var closingSince: Long = 0
@@ -189,20 +193,81 @@ class TcpConnection internal constructor(
         if (tcpHeader.rst) {
             // RST takes precedence over any other flags that may also be set (e.g. RST+ACK)
             handleRst() // the client aborted the connection
-        } else if (tcpHeader.ack) {
-            if (outgoingPacket.payload != null && outgoingPacket.payload.length() > 0) {
-                handleAckData(outgoingPacket) // data was sent and needs to be forwarded
-            } else if (!tcpHeader.syn && !tcpHeader.fin) {
-                handleAckEmpty(tcpHeader.acknowledgmentNumber)
-            }
-            if (tcpHeader.syn) {
+        } else if (tcpHeader.syn) {
+            if (tcpHeader.ack) {
                 handleSynAck() // this should not happen, since we never initiate a handshake
-            } else if (tcpHeader.fin) {
-                handleFin(tcpHeader.acknowledgmentNumber) // this is either the first or second packet of the closing handshake
             }
-        } else if (tcpHeader.fin) {
-            handleFin(null) // closing handshake was initiated
+        } else {
+            val payloadLength = outgoingPacket.payload?.length() ?: 0
+            if (payloadLength == 0 && !tcpHeader.fin) {
+                if (tcpHeader.ack) {
+                    handleAckEmpty(tcpHeader.sequenceNumber, tcpHeader.acknowledgmentNumber)
+                }
+                return
+            }
+            if (tcpHeader.ack && state == TransportLayerState.CONNECTING && synAckSent) {
+                // The ACK that completes the handshake was lost or overtaken by this segment,
+                // which acknowledges our SYN-ACK just as well.
+                state = TransportLayerState.CONNECTED
+            }
+            if (acceptInOrder(outgoingPacket, tcpHeader, payloadLength) && tcpHeader.fin) {
+                // this is either the first or second packet of the closing handshake
+                handleFin(if (tcpHeader.ack) tcpHeader.acknowledgmentNumber else null)
+            }
         }
+    }
+
+    /**
+     * Checks a segment that occupies sequence space (data, a FIN, or both) against the next
+     * sequence number expected from the device, and forwards only data that is new
+     * (docs/vpn-mitm-audit.md PKT-39). The device retransmits whenever an ACK of ours is late,
+     * so duplicates are routine. Forwarding one repeats bytes in the stream, which a TLS peer
+     * rejects as a bad record.
+     *
+     * - A segment that starts at the expected sequence number is forwarded.
+     * - One that lies entirely below it was already received: it is acknowledged again.
+     * - One that starts below and reaches beyond it is forwarded from the expected byte on.
+     * - One that starts above it follows a gap: it is dropped and the expected sequence number is
+     *   acknowledged again, which makes the device retransmit from there. Nothing is buffered
+     *   for reordering.
+     *
+     * @return whether the segment's FIN, if it has one, should be handled: it is either next in
+     * the stream or a retransmission of the FIN that was already counted.
+     */
+    private fun acceptInOrder(outgoingPacket: Packet, tcpHeader: TcpPacket.TcpHeader, payloadLength: Int): Boolean {
+        // How far the segment starts below the expected sequence number. Sequence numbers wrap
+        // around at 32 bits, and so does this subtraction, so the sign of the result is right on
+        // either side of the wrap.
+        val alreadyReceived = theirSeqNum.get().toInt() - tcpHeader.sequenceNumber
+        // the same for the position just past the segment's data, which is where its FIN sits
+        val endAlreadyReceived = alreadyReceived - payloadLength
+
+        if (alreadyReceived < 0) {
+            Timber.d("tcp$id Dropping out-of-order segment (${-alreadyReceived} bytes ahead, $payloadLength bytes)")
+            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+            return false
+        }
+
+        if (payloadLength > 0) {
+            if (endAlreadyReceived >= 0) {
+                // nothing new in it; whether to acknowledge it again is decided below
+                Timber.d("tcp$id Ignoring retransmitted segment ($payloadLength bytes)")
+            } else if (!handleAckData(outgoingPacket.payload, alreadyReceived)) {
+                return false
+            }
+        }
+
+        if (tcpHeader.fin) {
+            val retransmittedFin = synchronized(closeLock) { deviceFinReceived } && endAlreadyReceived == 1
+            if (endAlreadyReceived <= 0 || retransmittedFin) {
+                return true
+            }
+        }
+
+        if (endAlreadyReceived >= 0) {
+            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+        }
+        return false
     }
 
     override fun unwrapInbound() {
@@ -295,35 +360,57 @@ class TcpConnection internal constructor(
         }
     }
 
-    private fun handleAckData(outgoingPacket: Packet) {
+    /**
+     * Forwards the new data of a segment from the device.
+     *
+     * @param payload The segment's payload.
+     * @param alreadyReceived How many bytes at the start of the payload were received before.
+     * @return false if the connection was aborted because it is in no state to forward data.
+     */
+    private fun handleAckData(payload: Packet, alreadyReceived: Int): Boolean {
         if (state != TransportLayerState.CONNECTED) {
             // the connection is not ready to forward data, abort
             Timber.w("tcp$id Got ACK (data, invalid state $state)")
             closeHard()
-        } else {
-            increaseTheirSeqNum(outgoingPacket.payload.length())
-
-            // acknowledge packet to the client by sending an empty ACK
-            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
-
-            // pass the payload to the encryption and application layers for processing and store the result
-            outgoingPacket.payload?.let {
-                passOutboundToEncryptionLayer(it)
-            }
+            return false
         }
+
+        increaseTheirSeqNum(payload.length() - alreadyReceived)
+
+        // acknowledge packet to the client by sending an empty ACK
+        writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+
+        // pass the payload to the encryption and application layers for processing and store the result
+        if (alreadyReceived == 0) {
+            passOutboundToEncryptionLayer(payload)
+        } else {
+            Timber.d("tcp$id Skipping $alreadyReceived retransmitted bytes at the start of a segment (${payload.length()} bytes)")
+            val rawData = payload.rawData
+            passOutboundToEncryptionLayer(UnknownPacket.newPacket(rawData, alreadyReceived, rawData.size - alreadyReceived))
+        }
+        return true
     }
 
     /**
+     * @param sequenceNumber The sequence number of the device's segment.
      * @param ackNumber The acknowledgement number of the device's segment.
      */
-    private fun handleAckEmpty(ackNumber: Int) {
+    private fun handleAckEmpty(sequenceNumber: Int, ackNumber: Int) {
         when (state) {
             TransportLayerState.CONNECTING -> {
                 // establishing handshake complete, set status to CONNECTED
                 state = TransportLayerState.CONNECTED
             }
-            TransportLayerState.CONNECTED, TransportLayerState.HALF_CLOSED, TransportLayerState.CLOSED -> {
-                // ignore empty ACK packets, there is no packet loss that would make acknowledgements useful
+            TransportLayerState.CONNECTED, TransportLayerState.HALF_CLOSED -> {
+                // An empty segment one below the expected sequence number is a keep-alive probe,
+                // which the device expects to be answered. Other empty ACKs are ignored, there
+                // is no packet loss that would make acknowledgements useful.
+                if (theirSeqNum.get().toInt() - sequenceNumber == 1) {
+                    writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+                }
+            }
+            TransportLayerState.CLOSED -> {
+                // nothing left to acknowledge
             }
             TransportLayerState.CLOSING -> synchronized(closeLock) {
                 // Only the ACK that covers our FIN moves the closing handshake forward. Others
@@ -600,6 +687,7 @@ class TcpConnection internal constructor(
             val synAckPacket = ipPacketBuilder.buildPacket(buildSynAck())
             increaseOurSeqNum(1)
             //Timber.d("%s SocketChannel connected", id)
+            synAckSent = true
             writeToDevice(synAckPacket)
         } else {
             Timber.e("tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
