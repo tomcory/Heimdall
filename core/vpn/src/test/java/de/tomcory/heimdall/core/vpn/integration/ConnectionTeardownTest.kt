@@ -473,6 +473,120 @@ class ConnectionTeardownTest {
         assertTrue("stray reply should be an RST", tcp.header.rst)
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-44: telling the device about failures of the outward-facing connection ----
+
+    private val pkt44LocalAddr = InetAddress.getByName("10.0.0.8") as Inet4Address
+    private val pkt44RemoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
+
+    private fun awaitSegments(deviceWriter: RecordingDeviceWriter, message: String, condition: (List<TcpPacket>) -> Boolean): List<TcpPacket> {
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline) {
+            val segments = deviceWriter.sentMessages.map { (it.obj as IpPacket).payload as TcpPacket }
+            if (condition(segments)) return segments
+            Thread.sleep(20)
+        }
+        throw AssertionError(message)
+    }
+
+    @Test
+    fun `a refused upstream connect is answered with a reset that acknowledges the SYN`() {
+        // a port nobody listens on
+        val closedPort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        pump = SelectorPump(componentManager.selector)
+        pump.start()
+        val deviceWriter = RecordingDeviceWriter()
+
+        val initialSeq = 5000
+        val synPacket = PacketFixtures.buildTcpSynPacket(pkt44LocalAddr, 41600, pkt44RemoteAddr, closedPort, seq = initialSeq)
+        val connection = TransportLayerConnection.getInstance(synPacket, componentManager, deviceWriter.handler)!!
+        connection.unwrapOutbound(synPacket.payload)
+
+        val segments = awaitSegments(deviceWriter, "the device was never told that the connect failed") { it.isNotEmpty() }
+        val reset = segments.single()
+        assertTrue("a failed connect must be answered with a reset", reset.header.rst)
+        assertFalse(reset.header.syn)
+        // a client that is waiting for a SYN-ACK only accepts a reset that acknowledges its SYN
+        assertTrue("the reset must carry the ACK flag", reset.header.ack)
+        assertEquals("the reset must acknowledge the SYN", initialSeq + 1, reset.header.acknowledgmentNumber)
+        assertEquals(0, reset.header.sequenceNumber)
+
+        awaitState(connection, TransportLayerConnection.TransportLayerState.CLOSED)
+        assertEquals("a connection that could not be made must not stay in the cache", null, ConnectionCache.findConnection(synPacket))
+    }
+
+    @Test
+    fun `a connection that cannot even be set up is answered with a reset and not kept`() {
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        io.mockk.every { componentManager.protectSocket } returns { _: Socket -> throw java.io.IOException("cannot protect") }
+        val deviceWriter = RecordingDeviceWriter()
+
+        val synPacket = PacketFixtures.buildTcpSynPacket(pkt44LocalAddr, 41601, pkt44RemoteAddr, serverSocket.localPort, seq = 77)
+        val connection = TransportLayerConnection.getInstance(synPacket, componentManager, deviceWriter.handler)!!
+        connection.unwrapOutbound(synPacket.payload)
+
+        val reset = awaitSegments(deviceWriter, "the device was never told that the setup failed") { it.isNotEmpty() }.single()
+        assertTrue(reset.header.rst && reset.header.ack)
+        assertEquals(78, reset.header.acknowledgmentNumber)
+        awaitState(connection, TransportLayerConnection.TransportLayerState.CLOSED)
+        assertEquals(null, ConnectionCache.findConnection(synPacket))
+    }
+
+    @Test
+    fun `a reset from the remote host reaches the device as a reset, not as a FIN`() {
+        acceptThread = Thread {
+            try {
+                val socket = serverSocket.accept()
+                acceptedSocket.set(socket)
+                // closing with a linger time of zero sends a reset instead of a FIN
+                socket.setSoLinger(true, 0)
+                Thread.sleep(300)
+                socket.close()
+            } catch (e: Exception) {
+                // closed during teardown
+            }
+        }
+        acceptThread.start()
+
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        pump = SelectorPump(componentManager.selector)
+        pump.start()
+        val deviceWriter = RecordingDeviceWriter()
+
+        val synPacket = PacketFixtures.buildTcpSynPacket(pkt44LocalAddr, 41602, pkt44RemoteAddr, serverSocket.localPort)
+        val connection = TransportLayerConnection.getInstance(synPacket, componentManager, deviceWriter.handler)!!
+        connection.unwrapOutbound(synPacket.payload)
+        val synAck = awaitSegments(deviceWriter, "expected a SYN-ACK") { it.isNotEmpty() }.first()
+        assertTrue(synAck.header.syn && synAck.header.ack)
+        connection.unwrapOutbound(
+            PacketFixtures.buildTcpDataPacket(pkt44LocalAddr, 41602, pkt44RemoteAddr, serverSocket.localPort, seq = 1, ack = synAck.header.sequenceNumber + 1).payload
+        )
+
+        val segments = awaitSegments(deviceWriter, "the remote host's reset never reached the device") { all -> all.any { it.header.rst } }
+        assertFalse("a reset connection must not be closed with a FIN", segments.any { it.header.fin })
+        val reset = segments.last()
+        assertTrue(reset.header.rst && reset.header.ack)
+        assertEquals("the reset must carry the sequence number the device expects next", synAck.header.sequenceNumber + 1, reset.header.sequenceNumber)
+        awaitState(connection, TransportLayerConnection.TransportLayerState.CLOSED)
+        assertEquals(null, ConnectionCache.findConnection(synPacket))
+    }
+
+    @Test
+    fun `a reset for an unknown flow draws no reply`() {
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        val deviceWriter = RecordingDeviceWriter()
+
+        for (withAck in listOf(false, true)) {
+            val rstPacket = PacketFixtures.buildTcpDataPacket(
+                localAddr = pkt44LocalAddr, localPort = 41603, remoteAddr = pkt44RemoteAddr, remotePort = 443,
+                seq = 1, ack = 1, ackFlag = withAck, rstFlag = true
+            )
+            val connection = TransportLayerConnection.getInstance(rstPacket, componentManager, deviceWriter.handler)
+            assertEquals("no connection should be created for a stray reset", null, connection)
+        }
+        assertTrue("a reset must never be answered", deviceWriter.sentMessages.isEmpty())
+    }
+
     // ---- docs/vpn-mitm-audit.md PKT-22: client-closed notification to the encryption layer ----
 
     /** Waits for the fake server to accept the connection, then closes it from the remote side. */

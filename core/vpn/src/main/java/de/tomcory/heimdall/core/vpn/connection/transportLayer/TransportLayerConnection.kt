@@ -443,7 +443,12 @@ abstract class TransportLayerConnection protected constructor(
 //                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
 //                        null
 //                    } else
-                    if(tcpPacket.header.fin || tcpPacket.header.ack || tcpPacket.header.rst) {
+                    if(tcpPacket.header.rst) {
+                        // A reset for a connection that is not (or no longer) known. There is
+                        // nothing to reset, and a reset is never answered: the answer would be
+                        // another reset (docs/vpn-mitm-audit.md PKT-44).
+                        null
+                    } else if(tcpPacket.header.fin || tcpPacket.header.ack) {
                         val headerString = if(tcpPacket.header.fin) "FIN" else "" + if(tcpPacket.header.ack) "ACK" else "" + if (tcpPacket.header.rst) "RST" else ""
                         Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
@@ -477,6 +482,11 @@ abstract class TransportLayerConnection protected constructor(
 
             if(connection != null) {
                 ConnectionCache.addConnection(connection)
+                // A TCP connection is set up on another thread. If that failed at once, the
+                // connection was closed, and taken out of the cache, before it was put in.
+                if (connection.state == TransportLayerState.CLOSED || connection.state == TransportLayerState.ABORTED) {
+                    ConnectionCache.removeConnection(connection)
+                }
             }
 
             return connection

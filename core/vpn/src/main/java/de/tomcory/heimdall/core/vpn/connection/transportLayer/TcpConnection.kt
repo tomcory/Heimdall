@@ -256,10 +256,13 @@ class TcpConnection internal constructor(
         } catch (e: Exception) {
             if (state == TransportLayerState.CONNECTING) {
                 Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
-                state = TransportLayerState.ABORTED
                 deleteDatabaseEntity()
+                // tell the device, which is waiting for an answer to its SYN, that there will
+                // be no connection (docs/vpn-mitm-audit.md PKT-44)
+                closeHard()
+            } else {
+                closeChannel()
             }
-            closeChannel()
         }
     }
 
@@ -1020,6 +1023,7 @@ class TcpConnection internal constructor(
         // OP_READ event triggered
         var bytesRead = 0
         var totalBytesRead = 0
+        var readError: IOException? = null
         do {
             // Read no further ahead of the device than the backlog limit. This is what keeps a
             // device that reads slowly from being sent data it has no room for
@@ -1044,11 +1048,22 @@ class TcpConnection internal constructor(
                     passInboundToEncryptionLayer(rawData)
                 }
             }  catch (e: IOException) {
-                bytesRead = -1
+                readError = e
+                bytesRead = 0
             }
         } while (bytesRead > 0) // ignore the lint warning, bytesRead can definitely be greater than 0
 
         recordBytesIn(totalBytesRead)
+
+        readError?.let {
+            // The remote host reset the connection, or it broke in some other way. That is not
+            // the end of the stream: the device has to see a reset, not a FIN, or its app takes
+            // a truncated response for a complete one or waits for the rest until it times out
+            // (docs/vpn-mitm-audit.md PKT-44).
+            Timber.d("tcp$id Error reading from SocketChannel (${it.javaClass.simpleName}: ${it.message}), resetting the connection")
+            closeHard()
+            return
+        }
 
         // SocketChannel is closed
         if (bytesRead == -1) {
@@ -1146,8 +1161,10 @@ class TcpConnection internal constructor(
      */
     override fun closeClientSession() {
         state = TransportLayerState.ABORTED
-        val rstResponse = ipPacketBuilder.buildPacket(buildRst())
-        writeToDevice(rstResponse)
+        synchronized(sendLock) {
+            val rstResponse = ipPacketBuilder.buildPacket(buildRst())
+            writeToDevice(rstResponse)
+        }
     }
 
     /**
@@ -1231,10 +1248,24 @@ class TcpConnection internal constructor(
     }
 
     /**
-     * Convenience method that calls [buildTcpPayload] with the required flags to construct an RST packet.
+     * Constructs a reset that the device accepts in the state its side of the connection is in
+     * (docs/vpn-mitm-audit.md PKT-44).
+     *
+     * - Before our SYN-ACK was sent, the device is waiting for an answer to its SYN. There a
+     *   reset only counts if it acknowledges the SYN: sequence number 0, acknowledgement number
+     *   one past the device's initial sequence number. The device's connect() then fails with
+     *   "connection refused". A reset without the ACK flag is ignored, and connect() runs into
+     *   its timeout.
+     * - Afterwards the reset carries our next sequence number, which is the one the device
+     *   expects, and acknowledges what was received, like every segment of an established
+     *   connection.
      */
     private fun buildRst(): TcpPacket.Builder {
-        return buildTcpPayload(urg = false, ack = false, psh = false, rst = true, syn = false, fin = false, rawPayload = ByteArray(0))
+        val builder = buildTcpPayload(urg = false, ack = true, psh = false, rst = true, syn = false, fin = false, rawPayload = ByteArray(0))
+        if (!synAckSent) {
+            builder.sequenceNumber(0).acknowledgmentNumber((theirInitSeqNum + 1).toInt())
+        }
+        return builder
     }
 
     /**
