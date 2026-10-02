@@ -68,34 +68,63 @@ class HeimdallVpnService : VpnService() {
     /**
      * This function is called when the service is started. It is responsible for launching the
      * VPN components and establishing the VPN interface.
-     * @param intent The intent that was used to start the service.
+     * @param intent The intent that was used to start the service. Null when Android restarts
+     * the service after its process died ([android.app.Service.START_STICKY]), which is handled
+     * like a plain [START_SERVICE].
      * @param flags Flags indicating how the service was started.
      * @param startId A unique integer representing this specific request to start.
      * @return The return value indicates what semantics the system should use for the service's
-     * current started state. Is either [android.app.Service.START_STICKY] if the received intent is valid
-     * or [android.app.Service.START_NOT_STICKY] if the intent's extra is invalid.
+     * current started state. Is either [android.app.Service.START_STICKY] if the VPN is being started
+     * or [android.app.Service.START_NOT_STICKY] if it is not: the intent's extra is invalid, the VPN is
+     * being stopped, or the user has not consented to it.
      * @see [START_SERVICE]
      * @see [STOP_SERVICE]
      */
-    override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        val existingSessionId = intent.getLongExtra(SESSION_ID_EXTRA, -1)
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null) {
+            Timber.i("VpnService restarted by the system without an intent, starting the VPN")
+        }
+        val existingSessionId = intent?.getLongExtra(SESSION_ID_EXTRA, -1) ?: -1
 
-        return when(intent.getIntExtra(VPN_ACTION, START_SERVICE)) {
+        return when(intent?.getIntExtra(VPN_ACTION, START_SERVICE) ?: START_SERVICE) {
 
             START_SERVICE -> {
                 startTime = System.currentTimeMillis()
 
                 // promote this service to the foreground to prevent it from being put to sleep
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
+
+                // Make Heimdall the prepared VPN app. The system forgets which app that is on
+                // every reboot, and without it establishing the interface fails. This only
+                // succeeds from here if the user has consented before; if not, the consent
+                // dialog has to be shown by an activity (docs/vpn-mitm-audit.md PKT-40).
+                val consentIntent = try {
+                    prepare(this)
+                } catch (e: Exception) {
+                    Timber.e(e, "Error preparing the VPN")
+                    null
+                }
+                if (consentIntent != null) {
+                    Timber.w("The user has not consented to the VPN, it has to be started from the UI")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        abortStart()
+                    }
+                    return START_NOT_STICKY
+                }
+
                 startNotificationUpdates()
 
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     Timber.d("Launching service components...")
-                    launchServiceComponents(existingSessionId)
-                    Timber.d("VpnService started")
-                    preferences.setVpnActive(true)
-                    preferences.setVpnLastUpdated(System.currentTimeMillis())
+                    if (launchServiceComponents(existingSessionId)) {
+                        Timber.d("VpnService started")
+                        preferences.setVpnActive(true)
+                        preferences.setVpnLastUpdated(System.currentTimeMillis())
+                    } else {
+                        Timber.e("VpnService could not be started")
+                        abortStart()
+                    }
                 }
 
                 START_STICKY
@@ -197,10 +226,10 @@ class HeimdallVpnService : VpnService() {
     /**
      * Launches the VPN components. This function is responsible for establishing the VPN interface
      * and launching the traffic-handling threads via the [ComponentManager].
-     * @return Whether the VPN interface was established successfully.
+     * @return Whether the VPN interface was established and the components were launched successfully.
      * @see [onStartCommand]
      */
-    private suspend fun launchServiceComponents(existingSessionId: Long) {
+    private suspend fun launchServiceComponents(existingSessionId: Long): Boolean {
 
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
@@ -215,16 +244,15 @@ class HeimdallVpnService : VpnService() {
 
         // establish the VPN interface
         if (!establishInterface(doMitm)) {
-            // shut down the VPN components if the interface could not be established
-            stopSelf()
-            return
+            return false
         }
+        val interfaceDescriptor = vpnInterface?.fileDescriptor ?: return false
 
         // launch the traffic-handling components through the ComponentManager
         try {
             componentManager = ComponentManager(
-                outboundStream = FileInputStream(vpnInterface?.fileDescriptor),
-                inboundStream = FileOutputStream(vpnInterface?.fileDescriptor),
+                outboundStream = FileInputStream(interfaceDescriptor),
+                inboundStream = FileOutputStream(interfaceDescriptor),
                 databaseConnector = RoomDatabaseConnector(database),
                 context = this,
                 appFinder = AppFinder(this),
@@ -241,11 +269,24 @@ class HeimdallVpnService : VpnService() {
             // shut down the VPN components if the ComponentManager could launch the components
             Timber.e("Failed to initialise VPN components")
             stopVpnComponents()
-            return
+            return false
         }
 
         // getting to this point means that everything was established and launched successfully
         componentsActive = true
+        return true
+    }
+
+    /**
+     * Stops the service after a start that did not bring the VPN up, and records that the VPN
+     * is not active.
+     */
+    private suspend fun abortStart() {
+        stopNotificationUpdates()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        preferences.setVpnActive(false)
+        preferences.setVpnLastUpdated(System.currentTimeMillis())
     }
 
     /**
@@ -434,9 +475,15 @@ class HeimdallVpnService : VpnService() {
         // establish the VPN interface using the builder we just configured
         Timber.d("Ready to establish VPN interface")
         return try {
+            // establish() returns null, without throwing, if Heimdall is not the prepared VPN app
             vpnInterface = builder.establish()
-            Timber.d("VPN interface established")
-            true
+            if (vpnInterface != null) {
+                Timber.d("VPN interface established")
+                true
+            } else {
+                Timber.e("The system refused to establish the VPN interface")
+                false
+            }
         } catch (e: Exception) {
             Timber.e(e, "Error establishing VPN interface")
             false

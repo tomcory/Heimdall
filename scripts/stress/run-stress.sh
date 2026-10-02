@@ -103,7 +103,7 @@ else
     "$TRAFFIC" vpn-start | tail -1
     # without this check a VPN that failed to start gives a clean run that tested nothing
     adb shell ip addr show tun0 2>/dev/null | grep -q 'inet ' \
-        || die "the VPN is not up; after a cold boot start it once from Heimdall's UI"
+        || die "the VPN is not up; check 'adb logcat -s HeimdallVpnService'"
     adb logcat -c
     before="$(metrics)"
     say "Running through the VPN"
