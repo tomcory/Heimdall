@@ -4,6 +4,7 @@ import android.os.Process
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import timber.log.Timber
 import java.io.IOException
+import java.nio.channels.ClosedSelectorException
 
 class InboundTrafficHandler(
     name: String,
@@ -34,6 +35,9 @@ class InboundTrafficHandler(
                 selectedChannels = componentManager.selector.select()
             } catch (e: IOException) {
                 Timber.e(e, "Error during selection process")
+            } catch (e: ClosedSelectorException) {
+                // the VPN is stopping and did not wait for this thread any longer
+                break
             }
 
             if (selectedChannels > 0) {

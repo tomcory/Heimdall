@@ -38,7 +38,7 @@ per-segment counter updates, not body buffering, freeze the VPN after a large up
 **Addendum 2026-10-02:** PKT-39 is implemented. Verifying it on the emulator produced V-57 /
 PKT-48 (no reordering buffer, so real packet loss on the tunnel stalls uploads) and V-58 /
 PKT-40 (the VPN service crashes when the interface cannot be established, and again on the
-restart that follows). PKT-40 to PKT-46 are implemented. It was numbered first among the pending packets because it had to be
+restart that follows). PKT-40 to PKT-47 are implemented. It was numbered first among the pending packets because it had to be
 done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47 and
 the QUIC packets to PKT-49–PKT-52. References were checked against
 `bugfix/mitm-vpn` at `ac57197`.
@@ -2805,6 +2805,46 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   Device: note `ls /proc/<pid>/fd | wc -l`, start and stop the VPN ten times with
   `run-stress.sh parallel` running, and compare; `run-stress.sh` prints the count before and
   after each run.
+- **Implementation notes (2026-10-02):**
+  - `stopComponents()` now closes the selector after the connection cache has been cleared,
+    and both ends of the interrupter pipe.
+  - **The pipe is closed the other way round.** The code used to close the read end, the one
+    `DevicePollThread` polls, and never the write end. Closing a descriptor another thread is
+    polling does not reliably wake it. Now the write end is closed, the poll reports a
+    hang-up, and the read end is closed once the thread has finished.
+  - All four traffic threads are joined (2 s each at most, with a warning if one does not
+    stop) before the pipe, the tunnel streams and the selector are released. That covers
+    V-28. `InboundTrafficHandler` ends its loop on `ClosedSelectorException`, for the case
+    that it was not waited for.
+  - `stopComponents()` is guarded against running twice: a second run would close descriptor
+    numbers that may already belong to something else.
+  - No unit test, as the packet anticipated. 301 `core:vpn` tests pass unchanged.
+  - Emulator, ten start/stop cycles with `parallel` traffic running at each stop, descriptors
+    of the Heimdall process:
+
+    | | Before | After |
+    |---|---|---|
+    | After the first start | 112 | 111 |
+    | After ten cycles, VPN stopped | 345 | 111 |
+    | The same after a forced GC | 344 | 105 |
+    | of which `/dev/null` (closed channels the selector still held) | 208 | 10 |
+    | of which pipes | 51 | 10 |
+
+    Between cycles the new build shows up to about 20 extra pipes; they are garbage that the
+    next collection releases, not a leak. Stopping takes 1.5 to 1.9 s per cycle, as before,
+    no thread missed its join, and nothing was logged about a failed close.
+  - Regression: the full suite gives 71 passed, 1 failed; `emulator-traffic.sh run` is clean.
+  - **The one failure is unexplained.** One of the 40 `tlsclose` requests ended with
+    `Connection reset` after 534 s, far beyond the client's timeouts, with no certificate
+    seen. The log of that run was not kept. It did not repeat in four further runs of
+    `tlsclose` (160 requests), and this packet only changes the stop path, but neither is
+    proof that it is unrelated. If it shows again, the run's full log is the thing to keep
+    (`run-stress.sh` prints where it saved it).
+  - In one of those four reruns the 25 MB TLS download ended with `Connection reset` after
+    7.7 MB. The log shows the cause outside Heimdall: `tcp6983 Error reading from
+    SocketChannel (IOException: Connection reset by peer)`, i.e. the remote side or the
+    emulator's NAT reset the upstream connection, and Heimdall passed that on as PKT-44
+    intends. Before PKT-44 the same event would have looked like a truncated download.
 - **Commit:** `fix(vpn): close the selector and the interrupter pipe when the VPN stops`
 
 ### PKT-48 — Buffer segments that arrive ahead of a gap
@@ -2829,9 +2869,9 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   `run-stress.sh upload,tlsbulk` passes.
 - **Commit:** `fix(vpn): buffer out-of-order segments from the device until the gap before them is filled`
 
-**Order for PKT-30 to PKT-48:** PKT-30 to PKT-46 are done. PKT-47 and PKT-48 can follow in either
-order. All of them come before the QUIC packets (PKT-49 to PKT-52): passed-through and blocked
-QUIC both rely on the UDP path and on a TLS fallback that works.
+**Order for PKT-30 to PKT-48:** PKT-30 to PKT-47 are done. PKT-48 is the last one before the
+QUIC packets (PKT-49 to PKT-52): passed-through and blocked QUIC both rely on the UDP path and
+on a TLS fallback that works.
 
 ### PKT-49 — Decrypt QUIC v1/v2 client Initial packets
 

@@ -42,6 +42,7 @@ import java.io.InputStreamReader
 import java.net.DatagramSocket
 import java.net.Socket
 import java.nio.channels.Selector
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Manages the lifecycle of the traffic-handling components of the VPN.
@@ -77,8 +78,13 @@ class ComponentManager(
     private var outboundTrafficHandler: OutboundTrafficHandler? = null
     private var inboundTrafficHandler: InboundTrafficHandler? = null
 
-    // the interrupter pipe is used to stop the DevicePollThread's polling
+    // The interrupter pipe is used to stop the DevicePollThread's polling. The thread polls the
+    // read end; closing the write end makes that report a hang-up.
     private val interrupter: FileDescriptor
+    private val interrupterWriteEnd: FileDescriptor
+
+    /** Guards [stopComponents] against running twice, which would close descriptors that are no longer ours. */
+    private val stopped = AtomicBoolean(false)
 
     // scope for this ComponentManager's own background work (currently just the idle sweep),
     // cancelled in stopComponents() alongside everything else
@@ -110,6 +116,7 @@ class ComponentManager(
             throw VpnComponentLaunchException("Error getting pipes from OS", e)
         }
         interrupter = pipes[0]
+        interrupterWriteEnd = pipes[1]
 
         // initialise the pcap4j configuration now to improve performance during traffic handling
         initialisePcap4j()
@@ -210,30 +217,40 @@ class ComponentManager(
     }
 
     suspend fun stopComponents() {
+        if (!stopped.compareAndSet(false, true)) {
+            return
+        }
+
         // stop the periodic idle sweep and byte counter flush
         idleSweepJob?.cancel()
         byteCounterFlushJob?.cancel()
 
-        // closing the interrupter pipe stops the DevicePollThread's polling
-        try {
-            Os.close(interrupter)
-        } catch (e: ErrnoException) {
-            Timber.w(e, "Error closing interrupter pipe")
-        }
+        withContext(Dispatchers.IO) {
+            // Closing the write end of the interrupter pipe makes the DevicePollThread's poll
+            // report a hang-up on the read end, which stops the thread. The read end stays open
+            // until the thread has finished: closing a descriptor that another thread is
+            // polling does not reliably wake it, and its number could be reused meanwhile.
+            closeDescriptor(interrupterWriteEnd, "interrupter pipe (write end)")
+            join(devicePollThread)
 
-        // close the other three traffic handling threads
-        outboundTrafficHandler?.quitSafely()
-        inboundTrafficHandler?.interrupt()
-        deviceWriteThread?.quitSafely()
+            // stop the other three traffic handling threads and wait for them, so that none of
+            // them is still using what is released below (docs/vpn-mitm-audit.md PKT-47)
+            outboundTrafficHandler?.quitSafely()
+            inboundTrafficHandler?.interrupt()
+            deviceWriteThread?.quitSafely()
+            join(outboundTrafficHandler)
+            join(inboundTrafficHandler)
+            join(deviceWriteThread)
 
-        // close the streams to and from the VPN interface
-        try {
-            withContext(Dispatchers.IO) {
+            closeDescriptor(interrupter, "interrupter pipe (read end)")
+
+            // close the streams to and from the VPN interface
+            try {
                 outboundStream.close()
                 inboundStream.close()
+            } catch (e: IOException) {
+                Timber.w(e, "Error closing VPN interface streams")
             }
-        } catch (e: IOException) {
-            Timber.w(e, "Error closing VPN interface streams")
         }
 
         // write the byte counters of the connections that are still open, then clear the
@@ -241,8 +258,41 @@ class ComponentManager(
         flushByteCounters()
         ConnectionCache.closeAllAndClear()
 
+        // Closing a channel that is registered with a selector does not release its descriptor:
+        // that happens when the selector next deregisters the cancelled key, and with the
+        // selector thread stopped it never would. Closing the selector deregisters every key
+        // and releases the selector's own descriptors (docs/vpn-mitm-audit.md PKT-47).
+        try {
+            selector.close()
+        } catch (e: IOException) {
+            Timber.w(e, "Error closing selector")
+        }
+
         // update the session end time in the database
         databaseConnector.updateSession(sessionId, System.currentTimeMillis())
+    }
+
+    private fun closeDescriptor(descriptor: FileDescriptor, name: String) {
+        try {
+            Os.close(descriptor)
+        } catch (e: ErrnoException) {
+            Timber.w(e, "Error closing $name")
+        }
+    }
+
+    /** Waits for a thread to finish, but not forever: a thread that is stuck must not keep the VPN from stopping. */
+    private fun join(thread: Thread?) {
+        if (thread == null || thread === Thread.currentThread()) {
+            return
+        }
+        try {
+            thread.join(THREAD_JOIN_TIMEOUT_MS)
+            if (thread.isAlive) {
+                Timber.w("${thread.name} did not stop within ${THREAD_JOIN_TIMEOUT_MS}ms")
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     /**
@@ -337,6 +387,9 @@ class ComponentManager(
 
     companion object {
         val selectorMonitor: Any = Any()
+
+        /** How long [stopComponents] waits for each traffic handling thread to finish. */
+        private const val THREAD_JOIN_TIMEOUT_MS = 2000L
 
         /** How often the connections' byte counters are written to the database. */
         private const val BYTE_COUNTER_FLUSH_INTERVAL_MS = 1000L
