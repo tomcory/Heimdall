@@ -161,7 +161,8 @@ object PacketFixtures {
         localPort: Int,
         remoteAddr: Inet4Address,
         remotePort: Int,
-        seq: Int = 0
+        seq: Int = 0,
+        window: Int = 65535
     ): IpV4Packet {
         val tcp = buildTcpSegment(
             srcAddr = localAddr,
@@ -171,7 +172,8 @@ object PacketFixtures {
             seq = seq,
             ack = 0,
             ackFlag = false,
-            synFlag = true
+            synFlag = true,
+            window = window
         )
         return buildIpV4Packet(localAddr, remoteAddr, IpNumber.TCP, tcp)
     }
@@ -188,7 +190,8 @@ object PacketFixtures {
         ackFlag: Boolean = true,
         pshFlag: Boolean = payload.isNotEmpty(),
         finFlag: Boolean = false,
-        rstFlag: Boolean = false
+        rstFlag: Boolean = false,
+        window: Int = 65535
     ): IpV4Packet {
         val tcp = buildTcpSegment(
             srcAddr = localAddr,
@@ -201,6 +204,7 @@ object PacketFixtures {
             pshFlag = pshFlag,
             finFlag = finFlag,
             rstFlag = rstFlag,
+            window = window,
             payload = payload
         )
         return buildIpV4Packet(localAddr, remoteAddr, IpNumber.TCP, tcp)

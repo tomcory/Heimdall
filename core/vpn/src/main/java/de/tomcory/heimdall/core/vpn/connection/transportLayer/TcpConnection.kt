@@ -23,9 +23,11 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.BufferOverflowException
 import java.nio.ByteBuffer
+import java.nio.channels.CancelledKeyException
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
+import java.util.ArrayDeque
 import java.util.Arrays
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -65,8 +67,55 @@ class TcpConnection internal constructor(
     private val theirSeqNum = AtomicLong(theirInitSeqNum + 1) // SYN packets increase the client's sequence number by 1
     private val ourSeqNum = AtomicLong(ourInitSeqNum)
 
-    /** The FIN-ACK segment sent to start our side of the closing handshake, cached so a retransmitted FIN from the device can be answered with the exact same segment instead of one built from an already-advanced sequence number. */
+    /** The FIN-ACK segment sent to start our side of the closing handshake, cached so a retransmitted FIN from the device can be answered with the exact same segment instead of one built from an already-advanced sequence number. Written under [sendLock]. */
+    @Volatile
     private var pendingFinAck: IpPacket? = null
+
+    // Sending to the device (docs/vpn-mitm-audit.md PKT-42). Data for the device is queued and
+    // sent only as far as the device's receive window allows. Everything a segment's sequence
+    // number depends on happens under sendLock, so that segments are built and handed to the
+    // device writer in sequence order whichever thread sends them: the selector thread
+    // (plaintext and passed-through data), a TLS connection's own dispatcher (decrypted data)
+    // or the thread that handles the device's packets (when an ACK opens the window).
+    //
+    // Nothing is ever retransmitted. A TUN interface does not lose packets, so what was sent
+    // inside the window has arrived.
+    private val sendLock = Any()
+
+    /** Data for the device that the window has not let through yet, in order. Guarded by [sendLock]. */
+    private val sendQueue = ArrayDeque<ByteBuffer>()
+
+    /** Bytes in [sendQueue]. Written under [sendLock]. */
+    @Volatile
+    private var queuedBytes = 0L
+
+    /**
+     * The highest acknowledgement number received from the device, as it appears in a TCP
+     * header. Our SYN occupies one sequence number, so this is where it starts. Guarded by
+     * [sendLock].
+     */
+    private var acknowledgedByDevice = (ourInitSeqNum + 1).toInt()
+
+    /**
+     * The receive window the device advertised last, in bytes. Our SYN-ACK carries no options,
+     * so window scaling is not in effect in either direction and the header field is the window.
+     * Guarded by [sendLock].
+     */
+    private var deviceWindow = initialPacket.header.windowAsInt
+
+    /** Whether our FIN is to be sent once [sendQueue] is empty. Guarded by [sendLock]. */
+    private var finRequested = false
+
+    /** Whether our FIN has been sent. Written under [sendLock]. */
+    @Volatile
+    private var finSent = false
+
+    /** Whether reading from the outward-facing channel is suspended because of the backlog. Guarded by [sendLock]. */
+    private var readPaused = false
+
+    /** Wall-clock time at which data was last sent to the device, or queued while nothing was waiting. */
+    @Volatile
+    private var lastSendProgressAt = 0L
 
     /**
      * Guards the transitions around closing. The client's FIN is handled on the
@@ -92,7 +141,8 @@ class TcpConnection internal constructor(
     /** Whether the device has acknowledged our FIN. */
     private var ourFinAcknowledged = false
 
-    /** The acknowledgement number that covers our FIN, as it appears in a TCP header. Only meaningful once our FIN was sent. */
+    /** The acknowledgement number that covers our FIN, as it appears in a TCP header. Only meaningful once [finSent]. Written under [sendLock]. */
+    @Volatile
     private var ourFinAckNumber = 0
 
     /** Whether the remote host's close has been passed on to the device (see [deliverRemoteClose]). */
@@ -102,7 +152,10 @@ class TcpConnection internal constructor(
     @Volatile
     private var synAckSent = false
 
-    /** Wall-clock time at which our FIN was sent, used by [sweepStaleConnections]. */
+    /**
+     * Wall-clock time of the last progress towards closing: our FIN being requested, data that
+     * has to go out before it being sent, or the FIN itself. Used by [sweepStaleConnections].
+     */
     @Volatile
     private var closingSince: Long = 0
 
@@ -221,6 +274,9 @@ class TcpConnection internal constructor(
                 handleSynAck() // this should not happen, since we never initiate a handshake
             }
         } else {
+            if (tcpHeader.ack) {
+                handleAckField(tcpHeader)
+            }
             val payloadLength = outgoingPacket.payload?.length() ?: 0
             if (payloadLength == 0 && !tcpHeader.fin) {
                 if (tcpHeader.ack) {
@@ -267,7 +323,7 @@ class TcpConnection internal constructor(
 
         if (alreadyReceived < 0) {
             Timber.d("tcp$id Dropping out-of-order segment (${-alreadyReceived} bytes ahead, $payloadLength bytes)")
-            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+            sendEmptyAck()
             return false
         }
 
@@ -288,7 +344,7 @@ class TcpConnection internal constructor(
         }
 
         if (endAlreadyReceived >= 0) {
-            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+            sendEmptyAck()
         }
         return false
     }
@@ -314,7 +370,7 @@ class TcpConnection internal constructor(
         if (selectionKey.isConnectable) {
             unwrapInboundConnectable(selectionKey)
         } else if (selectionKey.isReadable) {
-            unwrapInboundReadable()
+            unwrapInboundReadable(selectionKey)
         }
     }
 
@@ -362,27 +418,172 @@ class TcpConnection internal constructor(
     }
 
     override fun wrapInbound(payload: ByteArray) {
-        // if the application layer returned anything, write it to the device's VPN interface
-        if (payload.isNotEmpty()) {
-            if(payload.size <= componentManager.maxPacketSize) {
-                // if the payload fits into a single TCP segment, wrap and write it directly
-                val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(payload))
-                increaseOurSeqNum(payload.size)
-                writeToDevice(ackDataPacket)
-            } else {
-                // if the payload exceeds the max. TCP payload size, split it into multiple segments
-                //TODO: there has to be a better way...
-                Timber.d("tcp$id Splitting large payload (${payload.size} bytes), because maxPacketSize is ${componentManager.maxPacketSize}")
-                val largeBuffer = ByteBuffer.wrap(payload)
-                while(largeBuffer.hasRemaining()) {
-                    val temp = ByteArray(minOf(largeBuffer.limit() - largeBuffer.position(), componentManager.maxPacketSize))
-                    largeBuffer.get(temp)
-                    Timber.d("tcp$id Writing split payload (${temp.size} bytes, ${largeBuffer.limit() - largeBuffer.position()} remaining)")
-                    val ackDataPacket = ipPacketBuilder.buildPacket(buildDataAck(temp))
-                    increaseOurSeqNum(temp.size)
-                    writeToDevice(ackDataPacket)
-                }
+        if (payload.isEmpty()) {
+            return
+        }
+        synchronized(sendLock) {
+            if (sendQueue.isEmpty()) {
+                lastSendProgressAt = System.currentTimeMillis()
             }
+            sendQueue.addLast(ByteBuffer.wrap(payload))
+            queuedBytes += payload.size
+            flushSendQueue()
+        }
+    }
+
+    /**
+     * Sends queued data to the device as far as its receive window allows, then our FIN if one
+     * is due, and lets the outward-facing channel be read again once the backlog is small
+     * enough. Must be called under [sendLock].
+     */
+    private fun flushSendQueue() {
+        if (state == TransportLayerState.CLOSED || state == TransportLayerState.ABORTED) {
+            // the device's side of the connection is gone, there is nobody to send to
+            sendQueue.clear()
+            queuedBytes = 0
+            return
+        }
+
+        var sent = false
+        while (true) {
+            val head = sendQueue.peekFirst() ?: break
+            // sequence numbers wrap around at 32 bits, and so does this subtraction
+            val unacknowledged = ourSeqNum.get().toInt() - acknowledgedByDevice
+            val available = deviceWindow - unacknowledged
+            if (available <= 0) {
+                break
+            }
+            val length = minOf(head.remaining(), available, componentManager.maxPacketSize)
+            val segment = if (head.position() == 0 && length == head.capacity()) {
+                head.position(length)
+                head.array()
+            } else {
+                ByteArray(length).also { head.get(it) }
+            }
+            if (!head.hasRemaining()) {
+                sendQueue.removeFirst()
+            }
+            queuedBytes -= length
+
+            val packet = ipPacketBuilder.buildPacket(buildDataAck(segment))
+            increaseOurSeqNum(length)
+            writeToDevice(packet)
+            sent = true
+        }
+
+        if (sent) {
+            val now = System.currentTimeMillis()
+            lastSendProgressAt = now
+            if (finRequested) {
+                closingSince = now
+            }
+            if (state == TransportLayerState.HALF_CLOSED) {
+                halfClosedActivityAt = now
+            }
+        }
+
+        if (sendQueue.isEmpty() && finRequested && !finSent) {
+            sendFinAck()
+        }
+
+        resumeReadingIfBacklogAllows()
+    }
+
+    /**
+     * Takes note of what a segment from the device acknowledges and of the receive window it
+     * advertises, and sends whatever that lets through.
+     */
+    private fun handleAckField(tcpHeader: TcpPacket.TcpHeader) {
+        synchronized(sendLock) {
+            val ackNumber = tcpHeader.acknowledgmentNumber
+            // Wrap-safe comparisons: the segment must not acknowledge less than an earlier one
+            // did (then its window is out of date as well), nor anything we have not sent.
+            val isCurrent = ackNumber - acknowledgedByDevice >= 0
+            val isPlausible = ourSeqNum.get().toInt() - ackNumber >= 0
+            if (isCurrent && isPlausible) {
+                acknowledgedByDevice = ackNumber
+                deviceWindow = tcpHeader.windowAsInt
+                flushSendQueue()
+            }
+        }
+    }
+
+    /** Data read from the remote host that has not reached the device yet, wherever it is waiting. */
+    private fun inboundBacklog(): Long = queuedBytes + inboundBytesInProcess
+
+    /**
+     * Stops reading from the outward-facing channel if too much of what was read is still
+     * waiting to be sent to the device. The remote host's data then stays in the socket buffer,
+     * and TCP's own flow control slows the remote host down.
+     *
+     * @return whether reading is suspended.
+     */
+    private fun pauseReadingIfBacklogged(selectionKey: SelectionKey): Boolean {
+        synchronized(sendLock) {
+            if (inboundBacklog() < SEND_BACKLOG_HIGH) {
+                return false
+            }
+            readPaused = true
+            try {
+                selectionKey.interestOps(0)
+            } catch (e: CancelledKeyException) {
+                // the channel was closed in the meantime
+            }
+            return true
+        }
+    }
+
+    /** Must be called under [sendLock]. */
+    private fun resumeReadingIfBacklogAllows() {
+        if (!readPaused || inboundBacklog() > SEND_BACKLOG_LOW) {
+            return
+        }
+        readPaused = false
+        val selectionKey = selectableChannel.keyFor(componentManager.selector) ?: return
+        try {
+            // Unlike registering a channel, changing a key's interest set does not wait for a
+            // select() in progress, so this needs no selectorMonitor. The wake-up makes the
+            // selector notice the change.
+            selectionKey.interestOps(SelectionKey.OP_READ)
+            componentManager.selector.wakeup()
+        } catch (e: CancelledKeyException) {
+            // the channel was closed in the meantime
+        }
+    }
+
+    override fun onInboundBacklogChanged() {
+        synchronized(sendLock) {
+            resumeReadingIfBacklogAllows()
+        }
+    }
+
+    /**
+     * Sends an empty ACK to the device. Under [sendLock] like everything else that is sent, so
+     * that its sequence number is not one that data sent at the same moment has already passed.
+     */
+    private fun sendEmptyAck() {
+        synchronized(sendLock) {
+            writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+        }
+    }
+
+    /**
+     * Asks the device for its current receive window if data has been waiting for it for a
+     * while. The device announces on its own when its window opens, and the TUN interface does
+     * not lose that announcement, so this is only a safeguard against waiting forever. The
+     * probe is an empty segment one below the next sequence number, which a TCP stack answers
+     * with an ACK.
+     */
+    private fun probeDeviceWindow(now: Long, stalledForMs: Long) {
+        synchronized(sendLock) {
+            if (sendQueue.isEmpty() || now - lastSendProgressAt < stalledForMs) {
+                return
+            }
+            if (state == TransportLayerState.CLOSED || state == TransportLayerState.ABORTED) {
+                return
+            }
+            val probe = buildEmptyAck().sequenceNumber(ourSeqNum.get().toInt() - 1)
+            writeToDevice(ipPacketBuilder.buildPacket(probe))
         }
     }
 
@@ -404,7 +605,7 @@ class TcpConnection internal constructor(
         increaseTheirSeqNum(payload.length() - alreadyReceived)
 
         // acknowledge packet to the client by sending an empty ACK
-        writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+        sendEmptyAck()
 
         // pass the payload to the encryption and application layers for processing and store the result
         if (alreadyReceived == 0) {
@@ -432,7 +633,7 @@ class TcpConnection internal constructor(
                 // which the device expects to be answered. Other empty ACKs are ignored, there
                 // is no packet loss that would make acknowledgements useful.
                 if (theirSeqNum.get().toInt() - sequenceNumber == 1) {
-                    writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+                    sendEmptyAck()
                 }
             }
             TransportLayerState.CLOSED -> {
@@ -442,7 +643,7 @@ class TcpConnection internal constructor(
                 // Only the ACK that covers our FIN moves the closing handshake forward. Others
                 // acknowledge data sent before the FIN and say nothing about the close
                 // (docs/vpn-mitm-audit.md PKT-35).
-                if (state == TransportLayerState.CLOSING && ackNumber == ourFinAckNumber) {
+                if (state == TransportLayerState.CLOSING && finSent && ackNumber == ourFinAckNumber) {
                     ourFinAcknowledged = true
                     finishCloseIfComplete()
                 }
@@ -508,7 +709,7 @@ class TcpConnection internal constructor(
             TransportLayerState.HALF_CLOSED -> {
                 // a retransmitted FIN: our ACK for it was lost. The sequence numbers already
                 // account for the FIN, so an empty ACK built now acknowledges it again.
-                writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+                sendEmptyAck()
             }
             TransportLayerState.CONNECTED -> {
                 // A FIN only means the client has finished sending. It may still be waiting for
@@ -520,7 +721,7 @@ class TcpConnection internal constructor(
                     deviceFinReceived = true
                     halfClosedActivityAt = System.currentTimeMillis()
                     state = TransportLayerState.HALF_CLOSED
-                    writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
+                    sendEmptyAck()
                 } else {
                     closeFully()
                 }
@@ -531,7 +732,9 @@ class TcpConnection internal constructor(
                     // ACK to our own FIN-ACK (e.g. the original FIN-ACK was lost) - the outward-facing
                     // channel is already closed and the sequence numbers already advanced, so resend
                     // the exact same FIN-ACK segment rather than building a fresh (higher-sequenced) one.
-                    pendingFinAck?.let { writeToDevice(it) }
+                    // If our FIN has not gone out yet, because data that precedes it is still
+                    // waiting for the device's window, acknowledge the device's FIN again.
+                    pendingFinAck?.let { writeToDevice(it) } ?: sendEmptyAck()
                 } else {
                     // The remote host closed first, we sent our FIN, and this is the device's
                     // own FIN: count it and acknowledge it. It usually acknowledges our FIN in
@@ -540,8 +743,8 @@ class TcpConnection internal constructor(
                     increaseTheirSeqNum(1)
                     // the cached FIN-ACK predates the device's FIN, so it must not be resent
                     pendingFinAck = null
-                    writeToDevice(ipPacketBuilder.buildPacket(buildEmptyAck()))
-                    if (ackNumber == ourFinAckNumber) {
+                    sendEmptyAck()
+                    if (finSent && ackNumber == ourFinAckNumber) {
                         ourFinAcknowledged = true
                     }
                     finishCloseIfComplete()
@@ -567,12 +770,31 @@ class TcpConnection internal constructor(
         closeSoft(abortClientSession = false, finalizeState = false)
         increaseTheirSeqNum(1)
         deviceFinReceived = true
-        sendFinAck()
+        if (!requestFin()) {
+            // our FIN-ACK would have acknowledged the device's FIN; it has to wait, so do that now
+            sendEmptyAck()
+        }
     }
 
     /**
-     * Sends our FIN-ACK to the device and caches it for retransmission. The caller is
-     * responsible for the connection being in (or moving to) [TransportLayerState.CLOSING].
+     * Has our FIN sent to the device as soon as everything queued for it has been sent, which
+     * is at once if nothing is queued. The caller is responsible for the connection being in
+     * (or moving to) [TransportLayerState.CLOSING].
+     *
+     * @return whether the FIN was sent at once.
+     */
+    private fun requestFin(): Boolean {
+        synchronized(sendLock) {
+            finRequested = true
+            closingSince = System.currentTimeMillis()
+            flushSendQueue()
+            return finSent
+        }
+    }
+
+    /**
+     * Sends our FIN-ACK to the device and caches it for retransmission. Must be called under
+     * [sendLock], with nothing left in [sendQueue].
      */
     private fun sendFinAck() {
         val finAckResponse = ipPacketBuilder.buildPacket(buildFinAck())
@@ -581,6 +803,7 @@ class TcpConnection internal constructor(
         ourFinAckNumber = ourSeqNum.get().toInt()
         closingSince = System.currentTimeMillis()
         pendingFinAck = finAckResponse
+        finSent = true
         writeToDevice(finAckResponse)
     }
 
@@ -603,11 +826,17 @@ class TcpConnection internal constructor(
     /**
      * Handles the OP_READ event on a connection's [SocketChannel], which means that inbound data is available on the channel.
      */
-    private fun unwrapInboundReadable() {
+    private fun unwrapInboundReadable(selectionKey: SelectionKey) {
         // OP_READ event triggered
-        var bytesRead: Int
+        var bytesRead = 0
         var totalBytesRead = 0
         do {
+            // Read no further ahead of the device than the backlog limit. This is what keeps a
+            // device that reads slowly from being sent data it has no room for
+            // (docs/vpn-mitm-audit.md PKT-42).
+            if (pauseReadingIfBacklogged(selectionKey)) {
+                break
+            }
             try {
                 // read and forward the incoming data chunk by chunk (i.e. loop as long as data is read)
                 inBuffer.clear()
@@ -659,14 +888,15 @@ class TcpConnection internal constructor(
             when (state) {
                 TransportLayerState.CONNECTING, TransportLayerState.CONNECTED, TransportLayerState.HALF_CLOSED -> {
                     // Start (or, if the client had already finished sending, complete) the
-                    // closing handshake with a FIN-ACK. It has to carry the ACK flag like every
+                    // closing handshake with a FIN-ACK, which goes out once the device has been
+                    // sent everything that is still queued for it. It has to carry the ACK flag like every
                     // segment of an established connection, or the device discards it and never
                     // learns that the remote host is done (docs/vpn-mitm-audit.md PKT-35). The
                     // device's ACK for it and the device's own FIN complete the handshake
                     // (handleAckEmpty, handleFin).
                     Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
                     state = TransportLayerState.CLOSING
-                    sendFinAck()
+                    requestFin()
                 }
                 else -> {
                     // CLOSING: the device closed in the meantime and our FIN is already out.
@@ -708,11 +938,13 @@ class TcpConnection internal constructor(
             // prepare SocketChannel for incoming data and complete local handshake
             selectionKey.interestOps(SelectionKey.OP_READ)
             // advance the client-facing TCP handshake by sending a SYN ACK packet
-            val synAckPacket = ipPacketBuilder.buildPacket(buildSynAck())
-            increaseOurSeqNum(1)
-            //Timber.d("%s SocketChannel connected", id)
-            synAckSent = true
-            writeToDevice(synAckPacket)
+            synchronized(sendLock) {
+                val synAckPacket = ipPacketBuilder.buildPacket(buildSynAck())
+                increaseOurSeqNum(1)
+                //Timber.d("%s SocketChannel connected", id)
+                synAckSent = true
+                writeToDevice(synAckPacket)
+            }
         } else {
             Timber.e("tcp$id Error connecting SocketChannel to ${ipPacketBuilder.remoteAddress.hostAddress}:$remotePort")
             closeHard()
@@ -843,24 +1075,50 @@ class TcpConnection internal constructor(
         const val DEFAULT_CLOSING_TIMEOUT_MS = 2 * 60 * 1000L
 
         /**
+         * How much data read from the remote host may wait to be sent to the device before
+         * reading is suspended. Twice the largest window the device can advertise, so that
+         * there is always enough at hand to fill the window when it opens.
+         */
+        const val SEND_BACKLOG_HIGH = 2 * 65535L
+
+        /** The backlog at or below which reading from the remote host resumes. */
+        const val SEND_BACKLOG_LOW = 32 * 1024L
+
+        /** How long data may wait for the device's window before [sweepStaleConnections] asks for it. */
+        const val DEFAULT_WINDOW_PROBE_AFTER_MS = 10 * 1000L
+
+        /**
          * Removes cached [TcpConnection]s that are waiting for something that may never come:
          *
          * - [TransportLayerState.HALF_CLOSED] without inbound data for longer than
          *   [halfClosedTimeoutMs]. Such a connection normally ends when the remote host closes
          *   its side. One whose remote host neither sends nor closes would otherwise keep its
          *   SocketChannel until the VPN stops. It is aborted, which resets the device's side.
-         * - [TransportLayerState.CLOSING] for longer than [closingTimeoutMs]: our FIN is out, but
-         *   the device hasn't finished its part of the closing handshake. The outward-facing
-         *   channel is already closed, so only the cache entry is dropped, without a reset.
+         * - [TransportLayerState.CLOSING] without progress for longer than [closingTimeoutMs]:
+         *   our FIN is out, or waiting behind data the device does not take, but the device
+         *   hasn't finished its part of the closing handshake. The outward-facing channel is
+         *   already closed, so only the cache entry is dropped, without a reset.
+         *
+         * It also probes the receive window of devices that have left data waiting for longer
+         * than [windowProbeAfterMs] ([probeDeviceWindow]).
          *
          * @param now Injectable for testing; defaults to the real current time.
          */
         fun sweepStaleConnections(
             halfClosedTimeoutMs: Long = DEFAULT_HALF_CLOSED_TIMEOUT_MS,
             closingTimeoutMs: Long = DEFAULT_CLOSING_TIMEOUT_MS,
+            windowProbeAfterMs: Long = DEFAULT_WINDOW_PROBE_AFTER_MS,
             now: Long = System.currentTimeMillis()
         ) {
             val connections = ConnectionCache.allConnections().filterIsInstance<TcpConnection>()
+
+            connections.forEach { connection ->
+                try {
+                    connection.probeDeviceWindow(now, windowProbeAfterMs)
+                } catch (e: Throwable) {
+                    Timber.e(e, "Error probing a TCP connection's receive window during sweep")
+                }
+            }
 
             connections
                 .filter { it.state == TransportLayerState.HALF_CLOSED && now - it.halfClosedActivityAt > halfClosedTimeoutMs }

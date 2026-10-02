@@ -161,6 +161,10 @@ class TlsConnection(
     }
 
     override fun unwrapInbound(payload: ByteArray) {
+        // The payload is worked on later, on the connection's own dispatcher. Until then the
+        // transport layer counts it as read but not yet sent on, so that it does not read
+        // further ahead than the device takes the data (docs/vpn-mitm-audit.md PKT-42).
+        transportLayer.inboundProcessingDeferred(payload.size)
         connectionScope.launch {
             try {
                 if(log) Timber.d("tls$id unwrapInbound of ${payload.size} bytes in state $state")
@@ -168,6 +172,8 @@ class TlsConnection(
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id unwrapInbound failed, closing connection")
                 closeConnection()
+            } finally {
+                transportLayer.inboundProcessingFinished(payload.size)
             }
         }
     }
