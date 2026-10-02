@@ -162,7 +162,8 @@ class TcpSegmentValidationTest {
     }
 
     @Test
-    fun `a segment that follows a gap is dropped until the missing one has arrived`() {
+    fun `a segment that follows a gap is kept and delivered once the gap is filled`() {
+        // docs/vpn-mitm-audit.md PKT-48: the device does not have to send it again
         val start = connect()
         val messagesBefore = deviceWriter.sentMessages.size
 
@@ -174,11 +175,66 @@ class TcpSegmentValidationTest {
         assertEquals("the ACK must still ask for the missing segment", start, duplicateAck.header.acknowledgmentNumber)
         assertEquals(TransportLayerState.CONNECTED, connection.state)
 
-        // the device sends the missing segment and retransmits the one that was dropped
+        // the device sends the missing segment, and only that
         send(seq = start, payload = first)
-        send(seq = start + first.size, payload = second)
 
+        assertEquals(
+            "both segments must be acknowledged once the gap is filled",
+            start + first.size + second.size,
+            segmentsSince(messagesBefore).last().header.acknowledgmentNumber
+        )
         assertEquals(String(first + second), finishAndGetServerStream(start + first.size + second.size))
+    }
+
+    @Test
+    fun `several segments behind a gap are delivered in order, each once`() {
+        val start = connect()
+        val afterFirst = start + first.size
+
+        // third and second arrive before first, in the wrong order, and second twice
+        send(seq = afterFirst + second.size, payload = third)
+        send(seq = afterFirst, payload = second)
+        send(seq = afterFirst, payload = second)
+        assertEquals(start, segmentsSince(0).last().header.acknowledgmentNumber)
+
+        send(seq = start, payload = first)
+        assertEquals(afterFirst + second.size + third.size, segmentsSince(0).last().header.acknowledgmentNumber)
+
+        // a late retransmission of what was buffered changes nothing
+        send(seq = afterFirst + second.size, payload = third)
+
+        assertEquals(String(first + second + third), finishAndGetServerStream(afterFirst + second.size + third.size))
+    }
+
+    @Test
+    fun `a segment beyond the advertised window is not kept`() {
+        val start = connect()
+
+        // far ahead: beyond the 65535 bytes the device was told it may send
+        val farAhead = start + 65535 + 10
+        send(seq = farAhead, payload = third)
+
+        // now everything up to that point arrives in order
+        val chunk = ByteArray(1000) { ('a'.code + it % 26).toByte() }
+        val expected = java.io.ByteArrayOutputStream()
+        var seq = start
+        while (seq - start < 65545) {
+            val piece = chunk.copyOf(minOf(chunk.size, 65545 - (seq - start)))
+            send(seq = seq, payload = piece)
+            expected.write(piece)
+            seq += piece.size
+        }
+        assertEquals(farAhead, seq)
+        assertEquals(
+            "the segment from beyond the window must not have been delivered behind the rest",
+            farAhead,
+            segmentsSince(0).last().header.acknowledgmentNumber
+        )
+
+        // had it been kept, the stream would continue with it and this FIN would be stale
+        send(seq = seq, finFlag = true)
+        awaitUntil("the server never saw the end of the stream") { receivedByServer.get() != null }
+        assertEquals(expected.size(), receivedByServer.get()!!.length)
     }
 
     @Test
@@ -216,7 +272,8 @@ class TcpSegmentValidationTest {
         assertEquals(start, segmentsSince(messagesBefore).single().header.acknowledgmentNumber)
 
         send(seq = start, payload = first)
-        assertEquals(String(first), finishAndGetServerStream(start + first.size))
+        // the segment that arrived early was kept and follows the one that filled the gap
+        assertEquals(String(first + second), finishAndGetServerStream(start + first.size + second.size))
     }
 
     @Test

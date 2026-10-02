@@ -29,6 +29,7 @@ import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
 import java.util.ArrayDeque
 import java.util.Arrays
+import java.util.TreeMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -335,9 +336,73 @@ class TcpConnection internal constructor(
                 // which acknowledges our SYN-ACK just as well.
                 state = TransportLayerState.CONNECTED
             }
-            if (acceptInOrder(outgoingPacket, tcpHeader, payloadLength) && tcpHeader.fin) {
+            val finAckNumber = if (tcpHeader.ack) tcpHeader.acknowledgmentNumber else null
+            if (acceptInOrder(tcpHeader.sequenceNumber, outgoingPacket.payload, payloadLength, tcpHeader.fin, finAckNumber) && tcpHeader.fin) {
                 // this is either the first or second packet of the closing handshake
-                handleFin(if (tcpHeader.ack) tcpHeader.acknowledgmentNumber else null)
+                handleFin(finAckNumber)
+            }
+            deliverBufferedSegments()
+        }
+    }
+
+    /** A segment from the device that arrived ahead of a gap and is waiting for the gap to be filled. */
+    private class BufferedSegment(val payload: Packet?, val payloadLength: Int, val fin: Boolean, val finAckNumber: Int?)
+
+    /**
+     * Segments that arrived ahead of a gap, by sequence number (docs/vpn-mitm-audit.md PKT-48).
+     * The keys lie within one receive window of each other, so their wrap-around difference
+     * orders them correctly. Only touched by the thread that handles the device's packets. Not
+     * emptied explicitly when the connection closes: it goes with the connection object, which
+     * the cache lets go of then.
+     */
+    private val reorderBuffer = TreeMap<Int, BufferedSegment>(Comparator { a, b -> a - b })
+
+    /** Payload bytes in [reorderBuffer]. */
+    private var reorderBufferedBytes = 0
+
+    /**
+     * Keeps a segment that starts above the expected sequence number, so that the device does
+     * not have to send it again once the gap before it is filled. Without this, one lost
+     * segment makes the device resend everything after it, and a second loss during that costs
+     * a retransmission timeout that doubles every time.
+     *
+     * Only what lies inside the window the device was told is kept, which also bounds the
+     * buffer. A segment that is already waiting is not stored twice.
+     */
+    private fun bufferSegment(sequenceNumber: Int, payload: Packet?, payloadLength: Int, fin: Boolean, finAckNumber: Int?) {
+        if (state != TransportLayerState.CONNECTED) {
+            return
+        }
+        val beyondWindow = sequenceNumber + payloadLength - advertisedEdge > 0
+        if (beyondWindow || reorderBufferedBytes + payloadLength > MAX_WINDOW || reorderBuffer.containsKey(sequenceNumber)) {
+            return
+        }
+        reorderBuffer[sequenceNumber] = BufferedSegment(payload, payloadLength, fin, finAckNumber)
+        reorderBufferedBytes += payloadLength
+    }
+
+    /**
+     * Takes in the buffered segments that have become next in the stream, after a segment
+     * filled the gap before them.
+     */
+    private fun deliverBufferedSegments() {
+        while (reorderBuffer.isNotEmpty()) {
+            val entry = reorderBuffer.firstEntry()
+            if (theirSeqNum.get().toInt() - entry.key < 0) {
+                // still ahead of a gap
+                return
+            }
+            reorderBuffer.remove(entry.key)
+            val segment = entry.value
+            reorderBufferedBytes -= segment.payloadLength
+            if (acceptInOrder(entry.key, segment.payload, segment.payloadLength, segment.fin, segment.finAckNumber, buffered = true) && segment.fin) {
+                handleFin(segment.finAckNumber)
+            }
+            if (state != TransportLayerState.CONNECTED) {
+                // closed, half-closed or closing: nothing more is taken from the device
+                reorderBuffer.clear()
+                reorderBufferedBytes = 0
+                return
             }
         }
     }
@@ -352,44 +417,48 @@ class TcpConnection internal constructor(
      * - A segment that starts at the expected sequence number is forwarded.
      * - One that lies entirely below it was already received: it is acknowledged again.
      * - One that starts below and reaches beyond it is forwarded from the expected byte on.
-     * - One that starts above it follows a gap: it is dropped and the expected sequence number is
-     *   acknowledged again, which makes the device retransmit from there. Nothing is buffered
-     *   for reordering.
+     * - One that starts above it follows a gap: it is kept until the gap is filled
+     *   ([bufferSegment]), and the expected sequence number is acknowledged again, which tells
+     *   the device what is missing.
      *
+     * @param buffered Whether the segment comes out of the reorder buffer rather than from the
+     * device just now.
      * @return whether the segment's FIN, if it has one, should be handled: it is either next in
      * the stream or a retransmission of the FIN that was already counted.
      */
-    private fun acceptInOrder(outgoingPacket: Packet, tcpHeader: TcpPacket.TcpHeader, payloadLength: Int): Boolean {
+    private fun acceptInOrder(sequenceNumber: Int, payload: Packet?, payloadLength: Int, fin: Boolean, finAckNumber: Int?, buffered: Boolean = false): Boolean {
         // How far the segment starts below the expected sequence number. Sequence numbers wrap
         // around at 32 bits, and so does this subtraction, so the sign of the result is right on
         // either side of the wrap.
-        val alreadyReceived = theirSeqNum.get().toInt() - tcpHeader.sequenceNumber
+        val alreadyReceived = theirSeqNum.get().toInt() - sequenceNumber
         // the same for the position just past the segment's data, which is where its FIN sits
         val endAlreadyReceived = alreadyReceived - payloadLength
 
         if (alreadyReceived < 0) {
-            Timber.d("tcp$id Dropping out-of-order segment (${-alreadyReceived} bytes ahead, $payloadLength bytes)")
+            Timber.d("tcp$id Out-of-order segment (${-alreadyReceived} bytes ahead, $payloadLength bytes)")
+            bufferSegment(sequenceNumber, payload, payloadLength, fin, finAckNumber)
             sendEmptyAck()
             return false
         }
 
-        if (payloadLength > 0) {
+        if (payloadLength > 0 && payload != null) {
             if (endAlreadyReceived >= 0) {
                 // nothing new in it; whether to acknowledge it again is decided below
                 Timber.d("tcp$id Ignoring retransmitted segment ($payloadLength bytes)")
-            } else if (!handleAckData(outgoingPacket.payload, alreadyReceived)) {
+            } else if (!handleAckData(payload, alreadyReceived)) {
                 return false
             }
         }
 
-        if (tcpHeader.fin) {
+        if (fin) {
             val retransmittedFin = synchronized(closeLock) { deviceFinReceived } && endAlreadyReceived == 1
             if (endAlreadyReceived <= 0 || retransmittedFin) {
                 return true
             }
         }
 
-        if (endAlreadyReceived >= 0) {
+        // a segment from the buffer that has turned out to be old needs no answer
+        if (endAlreadyReceived >= 0 && !buffered) {
             sendEmptyAck()
         }
         return false

@@ -38,7 +38,7 @@ per-segment counter updates, not body buffering, freeze the VPN after a large up
 **Addendum 2026-10-02:** PKT-39 is implemented. Verifying it on the emulator produced V-57 /
 PKT-48 (no reordering buffer, so real packet loss on the tunnel stalls uploads) and V-58 /
 PKT-40 (the VPN service crashes when the interface cannot be established, and again on the
-restart that follows). PKT-40 to PKT-47 are implemented. It was numbered first among the pending packets because it had to be
+restart that follows). PKT-40 to PKT-48 are implemented. It was numbered first among the pending packets because it had to be
 done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47 and
 the QUIC packets to PKT-49–PKT-52. References were checked against
 `bugfix/mitm-vpn` at `ac57197`.
@@ -2867,11 +2867,39 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   window is dropped; duplicates of buffered segments are ignored. Device: with
   `tc qdisc add dev tun0 root netem duplicate 5% delay 2ms reorder 5% loss 1%`,
   `run-stress.sh upload,tlsbulk` passes.
+- **Implementation notes (2026-10-02):**
+  - `acceptInOrder()` now hands a segment that starts above the expected sequence number to
+    `bufferSegment()` instead of dropping it, and still answers with an ACK for the expected
+    number. After every segment that was taken in, `deliverBufferedSegments()` takes in what
+    has become next, through the same `acceptInOrder()` as a segment from the device, so
+    overlaps, duplicates and a buffered FIN are handled by the existing rules.
+  - Bounds: only a segment that lies inside the furthest window edge the device was told
+    (PKT-43) is kept, and at most 65535 bytes in total. A sequence number that is already
+    waiting is not stored twice. The buffer is dropped when the connection stops accepting
+    data (half-closed, closing, closed).
+  - No SACK, as planned.
+  - Tests: `TcpSegmentValidationTest` has the out-of-order case rewritten (the overtaking
+    segment is not sent again) and two new cases (several segments behind a gap in the wrong
+    order with a duplicate; a segment beyond the window is not kept). 303 `core:vpn` tests
+    pass.
+  - Emulator, with `netem duplicate 5% delay 2ms reorder 5% loss 1%` on `tun0`,
+    `run-stress.sh upload,tlsbulk,keepalive`:
+
+    | | Before | After |
+    |---|---|---|
+    | Checks passed / failed | 8 / 2 | 10 / 0 |
+    | 1 MB upload | timeout after 160 s | 1.1 s |
+    | 20 MB upload | 455 s | 20.6 s |
+    | TLS 5 MB upload | reset after 83 s | 5.4 s |
+
+    No `BAD_RECORD_MAC` in either run.
+  - Regression without injected faults: the full suite gives 72 passed, 0 failed, the first
+    run of the whole suite without a failure. Throughput is as after PKT-45 (20 MB upload
+    8.5 MB/s, 50 MB download 5.7 MB/s). `emulator-traffic.sh run` is clean.
 - **Commit:** `fix(vpn): buffer out-of-order segments from the device until the gap before them is filled`
 
-**Order for PKT-30 to PKT-48:** PKT-30 to PKT-47 are done. PKT-48 is the last one before the
-QUIC packets (PKT-49 to PKT-52): passed-through and blocked QUIC both rely on the UDP path and
-on a TLS fallback that works.
+**Order for PKT-30 to PKT-48:** all done. The QUIC packets (PKT-49 to PKT-52) are next:
+passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback that works.
 
 ### PKT-49 — Decrypt QUIC v1/v2 client Initial packets
 
