@@ -154,19 +154,23 @@ class UdpConnection internal constructor(
             outBuffer.clear()
             outBuffer.put(payload)
             outBuffer.flip()
-            var bytesWritten = 0
-            while (outBuffer.hasRemaining()) {
-                try {
-                    bytesWritten += selectableChannel.write(outBuffer)
-                } catch (e: IOException) {
-                    Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
-                    closeHard()
-                    break
-                } catch (e: BufferOverflowException) {
-                    Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
-                    closeHard()
-                    break
-                }
+            // One attempt per datagram. A datagram channel sends a datagram whole or not at
+            // all, and one it has no room for is dropped, as UDP allows. Retrying in a loop
+            // would hold up the thread that handles every packet from the device
+            // (docs/vpn-mitm-audit.md PKT-43).
+            val bytesWritten = try {
+                selectableChannel.write(outBuffer)
+            } catch (e: IOException) {
+                Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
+                closeHard()
+                0
+            } catch (e: BufferOverflowException) {
+                Timber.e(e, "udp$id Error writing to DatagramChannel, closing connection")
+                closeHard()
+                0
+            }
+            if (bytesWritten == 0 && state != TransportLayerState.CLOSED && state != TransportLayerState.ABORTED) {
+                Timber.w("udp$id Dropping a datagram of ${payload.size} bytes that the DatagramChannel did not take")
             }
             if (bytesWritten > 0) {
                 lastActivityAt = System.currentTimeMillis()

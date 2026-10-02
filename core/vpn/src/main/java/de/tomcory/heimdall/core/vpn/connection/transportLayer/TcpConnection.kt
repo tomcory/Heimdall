@@ -21,7 +21,6 @@ import timber.log.Timber
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.nio.BufferOverflowException
 import java.nio.ByteBuffer
 import java.nio.channels.CancelledKeyException
 import java.nio.channels.SelectionKey
@@ -55,7 +54,6 @@ class TcpConnection internal constructor(
     ipPacketBuilder = ipPacketBuilder
 ) {
 
-    private val window = initialPacket.header.window
     private val theirInitSeqNum = initialPacket.header.sequenceNumberAsLong
     private val ourInitSeqNum = (Math.random() * 0xFFFFFFF).toLong()
 
@@ -110,8 +108,41 @@ class TcpConnection internal constructor(
     @Volatile
     private var finSent = false
 
-    /** Whether reading from the outward-facing channel is suspended because of the backlog. Guarded by [sendLock]. */
+    /** Whether reading from the outward-facing channel is suspended because of the backlog. Written under [sendLock]. */
+    @Volatile
     private var readPaused = false
+
+    // Sending to the remote host (docs/vpn-mitm-audit.md PKT-43). What the outward-facing
+    // channel does not take at once is queued and written when the selector reports the channel
+    // writable. Nothing waits for the channel in a loop: that loop used to run on the thread
+    // that handles every packet from the device, and a slow remote host stalled all traffic.
+    // The window advertised to the device shrinks as data piles up, so the device slows down
+    // instead.
+    private val writeLock = Any()
+
+    /** Data for the remote host that the channel has not taken yet, in order. Guarded by [writeLock]. */
+    private val outQueue = ArrayDeque<ByteBuffer>()
+
+    /** Bytes in [outQueue]. Written under [writeLock]. */
+    @Volatile
+    private var outQueuedBytes = 0L
+
+    /** Whether the channel's sending side is to be shut down once everything has been written. Guarded by [writeLock]. */
+    private var shutdownOutputPending = false
+
+    /** Whether the channel is to be closed once everything has been written. Guarded by [writeLock]. */
+    private var closeWhenDrained = false
+
+    /** Whether reading from the outward-facing channel has ended for good, because the device closed the connection. */
+    @Volatile
+    private var readsStopped = false
+
+    /** Guards changes to the selection key's interest set, which depend on both directions' state. */
+    private val interestLock = Any()
+
+    /** The highest sequence number the device has been told it may send up to (acknowledgement number plus window). */
+    @Volatile
+    private var advertisedEdge = (theirInitSeqNum + 1).toInt()
 
     /** Wall-clock time at which data was last sent to the device, or queued while nothing was waiting. */
     @Volatile
@@ -369,50 +400,167 @@ class TcpConnection internal constructor(
         }
         if (selectionKey.isConnectable) {
             unwrapInboundConnectable(selectionKey)
-        } else if (selectionKey.isReadable) {
+            return
+        }
+        if (selectionKey.isWritable) {
+            drainOutQueue()
+        }
+        if (selectionKey.isValid && selectionKey.isReadable) {
             unwrapInboundReadable(selectionKey)
         }
     }
 
     override fun wrapOutbound(payload: ByteArray) {
-        if (payload.isNotEmpty()) {
-            if(payload.size <= outBuffer.limit()) {
-                outBuffer.clear()
-                outBuffer.put(payload)
-                outBuffer.flip()
+        if (payload.isEmpty()) {
+            return
+        }
+        var failure: Exception? = null
+        synchronized(writeLock) {
+            val buffer = ByteBuffer.wrap(payload)
+            try {
+                if (outQueue.isEmpty()) {
+                    // nothing is waiting, so this may go out directly, as far as the channel takes it
+                    recordBytesOut(selectableChannel.write(buffer))
+                }
+                if (buffer.hasRemaining()) {
+                    outQueue.addLast(buffer)
+                    outQueuedBytes += buffer.remaining()
+                    updateInterest()
+                }
+            } catch (e: Exception) {
+                failure = e
+            }
+        }
+        failure?.let {
+            Timber.e("tcp$id Error writing to SocketChannel (${it.javaClass}), closing connection")
+            closeHard()
+        }
+    }
 
-                var bytesWritten = 0
-                while (outBuffer.hasRemaining()) {
-                    try {
-                        bytesWritten += selectableChannel.write(outBuffer)
-                    } catch (e: Exception) {
-                        Timber.e("tcp$id Error writing to SocketChannel (${e.javaClass}, closing connection")
-                        closeHard()
+    /**
+     * Writes queued data to the outward-facing channel as far as it takes it. Called on the
+     * selector thread when the channel is writable.
+     */
+    private fun drainOutQueue() {
+        var failure: Exception? = null
+        synchronized(writeLock) {
+            try {
+                while (true) {
+                    val head = outQueue.peekFirst() ?: break
+                    val written = selectableChannel.write(head)
+                    if (written > 0) {
+                        outQueuedBytes -= written
+                        recordBytesOut(written)
+                    }
+                    if (head.hasRemaining()) {
                         break
                     }
+                    outQueue.removeFirst()
                 }
-                recordBytesOut(bytesWritten)
-            } else {
-
-                //TODO: this is a dirty hack to prevent buffer overflows for stupidly large reassembled payloads
-                val largeBuffer = ByteBuffer.wrap(payload)
-
-                var bytesWritten = 0
-                while (largeBuffer.hasRemaining()) {
-                    try {
-                        bytesWritten += selectableChannel.write(largeBuffer)
-                    } catch (e: IOException) {
-                        Timber.e("tcp$id SocketChannel registered: ${selectableChannel.isRegistered}, connected: ${selectableChannel.isConnected}, open: ${selectableChannel.isOpen}")
-                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
-                        closeHard()
-                        break
-                    } catch (e: BufferOverflowException) {
-                        Timber.e(e, "tcp$id Error writing to SocketChannel, closing connection")
-                        closeHard()
-                        break
-                    }
+                if (outQueue.isEmpty()) {
+                    updateInterest()
                 }
-                recordBytesOut(bytesWritten)
+            } catch (e: Exception) {
+                failure = e
+            }
+        }
+        failure?.let {
+            Timber.e("tcp$id Error writing to SocketChannel (${it.javaClass}), closing connection")
+            closeHard()
+            return
+        }
+        completeDeferredUpstreamActions()
+        announceWindowIfOpened()
+    }
+
+    /** Data accepted from the device that the outward-facing channel has not taken yet, wherever it is waiting. */
+    private fun outboundBacklog(): Long = outQueuedBytes + outboundBytesInProcess
+
+    /**
+     * The receive window to advertise to the device: the room left for its data. No window
+     * scaling is in effect, so 65535 is the most that can be advertised.
+     */
+    private fun advertisedWindow(): Int {
+        return (OUT_BACKLOG_LIMIT - outboundBacklog()).coerceIn(0L, MAX_WINDOW.toLong()).toInt()
+    }
+
+    /**
+     * Tells the device that its window has opened, if it has by a worthwhile amount since the
+     * device was last told. While data flows, every ACK carries the window anyway; this is for
+     * a device that has stopped sending because the window was shut.
+     */
+    private fun announceWindowIfOpened() {
+        if (state != TransportLayerState.CONNECTED) {
+            return
+        }
+        val edge = theirSeqNum.get().toInt() + advertisedWindow()
+        if (edge - advertisedEdge >= WINDOW_UPDATE_THRESHOLD) {
+            sendEmptyAck()
+        }
+    }
+
+    /**
+     * Shuts down or closes the outward-facing channel if that was put off until everything for
+     * the remote host has been written, and it now has.
+     */
+    private fun completeDeferredUpstreamActions() {
+        var shutdown = false
+        var close = false
+        synchronized(writeLock) {
+            if (outQueue.isNotEmpty() || outboundBytesInProcess > 0) {
+                return
+            }
+            shutdown = shutdownOutputPending
+            close = closeWhenDrained
+            shutdownOutputPending = false
+            closeWhenDrained = false
+        }
+        if (close) {
+            synchronized(closeLock) {
+                closeChannel()
+                finishCloseIfComplete()
+            }
+        } else if (shutdown) {
+            try {
+                selectableChannel.shutdownOutput()
+            } catch (e: IOException) {
+                Timber.w("tcp$id Could not shut down the SocketChannel's output (${e.javaClass.simpleName})")
+            }
+        }
+    }
+
+    override fun onOutboundBacklogChanged() {
+        completeDeferredUpstreamActions()
+        announceWindowIfOpened()
+    }
+
+    /**
+     * Sets the selection key's interest set to what the connection currently needs: reading
+     * unless that is suspended, writing while data is queued for the remote host. Unlike
+     * registering a channel, this does not wait for a select() in progress, so it needs no
+     * selectorMonitor. The wake-up makes the selector notice the change.
+     */
+    private fun updateInterest() {
+        synchronized(interestLock) {
+            if (!selectableChannel.isConnected) {
+                // still connecting: the key is waiting for OP_CONNECT and must be left alone
+                return
+            }
+            val selectionKey = selectableChannel.keyFor(componentManager.selector) ?: return
+            var ops = 0
+            if (!readPaused && !readsStopped) {
+                ops = ops or SelectionKey.OP_READ
+            }
+            if (outQueuedBytes > 0) {
+                ops = ops or SelectionKey.OP_WRITE
+            }
+            try {
+                if (selectionKey.interestOps() != ops) {
+                    selectionKey.interestOps(ops)
+                    componentManager.selector.wakeup()
+                }
+            } catch (e: CancelledKeyException) {
+                // the channel was closed in the meantime
             }
         }
     }
@@ -422,6 +570,11 @@ class TcpConnection internal constructor(
             return
         }
         synchronized(sendLock) {
+            if (finSent) {
+                // The device closed the connection and has been sent our FIN, while the
+                // outward-facing channel was kept open for data still on its way out.
+                return
+            }
             if (sendQueue.isEmpty()) {
                 lastSendProgressAt = System.currentTimeMillis()
             }
@@ -518,17 +671,13 @@ class TcpConnection internal constructor(
      *
      * @return whether reading is suspended.
      */
-    private fun pauseReadingIfBacklogged(selectionKey: SelectionKey): Boolean {
+    private fun pauseReadingIfBacklogged(): Boolean {
         synchronized(sendLock) {
             if (inboundBacklog() < SEND_BACKLOG_HIGH) {
                 return false
             }
             readPaused = true
-            try {
-                selectionKey.interestOps(0)
-            } catch (e: CancelledKeyException) {
-                // the channel was closed in the meantime
-            }
+            updateInterest()
             return true
         }
     }
@@ -539,16 +688,7 @@ class TcpConnection internal constructor(
             return
         }
         readPaused = false
-        val selectionKey = selectableChannel.keyFor(componentManager.selector) ?: return
-        try {
-            // Unlike registering a channel, changing a key's interest set does not wait for a
-            // select() in progress, so this needs no selectorMonitor. The wake-up makes the
-            // selector notice the change.
-            selectionKey.interestOps(SelectionKey.OP_READ)
-            componentManager.selector.wakeup()
-        } catch (e: CancelledKeyException) {
-            // the channel was closed in the meantime
-        }
+        updateInterest()
     }
 
     override fun onInboundBacklogChanged() {
@@ -592,7 +732,8 @@ class TcpConnection internal constructor(
      *
      * @param payload The segment's payload.
      * @param alreadyReceived How many bytes at the start of the payload were received before.
-     * @return false if the connection was aborted because it is in no state to forward data.
+     * @return false if the data was not taken: the connection was aborted because it is in no
+     * state to forward data, or there is no room for the data at the moment.
      */
     private fun handleAckData(payload: Packet, alreadyReceived: Int): Boolean {
         if (state != TransportLayerState.CONNECTED) {
@@ -602,10 +743,18 @@ class TcpConnection internal constructor(
             return false
         }
 
-        increaseTheirSeqNum(payload.length() - alreadyReceived)
+        val newBytes = payload.length() - alreadyReceived
+        if (theirSeqNum.get().toInt() + newBytes - advertisedEdge > 0) {
+            // Beyond the window the device was told: too much of what it sent earlier is still
+            // waiting for the remote host. Drop it and say again where the window ends; the
+            // device keeps the data and sends it again once the window opens
+            // (docs/vpn-mitm-audit.md PKT-43).
+            Timber.d("tcp$id Dropping segment sent beyond the advertised window (${payload.length()} bytes)")
+            sendEmptyAck()
+            return false
+        }
 
-        // acknowledge packet to the client by sending an empty ACK
-        sendEmptyAck()
+        increaseTheirSeqNum(newBytes)
 
         // pass the payload to the encryption and application layers for processing and store the result
         if (alreadyReceived == 0) {
@@ -615,6 +764,14 @@ class TcpConnection internal constructor(
             val rawData = payload.rawData
             passOutboundToEncryptionLayer(UnknownPacket.newPacket(rawData, alreadyReceived, rawData.size - alreadyReceived))
         }
+
+        // Acknowledge the data. After it was passed on, so that the window in the ACK already
+        // accounts for it: it may have had to be queued for the remote host. Not if passing it
+        // on failed and closed the connection.
+        if (state == TransportLayerState.CLOSED || state == TransportLayerState.ABORTED) {
+            return false
+        }
+        sendEmptyAck()
         return true
     }
 
@@ -694,6 +851,11 @@ class TcpConnection internal constructor(
      */
     private fun finishCloseIfComplete() {
         if (deviceFinReceived && ourFinAcknowledged) {
+            if (synchronized(writeLock) { closeWhenDrained }) {
+                // data for the remote host is still on its way out; completeDeferredUpstreamActions()
+                // comes back here when it has been written
+                return
+            }
             closeChannel()
             state = TransportLayerState.CLOSED
             ConnectionCache.removeConnection(this)
@@ -760,14 +922,31 @@ class TcpConnection internal constructor(
     }
 
     /**
-     * Answers the client's FIN by closing the whole connection at once. The outward-facing
-     * channel is closed now, but the connection stays [TransportLayerState.CLOSING] and in the
+     * Answers the client's FIN by closing the whole connection. The outward-facing
+     * channel is closed (see below), but the connection stays [TransportLayerState.CLOSING] and in the
      * cache until the device acknowledges our FIN-ACK - this is a graceful, client-initiated
      * close, not an abort, so no client-facing RST is sent. The device's final ACK finalizes the
      * state to CLOSED and removes the connection from the cache (handleAckEmpty).
      */
     private fun closeFully() {
-        closeSoft(abortClientSession = false, finalizeState = false)
+        // The outward-facing channel is closed now, unless data for the remote host is still
+        // waiting to be written. Then it is closed when that is done, and until then nothing
+        // more is read from it.
+        val deferred = synchronized(writeLock) {
+            if (outboundBacklog() > 0 && selectableChannel.isOpen && selectableChannel.isConnected) {
+                closeWhenDrained = true
+                true
+            } else {
+                false
+            }
+        }
+        if (deferred) {
+            state = TransportLayerState.CLOSING
+            readsStopped = true
+            updateInterest()
+        } else {
+            closeSoft(abortClientSession = false, finalizeState = false)
+        }
         increaseTheirSeqNum(1)
         deviceFinReceived = true
         if (!requestFin()) {
@@ -809,11 +988,22 @@ class TcpConnection internal constructor(
 
     /**
      * Shuts down the sending side of the outward-facing channel, which sends a FIN to the remote
-     * host while leaving the channel readable.
+     * host while leaving the channel readable. If data for the remote host is still waiting to
+     * be written, the shutdown happens once it has been.
      *
      * @return false if the channel could not be half-closed, e.g. because it is already closed.
      */
     private fun shutdownOutwardOutput(): Boolean {
+        synchronized(writeLock) {
+            if (outboundBacklog() > 0) {
+                // data for the remote host is still waiting to be written; the FIN follows it
+                if (!selectableChannel.isOpen) {
+                    return false
+                }
+                shutdownOutputPending = true
+                return true
+            }
+        }
         return try {
             selectableChannel.shutdownOutput()
             true
@@ -834,7 +1024,7 @@ class TcpConnection internal constructor(
             // Read no further ahead of the device than the backlog limit. This is what keeps a
             // device that reads slowly from being sent data it has no room for
             // (docs/vpn-mitm-audit.md PKT-42).
-            if (pauseReadingIfBacklogged(selectionKey)) {
+            if (readsStopped || pauseReadingIfBacklogged()) {
                 break
             }
             try {
@@ -982,13 +1172,22 @@ class TcpConnection internal constructor(
      * Constructs a [TcpPacket.Builder] with the supplied TCP flags to be used by [IpPacketBuilder.buildPacket].
      */
     private fun buildTcpPayload(urg: Boolean, ack: Boolean, psh: Boolean, rst: Boolean, syn: Boolean, fin: Boolean, rawPayload: ByteArray): TcpPacket.Builder {
+        val acknowledgment = theirSeqNum.get().toInt()
+        val window = advertisedWindow()
+        // The edge only ever moves forward. If the room has shrunk since the device was last
+        // told, data it sends up to the old edge is still accepted: a window, once advertised,
+        // is not taken back.
+        val edge = acknowledgment + window
+        if (edge - advertisedEdge > 0) {
+            advertisedEdge = edge
+        }
         val builder = TcpPacket.Builder()
             .srcAddr(ipPacketBuilder.remoteAddress)
             .dstAddr(ipPacketBuilder.localAddress)
             .srcPort(TcpPort(remotePort.toShort(), ""))
             .dstPort(TcpPort(localPort.toShort(), ""))
             .sequenceNumber(ourSeqNum.get().toInt())
-            .acknowledgmentNumber(theirSeqNum.get().toInt())
+            .acknowledgmentNumber(acknowledgment)
             .dataOffset(5.toByte())
             .reserved(0.toByte())
             .urg(urg)
@@ -997,7 +1196,7 @@ class TcpConnection internal constructor(
             .rst(rst)
             .syn(syn)
             .fin(fin)
-            .window(window)
+            .window(window.toShort())
             .urgentPointer(0.toShort())
             .padding(ByteArray(0))
             .options(ArrayList())
@@ -1080,6 +1279,18 @@ class TcpConnection internal constructor(
          * there is always enough at hand to fill the window when it opens.
          */
         const val SEND_BACKLOG_HIGH = 2 * 65535L
+
+        /** The largest receive window that can be advertised without window scaling. */
+        const val MAX_WINDOW = 65535
+
+        /**
+         * How much data accepted from the device may wait to be written to the remote host. As
+         * the backlog approaches this, the window advertised to the device shrinks to zero.
+         */
+        const val OUT_BACKLOG_LIMIT = 256 * 1024L
+
+        /** By how much the window must have opened before the device is told without being asked. */
+        const val WINDOW_UPDATE_THRESHOLD = 16 * 1024
 
         /** The backlog at or below which reading from the remote host resumes. */
         const val SEND_BACKLOG_LOW = 32 * 1024L

@@ -141,6 +141,9 @@ class TlsConnection(
         // dispatched via connectionScope (see its kdoc) rather than run inline, since this is one
         // of the two true external entry points where a thread outside this connection's own
         // confinement first touches its state
+        // counted by the transport layer until it is processed, as inbound payloads are
+        // (docs/vpn-mitm-audit.md PKT-43)
+        transportLayer.outboundProcessingDeferred(payload.size)
         connectionScope.launch {
             try {
                 if(log) Timber.d("tls$id unwrapOutbound of ${payload.size} bytes in state $state")
@@ -152,6 +155,8 @@ class TlsConnection(
                 // this connection's only safety net for its own record-processing failures
                 Timber.e(e, "tls$id unwrapOutbound failed, closing connection")
                 closeConnection()
+            } finally {
+                transportLayer.outboundProcessingFinished(payload.size)
             }
         }
     }

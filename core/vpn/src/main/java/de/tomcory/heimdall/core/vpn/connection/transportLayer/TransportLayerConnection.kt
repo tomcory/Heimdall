@@ -209,6 +209,31 @@ abstract class TransportLayerConnection protected constructor(
     /** Called when less inbound data is waiting inside the encryption layer than before. */
     protected open fun onInboundBacklogChanged() {}
 
+    /** Bytes from the device that the encryption layer has taken on but not finished processing. */
+    private val outboundInProcess = AtomicLong(0)
+
+    protected val outboundBytesInProcess: Long
+        get() = outboundInProcess.get()
+
+    /**
+     * The outbound counterpart of [inboundProcessingDeferred]: called by an encryption layer
+     * that processes the device's data on another thread, when it takes on [bytes] bytes it
+     * will finish with later. It lets the transport layer count data it has accepted from the
+     * device but not yet been handed back for the remote host (docs/vpn-mitm-audit.md PKT-43).
+     */
+    fun outboundProcessingDeferred(bytes: Int) {
+        outboundInProcess.addAndGet(bytes.toLong())
+    }
+
+    /** The counterpart of [outboundProcessingDeferred], called when those bytes are dealt with. */
+    fun outboundProcessingFinished(bytes: Int) {
+        outboundInProcess.addAndGet(-bytes.toLong())
+        onOutboundBacklogChanged()
+    }
+
+    /** Called when less outbound data is waiting inside the encryption layer than before. */
+    protected open fun onOutboundBacklogChanged() {}
+
     protected fun createDatabaseEntity(): Long {
         return if(remotePort == 53) {
             0
