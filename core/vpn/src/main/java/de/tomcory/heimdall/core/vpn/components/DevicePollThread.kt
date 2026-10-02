@@ -97,7 +97,8 @@ class DevicePollThread internal constructor(
 
             if(rawPacket.isNotEmpty()) {
                 val parsedPacket = try {
-                    parsePacket(rawPacket)
+                    // a fragment is held back until the datagram it belongs to is complete
+                    parsePacket(rawPacket)?.let { reassemble(it) }
                 } catch (e: Throwable) {
                     Timber.e(e, "Uncaught exception while parsing a packet from the device, dropping it")
                     null
@@ -115,6 +116,22 @@ class DevicePollThread internal constructor(
             }
         }
         return true
+    }
+
+    private val reassembler = IpV4Reassembler()
+
+    /**
+     * Passes a packet through unless it is an IPv4 fragment.
+     *
+     * @return the packet itself, the whole datagram if the packet was the fragment that
+     * completed it, or null if it is a fragment of a datagram that is still incomplete.
+     */
+    private fun reassemble(packet: IpPacket): IpPacket? {
+        return if (packet is IpV4Packet && IpV4Reassembler.isFragment(packet)) {
+            reassembler.add(packet)
+        } else {
+            packet
+        }
     }
 
     private fun parsePacket(rawPacket: ByteArray): IpPacket? {

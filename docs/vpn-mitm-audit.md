@@ -38,7 +38,7 @@ per-segment counter updates, not body buffering, freeze the VPN after a large up
 **Addendum 2026-10-02:** PKT-39 is implemented. Verifying it on the emulator produced V-57 /
 PKT-48 (no reordering buffer, so real packet loss on the tunnel stalls uploads) and V-58 /
 PKT-40 (the VPN service crashes when the interface cannot be established, and again on the
-restart that follows). PKT-40 to PKT-45 are implemented. It was numbered first among the pending packets because it had to be
+restart that follows). PKT-40 to PKT-46 are implemented. It was numbered first among the pending packets because it had to be
 done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47 and
 the QUIC packets to PKT-49–PKT-52. References were checked against
 `bugfix/mitm-vpn` at `ac57197`.
@@ -2758,7 +2758,38 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   `connection/inetLayer/IpV4PacketBuilder.kt`.
 - **Tests:** unit tests for reassembly (in order, out of order, incomplete set times out) and
   for inbound fragmentation. Device: `run-stress.sh udp` — the 4000- and 8000-byte echoes pass.
-- **Commit:** `feat(vpn): reassemble and fragment UDP datagrams larger than the MTU`
+- **Implementation notes (2026-10-02):**
+  - **Traced first.** A capture on `tun0` shows the device sending a 4000-byte datagram as
+    three IP fragments and an 8000-byte one as six. pcap4j parses a fragment's payload as a
+    `FragmentedPacket`, `DevicePollThread` forwards only TCP and UDP payloads, so every
+    fragment was dropped there. Nothing came back because nothing went out: the outbound
+    direction failed first.
+  - **Outbound.** New `IpV4Reassembler` (in `components/`), used by `DevicePollThread` before
+    a packet goes to the handler. Fragments are collected by source, destination,
+    identification and protocol; when they cover the datagram without gaps it is rebuilt with
+    `IpV4Helper.defragment`. Incomplete datagrams are dropped after 5 s, at most 64 are held.
+    `UdpConnection.wrapOutbound()` no longer copies the payload into its 16 kB buffer, which a
+    reassembled datagram can exceed.
+  - **Inbound fragmentation was not implemented**, because it turned out not to be needed.
+    With reassembly in place the echoes pass, and the capture shows the replies reaching the
+    device as single IP packets of 4028 and 8028 bytes. The device accepts packets larger than
+    the MTU from the tunnel, as it does the 16 kB TCP segments Heimdall has always written.
+    `IpV4PacketBuilder.kt`, listed under Files, is unchanged.
+  - Remaining limit: an inbound datagram larger than the 16,413-byte read buffer is cut off.
+    `UdpConnection` now logs a warning when a datagram fills the buffer. IPv6 fragments (an
+    extension header, not a header flag) are not reassembled.
+  - Tests: `IpV4ReassemblerTest` (six cases: in order, out of order and repeated,
+    interleaved datagrams, timeout, bound on pending datagrams, an unfragmented packet).
+    301 `core:vpn` tests pass.
+  - Emulator, `run-stress.sh udp`, four runs per build in alternation: `udp-echo-4000` and
+    `udp-echo-8000` pass 4 of 4 with this packet and 0 of 4 without.
+  - **`udp-burst-500` is not a Heimdall failure.** It failed in 2 of 8 of these runs across
+    both builds (228 to 285 of 500) and in the run **without the VPN** as well (228 of 500).
+    The emulator's own NAT drops part of a burst, as the test's source already notes. This is
+    the check listed as failing since PKT-41.
+  - Regression: the full suite gives 71 passed, 1 failed (`udp-burst-500`, 382 of 500).
+    `emulator-traffic.sh run` is clean.
+- **Commit:** `feat(vpn): reassemble fragmented UDP datagrams from the device`
 
 ### PKT-47 — Release the selector and pipe descriptors when the VPN stops
 
@@ -2798,7 +2829,7 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   `run-stress.sh upload,tlsbulk` passes.
 - **Commit:** `fix(vpn): buffer out-of-order segments from the device until the gap before them is filled`
 
-**Order for PKT-30 to PKT-48:** PKT-30 to PKT-45 are done. PKT-46 to PKT-48 can follow in any
+**Order for PKT-30 to PKT-48:** PKT-30 to PKT-46 are done. PKT-47 and PKT-48 can follow in either
 order. All of them come before the QUIC packets (PKT-49 to PKT-52): passed-through and blocked
 QUIC both rely on the UDP path and on a TLS fallback that works.
 

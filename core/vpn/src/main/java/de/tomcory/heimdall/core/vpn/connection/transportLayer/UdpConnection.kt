@@ -16,6 +16,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.BufferOverflowException
+import java.nio.ByteBuffer
 import java.nio.channels.DatagramChannel
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
@@ -151,9 +152,9 @@ class UdpConnection internal constructor(
     override fun wrapOutbound(payload: ByteArray) {
         // if the application layer returned anything, write it to the connection's outward-facing channel
         if (payload.isNotEmpty()) {
-            outBuffer.clear()
-            outBuffer.put(payload)
-            outBuffer.flip()
+            // Wrapped rather than copied into outBuffer: a datagram can be larger than that
+            // buffer, up to the 64 kB that IP allows (docs/vpn-mitm-audit.md PKT-46).
+            val outBuffer = ByteBuffer.wrap(payload)
             // One attempt per datagram. A datagram channel sends a datagram whole or not at
             // all, and one it has no room for is dropped, as UDP allows. Retrying in a loop
             // would hold up the thread that handles every packet from the device
@@ -212,6 +213,10 @@ class UdpConnection internal constructor(
                     inBuffer.clear()
                     bytesRead = selectableChannel.read(inBuffer)
                     if (bytesRead > 0) {
+                        if (bytesRead == inBuffer.capacity()) {
+                            // a datagram channel hands over what fits and discards the rest
+                            Timber.w("udp$id Inbound datagram fills the read buffer of ${inBuffer.capacity()} bytes and may have been cut off")
+                        }
                         totalBytesRead += bytesRead
                         inBuffer.flip()
                         val rawData = Arrays.copyOf(inBuffer.array(), bytesRead)
