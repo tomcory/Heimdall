@@ -124,8 +124,16 @@ class HttpConnection(
         encryptionLayer.wrapInbound(payload)
     }
 
+    /**
+     * Whether to log every payload. Off by default: these lines are written once per TCP
+     * segment, and with Timber's debug tree each costs a stack trace to find its tag. During
+     * an upload they took half of the time of the thread that handles the device's packets
+     * (docs/vpn-mitm-audit.md PKT-45).
+     */
+    private val log = false
+
     private fun handleData(payload: ByteArray, isOutbound: Boolean) {
-        Timber.d("http$id Processing http ${if(isOutbound) "out" else "in"}: ${payload.size} bytes")
+        if(log) Timber.d("http$id Processing http ${if(isOutbound) "out" else "in"}: ${payload.size} bytes")
         val state = if (isOutbound) outboundState else inboundState
 
         // nothing in this direction is an HTTP message any more, so there is nothing to parse or keep
@@ -280,7 +288,7 @@ class HttpConnection(
                     continueAfterMessage(combined, messageEnd, isOutbound)
                 }
             } else {
-                Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
+                if(log) Timber.d("http$id continuing overflow with ${state.remainingContentLength} of ${state.statedContentLength} bytes remaining")
             }
         }
     }

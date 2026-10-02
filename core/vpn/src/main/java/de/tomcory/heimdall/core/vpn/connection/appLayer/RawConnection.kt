@@ -21,9 +21,12 @@ class RawConnection(
         }
     }
 
+    /** Whether to log every payload. Off by default, as in [HttpConnection]. */
+    private val log = false
+
     override fun unwrapOutbound(payload: ByteArray) {
         //TODO: implement
-        if(encryptionLayer.doMitm) {
+        if(log && encryptionLayer.doMitm) {
             Timber.d("raw$id Processing raw out: ${payload.size} bytes")
         }
         encryptionLayer.wrapOutbound(payload)
@@ -36,7 +39,7 @@ class RawConnection(
 
     override fun unwrapInbound(payload: ByteArray) {
         //TODO: implement
-        if(encryptionLayer.doMitm) {
+        if(log && encryptionLayer.doMitm) {
             Timber.d("raw$id Processing raw in: ${payload.size} bytes")
         }
         encryptionLayer.wrapInbound(payload)

@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.pcap4j.packet.IpPacket
 import org.pcap4j.packet.Packet
+import org.pcap4j.packet.TcpMaximumSegmentSizeOption
 import org.pcap4j.packet.TcpPacket
 import org.pcap4j.packet.UnknownPacket
 import org.pcap4j.packet.namednumber.TcpPort
@@ -55,6 +56,17 @@ class TcpConnection internal constructor(
 ) {
 
     private val theirInitSeqNum = initialPacket.header.sequenceNumberAsLong
+
+    /**
+     * The maximum segment size the device announced in its SYN, or null if it announced none.
+     * Read from the option's raw bytes (kind 2, length 4, then the value), so that it does not
+     * depend on how pcap4j is configured to parse options.
+     */
+    private val deviceMss: Int? = initialPacket.header.options
+        .firstOrNull { it.kind.value() == TCP_OPTION_MSS }
+        ?.rawData
+        ?.takeIf { it.size == 4 }
+        ?.let { ((it[2].toInt() and 0xFF) shl 8) or (it[3].toInt() and 0xFF) }
     private val ourInitSeqNum = (Math.random() * 0xFFFFFFF).toLong()
 
     // ourSeqNum is advanced both by the InboundTrafficHandler-driven data path (wrapInbound) and
@@ -1230,7 +1242,23 @@ class TcpConnection internal constructor(
      * Convenience method that calls [buildTcpPayload] with the required flags to construct a SYN-ACK packet.
      */
     private fun buildSynAck(): TcpPacket.Builder {
-        return buildTcpPayload(urg = false, ack = true, psh = false, rst = false, syn = true, fin = false, rawPayload = ByteArray(0))
+        val builder = buildTcpPayload(urg = false, ack = true, psh = false, rst = false, syn = true, fin = false, rawPayload = ByteArray(0))
+        // Announce a maximum segment size. Without the option the device has to assume the
+        // default of 536 bytes and sends its data in segments about a third of the size its
+        // interface allows, each of which costs a trip through the whole pipeline
+        // (docs/vpn-mitm-audit.md PKT-45). The size the device announced itself is what its
+        // side of the tunnel can carry, so the same is asked of it.
+        deviceMss?.let { mss ->
+            builder.options(
+                listOf(
+                    TcpMaximumSegmentSizeOption.Builder()
+                        .maxSegSize(mss.toShort())
+                        .correctLengthAtBuild(true)
+                        .build()
+                )
+            )
+        }
+        return builder
     }
 
     /**
@@ -1310,6 +1338,9 @@ class TcpConnection internal constructor(
          * there is always enough at hand to fill the window when it opens.
          */
         const val SEND_BACKLOG_HIGH = 2 * 65535L
+
+        /** The kind of the TCP option that carries the maximum segment size. */
+        private const val TCP_OPTION_MSS: Byte = 2
 
         /** The largest receive window that can be advertised without window scaling. */
         const val MAX_WINDOW = 65535

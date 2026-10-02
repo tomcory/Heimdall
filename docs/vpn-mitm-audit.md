@@ -38,7 +38,7 @@ per-segment counter updates, not body buffering, freeze the VPN after a large up
 **Addendum 2026-10-02:** PKT-39 is implemented. Verifying it on the emulator produced V-57 /
 PKT-48 (no reordering buffer, so real packet loss on the tunnel stalls uploads) and V-58 /
 PKT-40 (the VPN service crashes when the interface cannot be established, and again on the
-restart that follows). PKT-40 to PKT-44 are implemented. It was numbered first among the pending packets because it had to be
+restart that follows). PKT-40 to PKT-45 are implemented. It was numbered first among the pending packets because it had to be
 done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47 and
 the QUIC packets to PKT-49–PKT-52. References were checked against
 `bugfix/mitm-vpn` at `ac57197`.
@@ -1264,6 +1264,19 @@ Likely contributors, none measured on its own:
 
 **Recommendation:** batch the byte counters (PKT-38, done), then profile an upload for what is
 left (PKT-45).
+
+**After PKT-45 (2026-10-02).** The emulator was slower that day than when the table above was
+measured, so the rates are given with their own baseline, all from one session, before and
+after in alternating runs (two each):
+
+| Transfer | Without VPN | Before PKT-45 | After PKT-45 |
+|---|---|---|---|
+| Plain download, 50 MB | 5.0 MB/s | 3.4 – 3.5 MB/s | 5.0 – 5.2 MB/s |
+| Plain upload, 20 MB | 10.1 MB/s | 0.6 – 0.8 MB/s | 5.2 – 7.3 MB/s |
+| TLS download, 25 MB (MitM) | 5.2 MB/s | 2.5 – 2.6 MB/s | 4.4 – 4.6 MB/s |
+| TLS upload, 5 MB (MitM) | 3.7 MB/s | 1.4 MB/s | 3.1 – 3.2 MB/s |
+
+Downloads are now at the rate of the direct path, uploads at one half to three quarters of it.
 
 ### V-55 revisited — Per-segment counter updates freeze the VPN after a large upload (High)
 
@@ -2699,7 +2712,37 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   `connection/appLayer/HttpConnection.kt`.
 - **Tests:** byte counters in `RecordingDatabaseConnector` still match the bytes transferred
   after close. Device: record `run-stress.sh download,upload,tlsbulk` rates in the V-55 table.
-- **Commit:** `perf(vpn): batch per-connection byte counter updates`
+- **Implementation notes (2026-10-02):**
+  - **MSS.** The SYN-ACK now carries a maximum-segment-size option with the value the device
+    announced in its own SYN (1460 on the emulator; `TcpConnection.buildSynAck()`). A device
+    that announced none is told none. The device's upload segments went from 533 to 1438
+    bytes on average, 39,400 to 14,600 segments for the test run, and the 20 MB upload from
+    0.9 to 2.5 MB/s.
+  - **Profile** (simpleperf, packet thread during a 20 MB plain upload, after the MSS change):
+    51 % of the thread's time was `Timber.d`. The debug tree takes a stack trace for every
+    line to find its tag (36 %), and `HttpConnection` wrote two lines per segment. The
+    upstream write was 17 %, building and sending the ACK 19 %.
+  - **Logging.** The two per-payload lines in `HttpConnection` and the two in `RawConnection`
+    are behind a `log` flag that is off, as `TlsConnection` already does it. This took the
+    upload from 2.5 to 6.0 MB/s, and it helps downloads as much, because the same line was
+    written for every inbound payload on the selector thread.
+  - Packet thread CPU for the test run: 24 to 26 s before, 3.2 s after. The rates are in the
+    V-55 table.
+  - **Window scaling was not added.** Nothing in the measurements points at the 65535-byte
+    windows: downloads run at the rate of the direct path with them.
+  - **What is left** (profile after both changes): the packet thread spends 35 % in the
+    upstream `write()` and 37 % on the ACK it sends for every segment, two thirds of that in
+    pcap4j building the IP and TCP packet objects. The poll thread spends 37 % parsing each
+    packet with pcap4j, and the device write thread carries one ACK per segment. Options, none
+    taken here: acknowledge every second segment, build ACKs without pcap4j, or raise the
+    tunnel MTU (1500 today, `Builder.setMtu()` is never called) so that the device sends
+    fewer, larger segments.
+  - Tests: `TcpConnectionSetupTest` checks the option in the SYN-ACK as the device parses it.
+    The byte counter tests are unchanged and pass. 295 `core:vpn` tests pass.
+  - Regression: the full suite gives 69 passed, 3 failed (UDP 4000, 8000 and burst, as
+    before). `emulator-traffic.sh run` is clean.
+  - `TransportLayerConnection.kt`, listed under Files, did not need to change.
+- **Commit:** `perf(vpn): announce an MSS to the device and stop logging every payload`
 
 ### PKT-46 — Handle UDP datagrams larger than the MTU
 
@@ -2755,10 +2798,9 @@ not traced to specific connections. The baseline of 571 descriptors is V-56.
   `run-stress.sh upload,tlsbulk` passes.
 - **Commit:** `fix(vpn): buffer out-of-order segments from the device until the gap before them is filled`
 
-**Order for PKT-30 to PKT-48:** PKT-30 to PKT-44 are done. The rest are numbered in the order
-they should be done. PKT-45 to PKT-48 can follow in any order. All of them come before the QUIC
-packets (PKT-49 to PKT-52): passed-through and blocked QUIC both rely on the UDP path and on a
-TLS fallback that works.
+**Order for PKT-30 to PKT-48:** PKT-30 to PKT-45 are done. PKT-46 to PKT-48 can follow in any
+order. All of them come before the QUIC packets (PKT-49 to PKT-52): passed-through and blocked
+QUIC both rely on the UDP path and on a TLS fallback that works.
 
 ### PKT-49 — Decrypt QUIC v1/v2 client Initial packets
 

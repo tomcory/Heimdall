@@ -122,6 +122,37 @@ class TcpConnectionSetupTest {
     }
 
     @Test
+    fun `the SYN-ACK announces the maximum segment size the device announced`() {
+        // docs/vpn-mitm-audit.md PKT-45: without the option the device falls back to 536 bytes
+        appLookupGate.countDown()
+
+        val withMss = PacketFixtures.buildTcpSynPacket(localAddr, 46200, remoteAddr, serverSocket.localPort, mss = 1460)
+        val first = TransportLayerConnection.getInstance(withMss, componentManager, deviceWriter.handler)!!
+        first.unwrapOutbound(withMss.payload)
+        awaitUntil("expected a SYN-ACK") { deviceWriter.sentMessages.size == 1 }
+        val synAck = (deviceWriter.sentMessages[0].obj as IpPacket).payload as TcpPacket
+        assertTrue(synAck.header.syn && synAck.header.ack)
+        // re-parsed from its bytes, as the device sees it
+        val options = TcpPacket.newPacket(synAck.rawData, 0, synAck.rawData.size).header.options
+        assertEquals("the SYN-ACK must carry exactly one option", 1, options.size)
+        val raw = options[0].rawData
+        assertEquals("the option must be a maximum segment size", listOf<Byte>(2, 4), raw.take(2))
+        assertEquals(1460, ((raw[2].toInt() and 0xFF) shl 8) or (raw[3].toInt() and 0xFF))
+        assertEquals("the header must be 24 bytes long with the option", 6, synAck.header.dataOffsetAsInt)
+        // window scaling is not offered, so the device must not scale either
+        assertTrue(options.none { it.kind.value() == 3.toByte() })
+
+        // a device that announced none is not told one either
+        val withoutMss = PacketFixtures.buildTcpSynPacket(localAddr, 46201, remoteAddr, serverSocket.localPort)
+        val second = TransportLayerConnection.getInstance(withoutMss, componentManager, deviceWriter.handler)!!
+        second.unwrapOutbound(withoutMss.payload)
+        awaitUntil("expected a second SYN-ACK") { deviceWriter.sentMessages.size == 2 }
+        val plainSynAck = (deviceWriter.sentMessages[1].obj as IpPacket).payload as TcpPacket
+        assertTrue(plainSynAck.header.options.isEmpty())
+        assertEquals(5, plainSynAck.header.dataOffsetAsInt)
+    }
+
+    @Test
     fun `a reset from the device during setup ends the connection without a trace`() {
         val localPort = 46100
         val connection = open(localPort)

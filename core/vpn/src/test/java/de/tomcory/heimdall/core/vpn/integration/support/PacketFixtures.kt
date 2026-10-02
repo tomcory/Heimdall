@@ -2,7 +2,10 @@ package de.tomcory.heimdall.core.vpn.integration.support
 
 import org.pcap4j.packet.IpV4Packet
 import org.pcap4j.packet.Packet
+import org.pcap4j.packet.TcpMaximumSegmentSizeOption
+import org.pcap4j.packet.TcpNoOperationOption
 import org.pcap4j.packet.TcpPacket
+import org.pcap4j.packet.TcpWindowScaleOption
 import org.pcap4j.packet.UdpPacket
 import org.pcap4j.packet.UnknownPacket
 import org.pcap4j.packet.factory.PacketFactories
@@ -162,7 +165,8 @@ object PacketFixtures {
         remoteAddr: Inet4Address,
         remotePort: Int,
         seq: Int = 0,
-        window: Int = 65535
+        window: Int = 65535,
+        mss: Int? = null
     ): IpV4Packet {
         val tcp = buildTcpSegment(
             srcAddr = localAddr,
@@ -175,6 +179,16 @@ object PacketFixtures {
             synFlag = true,
             window = window
         )
+        if (mss != null) {
+            // as a real client's SYN carries it: maximum segment size, then other options
+            tcp.options(
+                listOf(
+                    TcpMaximumSegmentSizeOption.Builder().maxSegSize(mss.toShort()).correctLengthAtBuild(true).build(),
+                    TcpNoOperationOption.getInstance(),
+                    TcpWindowScaleOption.Builder().shiftCount(7.toByte()).correctLengthAtBuild(true).build()
+                )
+            )
+        }
         return buildIpV4Packet(localAddr, remoteAddr, IpNumber.TCP, tcp)
     }
 
