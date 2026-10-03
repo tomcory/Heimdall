@@ -52,6 +52,7 @@ public class StressClient {
     static int httpPort;
     static int echoPort;
     static int udpPort;
+    static int halfClosePort;
 
     static final int CONNECT_TIMEOUT = 10_000;
     static final int READ_TIMEOUT = 30_000;
@@ -62,6 +63,7 @@ public class StressClient {
         httpPort = Integer.parseInt(args[1]);
         echoPort = httpPort + 1;
         udpPort = httpPort + 2;
+        halfClosePort = httpPort + 3;
         // one connection per request unless a test asks for keep-alive itself
         System.setProperty("http.keepAlive", "false");
 
@@ -84,6 +86,7 @@ public class StressClient {
                     case "clientabort": clientAbort(); break;
                     case "unreachable": unreachable(); break;
                     case "duplex": duplex(); break;
+                    case "halfclose": halfClose(); break;
                     case "udp": udp(); break;
                     case "tls": tls(); break;
                     case "tlsbulk": tlsBulk(); break;
@@ -573,6 +576,53 @@ public class StressClient {
         boolean ok = received == size && hex(md.digest()).equals(sha256(data)) && writeError[0] == null && readError == null;
         result("duplex-10MB-echo", ok, "echoed " + received + "/" + size + " bytes in " + millis + " ms, " + mbps(received, millis)
                 + (writeError[0] != null ? ", write: " + writeError[0] : "") + (readError != null ? ", read: " + readError : ""));
+    }
+
+    /**
+     * The server answers, shuts down its sending side, and goes on reading
+     * (docs/vpn-mitm-audit.md PKT-53). What the client sends after the server's FIN must arrive
+     * complete. The server reports what it received on a second connection.
+     */
+    static void halfClose() throws Exception {
+        final int size = 200_000;
+        for (int delay : new int[]{0, 500}) {
+            String name = "halfclose-" + size + "-after-" + delay + "ms";
+            String token = Long.toHexString(System.nanoTime()) + "-" + delay;
+            byte[] data = pattern(size, delay);
+            String outcome;
+            Socket s = connect(host, halfClosePort);
+            try {
+                OutputStream out = s.getOutputStream();
+                out.write(("HALFCLOSE " + token + "\n").getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                String reply = new String(readAll(s.getInputStream()), StandardCharsets.US_ASCII).trim();
+                Thread.sleep(delay);
+                out.write(data);
+                out.flush();
+                s.shutdownOutput();
+                // closing at once could turn data still unsent into a reset
+                Thread.sleep(500);
+                outcome = "reply " + reply;
+            } catch (Throwable t) {
+                outcome = "client error: " + t;
+            } finally {
+                s.close();
+            }
+            String report;
+            Socket q = connect(host, halfClosePort);
+            try {
+                q.getOutputStream().write(("RESULT " + token + "\n").getBytes(StandardCharsets.US_ASCII));
+                q.getOutputStream().flush();
+                report = new String(readAll(q.getInputStream()), StandardCharsets.US_ASCII).trim();
+            } finally {
+                q.close();
+            }
+            String expected = size + " " + sha256(data);
+            boolean ok = report.equals(expected) && outcome.equals("reply HELLO");
+            // the server's report is "<bytes received> <sha256>", or "none"
+            result(name, ok, outcome + ", server received " + report.split(" ")[0] + " of " + size + " bytes"
+                    + (ok ? ", hash ok" : ""));
+        }
     }
 
     // ---- UDP --------------------------------------------------------------------------------

@@ -179,8 +179,17 @@ class TcpConnection internal constructor(
     // FIN (and we have acknowledged it), and the device has acknowledged ours. Which of the two
     // happens first depends on who closes. Both are only touched under closeLock.
 
-    /** Whether the device's FIN has been received and counted in [theirSeqNum]. */
+    /** Whether the device's FIN has been received and counted in [theirSeqNum]. Read without the lock by [acceptsDeviceData]. */
+    @Volatile
     private var deviceFinReceived = false
+
+    /**
+     * Whether the remote host closed its side while the device's side was still open. A FIN
+     * only says that the remote host has finished sending. It may still read, so the device's
+     * data is forwarded until the device closes too (docs/vpn-mitm-audit.md PKT-53).
+     */
+    @Volatile
+    private var remoteClosedFirst = false
 
     /** Whether the device has acknowledged our FIN. */
     private var ourFinAcknowledged = false
@@ -370,7 +379,7 @@ class TcpConnection internal constructor(
      * buffer. A segment that is already waiting is not stored twice.
      */
     private fun bufferSegment(sequenceNumber: Int, payload: Packet?, payloadLength: Int, fin: Boolean, finAckNumber: Int?) {
-        if (state != TransportLayerState.CONNECTED) {
+        if (!acceptsDeviceData()) {
             return
         }
         val beyondWindow = sequenceNumber + payloadLength - advertisedEdge > 0
@@ -398,7 +407,7 @@ class TcpConnection internal constructor(
             if (acceptInOrder(entry.key, segment.payload, segment.payloadLength, segment.fin, segment.finAckNumber, buffered = true) && segment.fin) {
                 handleFin(segment.finAckNumber)
             }
-            if (state != TransportLayerState.CONNECTED) {
+            if (!acceptsDeviceData()) {
                 // closed, half-closed or closing: nothing more is taken from the device
                 reorderBuffer.clear()
                 reorderBufferedBytes = 0
@@ -574,7 +583,7 @@ class TcpConnection internal constructor(
      * a device that has stopped sending because the window was shut.
      */
     private fun announceWindowIfOpened() {
-        if (state != TransportLayerState.CONNECTED) {
+        if (!acceptsDeviceData()) {
             return
         }
         val edge = theirSeqNum.get().toInt() + advertisedWindow()
@@ -812,6 +821,19 @@ class TcpConnection internal constructor(
     }
 
     /**
+     * Whether data from the device is forwarded: the connection is established, or only the
+     * remote host has closed its side (docs/vpn-mitm-audit.md PKT-53). Once the device has sent
+     * its FIN, any further data from it is a protocol violation.
+     */
+    private fun acceptsDeviceData(): Boolean {
+        return when (state) {
+            TransportLayerState.CONNECTED -> true
+            TransportLayerState.CLOSING -> remoteClosedFirst && !deviceFinReceived
+            else -> false
+        }
+    }
+
+    /**
      * Forwards the new data of a segment from the device.
      *
      * @param payload The segment's payload.
@@ -820,11 +842,16 @@ class TcpConnection internal constructor(
      * state to forward data, or there is no room for the data at the moment.
      */
     private fun handleAckData(payload: Packet, alreadyReceived: Int): Boolean {
-        if (state != TransportLayerState.CONNECTED) {
+        if (!acceptsDeviceData()) {
             // the connection is not ready to forward data, abort
             Timber.w("tcp$id Got ACK (data, invalid state $state)")
             closeHard()
             return false
+        }
+        if (state == TransportLayerState.CLOSING) {
+            // the device is still sending after the remote host closed: that is progress, and
+            // the sweep must not drop the connection while it lasts
+            closingSince = System.currentTimeMillis()
         }
 
         val newBytes = payload.length() - alreadyReceived
@@ -993,6 +1020,14 @@ class TcpConnection internal constructor(
                     if (finSent && ackNumber == ourFinAckNumber) {
                         ourFinAcknowledged = true
                     }
+                    // The outward-facing channel was kept open for the device's data after the
+                    // remote host closed (PKT-53). What is still on its way out must reach the
+                    // remote host before the channel is closed.
+                    synchronized(writeLock) {
+                        if (outboundBacklog() > 0 && selectableChannel.isOpen) {
+                            closeWhenDrained = true
+                        }
+                    }
                     finishCloseIfComplete()
                 }
             }
@@ -1146,13 +1181,19 @@ class TcpConnection internal constructor(
             return
         }
 
-        // SocketChannel is closed
+        // the remote host has finished sending
         if (bytesRead == -1) {
-            synchronized(closeLock) {
-                selectableChannel.keyFor(componentManager.selector)?.cancel()
-                // the remote side is done; release the socket/fd now, instead of only
-                // deregistering the SelectionKey and leaking it
-                closeChannel()
+            // It may still read: a FIN closes only one direction, and the device may still have
+            // data for it, which used to be answered with a reset and lost (docs/vpn-mitm-audit.md
+            // PKT-53). So only the receiving side is shut down. The channel is closed once the
+            // closing handshake with the device is complete (finishCloseIfComplete), when writing
+            // to it fails, or by the sweep.
+            readsStopped = true
+            updateInterest()
+            try {
+                selectableChannel.shutdownInput()
+            } catch (e: IOException) {
+                // already closed in the meantime
             }
             // The device must not hear about the close before it has received everything the
             // remote host sent. The layers above may still be working on that data, so they
@@ -1180,7 +1221,9 @@ class TcpConnection internal constructor(
                     // learns that the remote host is done (docs/vpn-mitm-audit.md PKT-35). The
                     // device's ACK for it and the device's own FIN complete the handshake
                     // (handleAckEmpty, handleFin).
-                    Timber.d("tcp$id SocketChannel closed, state transition $state -> CLOSING")
+                    Timber.d("tcp$id Remote host closed its side, state transition $state -> CLOSING")
+                    // in HALF_CLOSED the device has already sent its FIN and has nothing more to send
+                    remoteClosedFirst = state != TransportLayerState.HALF_CLOSED
                     state = TransportLayerState.CLOSING
                     requestFin()
                 }

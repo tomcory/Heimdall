@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLException
@@ -144,7 +145,7 @@ class TlsConnection(
         // counted by the transport layer until it is processed, as inbound payloads are
         // (docs/vpn-mitm-audit.md PKT-43)
         transportLayer.outboundProcessingDeferred(payload.size)
-        connectionScope.launch {
+        launchCounted(payload.size, transportLayer::outboundProcessingFinished) {
             try {
                 if(log) Timber.d("tls$id unwrapOutbound of ${payload.size} bytes in state $state")
                 prepareRecords(payload, true)
@@ -155,8 +156,30 @@ class TlsConnection(
                 // this connection's only safety net for its own record-processing failures
                 Timber.e(e, "tls$id unwrapOutbound failed, closing connection")
                 closeConnection()
+            }
+        }
+    }
+
+    /**
+     * Runs [block] on [connectionScope] for a payload of [bytes] bytes that the transport layer
+     * counts as in process until [finished] is called. Once this connection has closed itself,
+     * the scope is cancelled and the block never runs, e.g. for the client's close_notify after
+     * the server's. The count is released then as well: the transport layer waits for it before
+     * it closes the outward-facing channel (docs/vpn-mitm-audit.md PKT-53).
+     */
+    private fun launchCounted(bytes: Int, finished: (Int) -> Unit, block: () -> Unit) {
+        val started = AtomicBoolean(false)
+        val job = connectionScope.launch {
+            started.set(true)
+            try {
+                block()
             } finally {
-                transportLayer.outboundProcessingFinished(payload.size)
+                finished(bytes)
+            }
+        }
+        job.invokeOnCompletion {
+            if (!started.get()) {
+                finished(bytes)
             }
         }
     }
@@ -170,15 +193,13 @@ class TlsConnection(
         // transport layer counts it as read but not yet sent on, so that it does not read
         // further ahead than the device takes the data (docs/vpn-mitm-audit.md PKT-42).
         transportLayer.inboundProcessingDeferred(payload.size)
-        connectionScope.launch {
+        launchCounted(payload.size, transportLayer::inboundProcessingFinished) {
             try {
                 if(log) Timber.d("tls$id unwrapInbound of ${payload.size} bytes in state $state")
                 prepareRecords(payload, false)
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id unwrapInbound failed, closing connection")
                 closeConnection()
-            } finally {
-                transportLayer.inboundProcessingFinished(payload.size)
             }
         }
     }

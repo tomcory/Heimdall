@@ -9,6 +9,7 @@ here. Started and stopped by run-stress.sh; see StressClient.java for the client
   HTTP  : port BASE     deterministic downloads, uploads and misbehaving responses
   TCP   : port BASE + 1 byte echo
   UDP   : port BASE + 2 datagram echo
+  TCP   : port BASE + 3 half-close first, then read (see HalfCloseHandler)
 
 HTTP paths (n = body size in bytes, seed = content seed):
   GET  /bytes?n=&seed=          body with Content-Length
@@ -186,6 +187,55 @@ class EchoHandler(socketserver.BaseRequestHandler):
             pass
 
 
+class HalfCloseHandler(socketserver.BaseRequestHandler):
+    """Half-closes first, then keeps reading (docs/vpn-mitm-audit.md PKT-53).
+
+    "HALFCLOSE <token>\\n": answers "HELLO\\n", shuts down its sending side, reads until the
+    client closes and records how many bytes followed the line, and their SHA-256.
+    "RESULT <token>\\n": answers "<count> <sha256>\\n" for that token, waiting up to 10 s for
+    the first connection to finish ("none" if it never does). The answer cannot come on the
+    first connection, whose sending side is shut down.
+    """
+
+    results = {}
+    lock = threading.Condition()
+
+    def handle(self):
+        self.request.settimeout(120)
+        try:
+            data = b""
+            while b"\n" not in data:
+                chunk = self.request.recv(65536)
+                if not chunk:
+                    return
+                data += chunk
+            line, rest = data.split(b"\n", 1)
+            command, token = line.decode().split()
+            if command == "RESULT":
+                deadline = time.time() + 10
+                with self.lock:
+                    while token not in self.results and time.time() < deadline:
+                        self.lock.wait(deadline - time.time())
+                    answer = self.results.pop(token, "none")
+                self.request.sendall((answer + "\n").encode())
+                return
+            self.request.sendall(b"HELLO\n")
+            self.request.shutdown(socket.SHUT_WR)
+            digest = hashlib.sha256(rest)
+            count = len(rest)
+            while True:
+                chunk = self.request.recv(65536)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                count += len(chunk)
+            with self.lock:
+                self.results[token] = f"{count} {digest.hexdigest()}"
+                self.lock.notify_all()
+        except (ConnectionError, socket.timeout, OSError, ValueError):
+            pass
+
+
 class UdpEchoHandler(socketserver.BaseRequestHandler):
     def handle(self):
         data, sock = self.request
@@ -209,10 +259,11 @@ def main():
         ThreadedTcp(("127.0.0.1", base), HttpHandler),
         ThreadedTcp(("127.0.0.1", base + 1), EchoHandler),
         ThreadedUdp(("127.0.0.1", base + 2), UdpEchoHandler),
+        ThreadedTcp(("127.0.0.1", base + 3), HalfCloseHandler),
     ]
     for server in servers:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-    print(f"stress servers listening on 127.0.0.1: http {base}, tcp echo {base + 1}, udp echo {base + 2}", flush=True)
+    print(f"stress servers listening on 127.0.0.1: http {base}, tcp echo {base + 1}, udp echo {base + 2}, half-close {base + 3}", flush=True)
     try:
         while True:
             time.sleep(3600)

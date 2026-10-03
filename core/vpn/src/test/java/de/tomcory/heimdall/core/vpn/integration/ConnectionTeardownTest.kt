@@ -380,7 +380,7 @@ class ConnectionTeardownTest {
     }
 
     @Test
-    fun `remote-initiated close releases the socket channel, not just the selection key`() {
+    fun `remote-initiated close releases the socket channel once the device has closed too`() {
         acceptThread = Thread {
             try {
                 acceptedSocket.set(serverSocket.accept())
@@ -432,22 +432,29 @@ class ConnectionTeardownTest {
 
         assertTrue("expected the channel to be open right after the handshake", isChannelOpen())
 
-        // the remote server closes its side first (no FIN from the device involved at all) - the
-        // selector should observe EOF on the local channel and the connection should release it,
-        // not just deregister the SelectionKey
+        // the remote server closes its side first: the connection starts its closing handshake
+        // with the device, but keeps the channel for data the device may still send
+        // (docs/vpn-mitm-audit.md PKT-53)
         peerSocket!!.close()
-
-        val closedDeadline = System.currentTimeMillis() + 5000
-        while (System.currentTimeMillis() < closedDeadline && isChannelOpen()) {
+        val closingDeadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < closingDeadline &&
+            connection?.state != TransportLayerConnection.TransportLayerState.CLOSING) {
             Thread.sleep(20)
         }
-        assertFalse(
-            "expected the local SocketChannel to be closed (fd released) after the remote side closed, not just deregistered from the selector",
-            isChannelOpen()
-        )
-
-        // the connection should have started its own local closing handshake with the device
         assertEquals(TransportLayerConnection.TransportLayerState.CLOSING, connection?.state)
+        assertTrue("the channel stays open while the device's side is open", isChannelOpen())
+
+        // the device acknowledges our FIN and sends its own: the channel must be released
+        // (V-21), not just deregistered from the selector
+        val ourFin = deviceWriter.sentMessages.map { (it.obj as IpPacket).payload as TcpPacket }.last { it.header.fin }
+        val finPacket = PacketFixtures.buildTcpDataPacket(
+            localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
+            seq = 1, ack = ourFin.header.sequenceNumber + 1, payload = ByteArray(0), pshFlag = false, finFlag = true
+        )
+        connection?.unwrapOutbound(finPacket.payload)
+
+        assertFalse("expected the local SocketChannel to be closed (fd released) once the close is complete", isChannelOpen())
+        assertEquals(TransportLayerConnection.TransportLayerState.CLOSED, connection?.state)
     }
 
     @Test
