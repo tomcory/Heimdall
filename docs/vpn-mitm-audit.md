@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings", with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 and PKT-54 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-55 are implemented.
 
 ---
 
@@ -3690,6 +3690,18 @@ remaining four changes the database version.
 - **Tests:** device. `dumpsys connectivity` shows `NOT_METERED` in the VPN network's
   capabilities while the emulator is on Wi-Fi. Add that check to the "Checks" block of the
   `emulator-traffic.sh` report.
+- **Implementation notes (2026-10-03):**
+  - `HeimdallVpnService.establishInterface()` calls `builder.setMetered(false)` on API 29+,
+    with a comment that the underlying networks are left unset on purpose.
+  - `emulator-traffic.sh report` reads the VPN network's capabilities from `dumpsys
+    connectivity`, takes the underlying transport from the VPN's own transport list (e.g.
+    `WIFI|VPN`), and compares `NOT_METERED` on both. The emulator also has a validated cellular
+    network, so "the first validated non-VPN network" is not the VPN's underlying network.
+  - No unit test: the change is one builder call that only Android can evaluate.
+  - Emulator: with the PKT-54 build the report printed `VPN network unmetered: no (expected
+    yes, as its underlying network: Transports: WIFI)`. With this build it prints `yes (expected
+    yes ...)`. `emulator-traffic.sh run` is clean, and `run-stress.sh download,upload,udp,tls`
+    passes 48/48.
 - **Commit:** `fix(vpn): report the VPN network as unmetered when its underlying network is`
 
 ### PKT-56 — Learn passthrough when the upstream TLS handshake fails, and record why a connection was not decrypted

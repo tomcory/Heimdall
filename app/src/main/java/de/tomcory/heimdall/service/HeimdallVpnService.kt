@@ -410,6 +410,16 @@ class HeimdallVpnService : VpnService() {
             .addAddress(subnetBaseAddress, subnetPrefix)
             .addRoute(routeBaseAddress, routePrefix)
 
+        // Since API 29 a VPN counts as metered unless it says otherwise, and apps then behave as
+        // on mobile data even on Wi-Fi (deferred updates, syncs and prefetching), so Heimdall
+        // would not record what they do without it. Not metered here means "metered exactly when
+        // an underlying network is". The underlying networks are left unset, which means the
+        // default network: the one Heimdall's protected sockets use
+        // (docs/vpn-mitm-audit.md PKT-55).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
+
         Timber.d("VPN in standalone mode")
 
         // get the VPN monitoring scope from the preferences

@@ -417,6 +417,22 @@ cmd_report() {
     mismatches="$(sqlite3 "$db" "select count(*) from Connection where sessionId = $session
         and sni is not null and echOffered = 0 and remoteHost is not lower(sni)")"
     info "connections whose hostname differs from their SNI (ECH not offered): $mismatches (expected 0)"
+    # the VPN network is unmetered exactly when its underlying network is (PKT-55)
+    local networks vpn_caps underlying_caps
+    networks="$(adb shell dumpsys connectivity 2>/dev/null | grep -oE 'nc\{\[ Transports: [A-Z|]+ Capabilities: [A-Z_&]+' | sed 's/^nc{\[ //')"
+    vpn_caps="$(printf '%s\n' "$networks" | grep 'Transports: [A-Z|]*VPN' | head -1)"
+    # the VPN's transports name its underlying network's as well, e.g. "WIFI|VPN"
+    local underlying_transport
+    underlying_transport="$(printf '%s\n' "$vpn_caps" | sed -E 's/^Transports: ([A-Z|]+) .*/\1/; s/\|?VPN\|?//')"
+    underlying_caps="$(printf '%s\n' "$networks" | grep "^Transports: $underlying_transport Capabilities" | head -1)"
+    if [ -z "$vpn_caps" ]; then
+        info "VPN network unmetered: no VPN network up"
+    else
+        local vpn_unmetered=no underlying_unmetered=no
+        case "$vpn_caps" in *NOT_METERED*) vpn_unmetered=yes ;; esac
+        case "$underlying_caps" in *NOT_METERED*) underlying_unmetered=yes ;; esac
+        info "VPN network unmetered: $vpn_unmetered (expected $underlying_unmetered, as its underlying network: ${underlying_caps%% Capabilities*})"
+    fi
     crashes="$(adb logcat -d 2>/dev/null | grep -c "FATAL EXCEPTION.*\|Process: $PKG")"
     info "Heimdall crash lines in logcat: $crashes (expected 0)"
     info "Heimdall process: $(adb shell pidof "$PKG" | tr -d '\r' | sed 's/^$/not running/')"
