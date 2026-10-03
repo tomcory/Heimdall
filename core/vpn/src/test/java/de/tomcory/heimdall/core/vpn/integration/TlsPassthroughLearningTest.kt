@@ -305,6 +305,72 @@ class TlsPassthroughLearningTest {
         assertNull(passthroughReasonOf(45062))
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-57: ALPN ----
+
+    /** Replaces the test server with one that speaks [protocols]. */
+    private fun useServer(protocols: List<String>) {
+        fakeTlsServer.close()
+        fakeTlsServer = FakeTlsServer(hostname, protocols)
+    }
+
+    @Test
+    fun `a client offering h2 and HTTP 1_1 is intercepted with HTTP 1_1 on both sides`() {
+        useServer(listOf("h2", "http/1.1"))
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port, applicationProtocols = listOf("h2", "http/1.1"))
+        assertNull(runClientHandshake(Flow(localPort = 45070), driver))
+
+        assertNotEquals("the connection must be intercepted", fakeTlsServer.leafCert, driver.engine.session.peerCertificates[0])
+        assertEquals("Heimdall must offer the server only HTTP/1.1", "http/1.1", fakeTlsServer.negotiatedProtocol)
+        assertEquals("the client must get what the server selected", "http/1.1", driver.engine.applicationProtocol)
+    }
+
+    @Test
+    fun `a client offering only h2 is passed through and records why`() {
+        useServer(listOf("h2", "http/1.1"))
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port, applicationProtocols = listOf("h2"))
+        assertNull(runClientHandshake(Flow(localPort = 45071), driver))
+
+        assertEquals("the client must reach the real server", fakeTlsServer.leafCert, driver.engine.session.peerCertificates[0])
+        assertEquals("h2", driver.engine.applicationProtocol)
+        awaitCondition("the connection should record why it was not decrypted") {
+            passthroughReasonOf(45071) == "ALPN_UNSUPPORTED"
+        }
+        assertFalse("nothing is learned for the pair", cache.get(appId, hostname))
+    }
+
+    @Test
+    fun `a client offering no ALPN is intercepted without ALPN`() {
+        useServer(listOf("h2", "http/1.1"))
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull(runClientHandshake(Flow(localPort = 45072), driver))
+
+        assertNotEquals(fakeTlsServer.leafCert, driver.engine.session.peerCertificates[0])
+        assertTrue("nothing negotiated with the server", fakeTlsServer.negotiatedProtocol.isNullOrEmpty())
+        assertTrue("nothing negotiated with the client", driver.engine.applicationProtocol.isNullOrEmpty())
+    }
+
+    @Test
+    fun `a server that only speaks h2 rejects Heimdall, and the retry is passed through`() {
+        useServer(listOf("h2"))
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val failingFlow = Flow(localPort = 45073)
+        failingFlow.send(FakeClientTlsDriver(hostname, fakeTlsServer.port, applicationProtocols = listOf("h2", "http/1.1")).wrap()!!)
+
+        awaitCondition("the client should be reset") { failingFlow.sawReset() }
+        awaitCondition("the pair should have been learned") {
+            cache.getReason(appId, hostname) == PassthroughReason.UPSTREAM_HANDSHAKE_FAILED
+        }
+
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val retry = FakeClientTlsDriver(hostname, fakeTlsServer.port, applicationProtocols = listOf("h2", "http/1.1"))
+        assertNull(runClientHandshake(Flow(localPort = 45074), retry))
+        assertEquals(fakeTlsServer.leafCert, retry.engine.session.peerCertificates[0])
+        assertEquals("h2", retry.engine.applicationProtocol)
+    }
+
     // ---- MitM scope and learning switch (docs/vpn-mitm-audit.md PKT-24) ----
 
     @Test

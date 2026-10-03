@@ -23,8 +23,14 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
     }
 
 
-    fun createServerSSLEngine(peerHost: String?, peerPort: Int): SSLEngine? {
-        return if(peerHost != null) sslEngineSource?.newSSLEngine(peerHost, peerPort) else createServerSSLEngine()
+    /**
+     * @param applicationProtocols What the engine offers the server through ALPN; none if empty
+     * (docs/vpn-mitm-audit.md PKT-57).
+     */
+    fun createServerSSLEngine(peerHost: String?, peerPort: Int, applicationProtocols: List<String> = emptyList()): SSLEngine? {
+        val engine = if(peerHost != null) sslEngineSource?.newSSLEngine(peerHost, peerPort) else createServerSSLEngine()
+        engine?.let { Alpn.offer(it, applicationProtocols) }
+        return engine
     }
 
     fun createServerSSLEngine(): SSLEngine? {
@@ -42,8 +48,11 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
     /**
      * Call with serverSslEngine.getSession(). Creates an SSLEngine for the client side that
      * impersonates the remote server with a fake certificate.
+     *
+     * @param applicationProtocols What the engine accepts from the client through ALPN; none if
+     * empty (docs/vpn-mitm-audit.md PKT-57).
      */
-    fun createClientSSLEngineFor(serverSSLSession: SSLSession): SSLEngine {
+    fun createClientSSLEngineFor(serverSSLSession: SSLSession, applicationProtocols: List<String> = emptyList()): SSLEngine {
         val engine = try {
             val upstreamCert = getCertificateFromSession(serverSSLSession)
             //TODO: store the upstream cert by commonName to review it later
@@ -62,6 +71,7 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
         }
 
         engine.useClientMode = false
+        Alpn.offer(engine, applicationProtocols)
 
         return engine
     }

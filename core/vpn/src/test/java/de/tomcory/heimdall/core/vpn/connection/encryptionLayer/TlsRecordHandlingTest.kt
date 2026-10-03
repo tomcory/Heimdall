@@ -342,7 +342,7 @@ class TlsRecordHandlingTest {
 
     @Test
     fun `initiateServerHandshake closes the connection instead of crashing if setupServerSSLEngine throws`() {
-        every { componentManager.mitmManager.createServerSSLEngine(any(), any()) } throws RuntimeException("boom in createServerSSLEngine")
+        every { componentManager.mitmManager.createServerSSLEngine(any(), any(), any()) } throws RuntimeException("boom in createServerSSLEngine")
 
         val initiateServerHandshake = TlsConnection::class.java.getDeclaredMethod("initiateServerHandshake", ByteArray::class.java)
         initiateServerHandshake.isAccessible = true
@@ -359,7 +359,7 @@ class TlsRecordHandlingTest {
         every { fakeServerEngine.session } returns fakeSession
         setPrivateField(tlsConnection, "serverSSLEngine", fakeServerEngine)
 
-        every { componentManager.mitmManager.createClientSSLEngineFor(any()) } throws RuntimeException("boom in createClientSSLEngineFor")
+        every { componentManager.mitmManager.createClientSSLEngineFor(any(), any()) } throws RuntimeException("boom in createClientSSLEngineFor")
 
         val initiateClientHandshake = TlsConnection::class.java.getDeclaredMethod("initiateClientHandshake")
         initiateClientHandshake.isAccessible = true
@@ -413,7 +413,7 @@ class TlsRecordHandlingTest {
         val fakeServerEngine: SSLEngine = mockk(relaxed = true)
         every { fakeServerEngine.wrap(any<ByteBuffer>(), any<ByteBuffer>()) } returns
             SSLEngineResult(SSLEngineResult.Status.OK, SSLEngineResult.HandshakeStatus.NEED_UNWRAP, 0, 0)
-        every { mitmComponentManager.mitmManager.createServerSSLEngine(any(), any()) } returns fakeServerEngine
+        every { mitmComponentManager.mitmManager.createServerSSLEngine(any(), any(), any()) } returns fakeServerEngine
 
         val mitmTransportLayer: TransportLayerConnection = mockk(relaxed = true)
         every { mitmTransportLayer.remoteHost } returns null
@@ -475,7 +475,7 @@ class TlsRecordHandlingTest {
         val fakeServerEngine: SSLEngine = mockk(relaxed = true)
         every { fakeServerEngine.wrap(any<ByteBuffer>(), any<ByteBuffer>()) } returns
             SSLEngineResult(SSLEngineResult.Status.OK, SSLEngineResult.HandshakeStatus.NEED_UNWRAP, 0, 0)
-        every { realComponentManager.mitmManager.createServerSSLEngine(any(), any()) } returns fakeServerEngine
+        every { realComponentManager.mitmManager.createServerSSLEngine(any(), any(), any()) } returns fakeServerEngine
 
         val realTransportLayer: TransportLayerConnection = mockk(relaxed = true)
         every { realTransportLayer.remoteHost } returns null

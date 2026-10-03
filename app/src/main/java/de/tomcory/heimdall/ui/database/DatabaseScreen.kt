@@ -400,6 +400,7 @@ private fun passthroughReasonLabel(reason: String): String = when (reason) {
     "CLIENT_CLOSED_DURING_HANDSHAKE" -> "app closed during the handshake"
     "CLOSED_WITHOUT_DATA"            -> "app closed without sending data"
     "UPSTREAM_HANDSHAKE_FAILED"      -> "server handshake failed"
+    "ALPN_UNSUPPORTED"               -> "app asked for a protocol other than HTTP/1.1"
     else                             -> reason
 }
 

@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings", with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-56 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-57 are implemented.
 
 ---
 
@@ -3836,6 +3836,45 @@ remaining four changes the database version.
     lacks the API). Through MitM, `h2,http/1.1` negotiates `http/1.1` with issuer Heimdall,
     and `h2` alone negotiates `h2` with the real issuer and `ALPN_UNSUPPORTED` in the database.
     `tls` and `tlsparallel` still pass.
+- **Implementation notes (2026-10-03):**
+  - New `mitm/Alpn`: `offer()`, `selected()` and `interceptable()`. It looks the API up by
+    reflection (`SSLParameters.setApplicationProtocols`, `SSLEngine.getApplicationProtocol`)
+    instead of checking `Build.VERSION.SDK_INT >= 29`. The same check then holds on a device
+    and in JVM unit tests, where the SDK level reads 0, and lint sees no API-29 call. Below
+    API 29, `supported` is false and engines negotiate no ALPN, as before. `offer()` changes
+    only the protocols and keeps the engine's other parameters, because `newSSLEngine()` has
+    already replaced them for hostname verification.
+  - `CertificateSniffingMitmManager.createServerSSLEngine()` and `createClientSSLEngineFor()`
+    take the protocols as a parameter (default none). `TlsConnection` keeps the client's offer
+    from the ClientHello. It offers the server `http/1.1` if the client offered ALPN at all, and
+    offers the client `http/1.1` exactly when the server selected it.
+  - At the ClientHello, after the scope check, a client whose ALPN offer lacks `http/1.1` is
+    passed through with `passthroughReason = ALPN_UNSUPPORTED` (`TlsConnection.ALPN_UNSUPPORTED`).
+    Nothing is learned. The database screen has a label for it.
+  - Tests: new `AlpnTest` (5). `TlsPassthroughLearningTest` +4, with `FakeTlsServer` and
+    `FakeClientTlsDriver` now able to speak ALPN. The cases: `h2,http/1.1` is intercepted with
+    `http/1.1` on both sides; `h2` only is passed through, gets `h2` from the real server and
+    records the reason; no ALPN is intercepted without ALPN; a server that only speaks `h2`
+    rejects Heimdall's offer, PKT-56 learns it, and the retry gets `h2`. The mocks in
+    `TlsRecordHandlingTest` were updated to the new signatures. 379 `core:vpn` and 15 `app`
+    tests pass. Lint reports nothing in the changed files.
+  - Stress suite: new `tlsalpn` test (in the default set) against `www.cloudflare.com`. The
+    first version closed its intercepted connections without data, so the third connection
+    met PKT-54's pinning detection and was passed through. Every connection that could be
+    intercepted now sends a `HEAD` request.
+  - Emulator:
+
+    | `tlsalpn` | Without VPN | Before (PKT-56 build) | After |
+    |---|---|---|---|
+    | no ALPN | real issuer, none | Heimdall, none | Heimdall, none |
+    | `h2,http/1.1` | real issuer, `h2` | Heimdall, none: FAIL | Heimdall, `http/1.1` |
+    | `h2` only | real issuer, `h2` | Heimdall, none: FAIL | real issuer, `h2` |
+
+    Two runs in one VPN session gave the same result, and nothing was learned. Full suite, run
+    one test at a time: 22/22 tests, 82 checks, no failure. `emulator-traffic.sh run` is
+    clean, and the `tls` group's canned `sni-differs` ClientHello (ALPN `h2` only) now shows
+    `ALPN_UNSUPPORTED`. With `--quic-policy block`, YouTube's TLS fallback negotiates
+    `http/1.1`: 22 requests decrypted, no upstream handshake failure, no crash.
 - **Commit:** `feat(vpn): negotiate HTTP/1.1 via ALPN through the MitM and pass through clients that do not offer it`
 
 ### PKT-58 — Fill the DNS cache when the resolver uses TCP or DNS over TLS

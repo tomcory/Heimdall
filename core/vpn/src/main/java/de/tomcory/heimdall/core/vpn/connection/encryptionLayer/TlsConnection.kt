@@ -4,6 +4,7 @@ import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
+import de.tomcory.heimdall.core.vpn.mitm.Alpn
 import de.tomcory.heimdall.core.util.ByteUtils
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -130,6 +131,9 @@ class TlsConnection(
 
     /** Whether [upstreamHandshakeFailed] has run for this connection. */
     private var upstreamFailureRecorded = false
+
+    /** The application protocols the client offered in its ClientHello (docs/vpn-mitm-audit.md PKT-57). */
+    private var clientAlpn: List<String> = emptyList()
 
     private val log = false
 
@@ -305,6 +309,7 @@ class TlsConnection(
         if (recordType == RecordType.HANDSHAKE_CLIENT_HELLO) {
             val clientHello = parseClientHello(record)
             sni = clientHello?.sni
+            clientAlpn = clientHello?.alpn ?: emptyList()
             sni?.let {
                 hostname = it
                 transportLayer.refineRemoteHost(it, clientHello?.echOffered ?: false)
@@ -324,6 +329,14 @@ class TlsConnection(
                     doMitm = false
                     persistPassthroughReason(reason)
                 }
+            }
+            // A client that offers ALPN without HTTP/1.1 (gRPC, other protocols) cannot be
+            // given what it asked for by a MitM that only speaks HTTP/1.1, so it is passed
+            // through. Decided per connection from its own ClientHello, so nothing is learned
+            // (docs/vpn-mitm-audit.md PKT-57).
+            if (doMitm && !Alpn.interceptable(clientAlpn)) {
+                doMitm = false
+                persistPassthroughReason(ALPN_UNSUPPORTED)
             }
         }
 
@@ -783,7 +796,12 @@ class TlsConnection(
         if(log) Timber.d("tls$id setupServerSSLEngine")
 
         // create a new SSLEngine to handle the TLS session facing the remote host
-        serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort)
+        // Offer the server HTTP/1.1 if the client offered ALPN at all (and so HTTP/1.1, see
+        // handleOutboundRecord), nothing otherwise: the server answers in the protocol the
+        // client will be given (docs/vpn-mitm-audit.md PKT-57). A server that only speaks
+        // HTTP/2 rejects the offer, which PKT-56 learns, so the app's retry is passed through.
+        val upstreamAlpn = if (clientAlpn.isNotEmpty()) listOf(Alpn.HTTP_1_1) else emptyList()
+        serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort, upstreamAlpn)
 
         // allocate the application and network buffers used by the serverSSLEngine
         serverAppBufferWrap = ByteBuffer.allocate(serverSSLEngine?.session?.applicationBufferSize ?: 0)
@@ -807,7 +825,9 @@ class TlsConnection(
         if(log) Timber.d("tls$id setupClientSSLEngine")
 
         // create a new SSLEngine to handle the TLS session facing the local client
-        clientSSLEngine = serverSSLEngine?.session?.let { componentManager.mitmManager.createClientSSLEngineFor(it) }
+        // give the client exactly what the server selected
+        val clientAlpnAnswer = if (serverSSLEngine?.let { Alpn.selected(it) } == Alpn.HTTP_1_1) listOf(Alpn.HTTP_1_1) else emptyList()
+        clientSSLEngine = serverSSLEngine?.session?.let { componentManager.mitmManager.createClientSSLEngineFor(it, clientAlpnAnswer) }
 
         // allocate the application and network buffers used by the clientSSLEngine
         clientAppBufferWrap = ByteBuffer.allocate(clientSSLEngine?.session?.applicationBufferSize ?: 0)
@@ -1467,6 +1487,9 @@ class TlsConnection(
          * the margin allows for a slow device.
          */
         const val DEFAULT_PINNING_CLOSE_WINDOW_MS = 3_000L
+
+        /** Passthrough reason for a client that offers ALPN without HTTP/1.1 (docs/vpn-mitm-audit.md PKT-57). */
+        const val ALPN_UNSUPPORTED = "ALPN_UNSUPPORTED"
     }
 
     ////////////////////////////////////////////////////////////////////////

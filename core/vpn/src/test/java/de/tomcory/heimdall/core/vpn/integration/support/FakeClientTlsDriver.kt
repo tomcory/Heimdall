@@ -21,7 +21,12 @@ import javax.net.ssl.X509TrustManager
  * app with its own trust policy, e.g. one that rejects the forged certificate (see
  * TlsPassthroughLearningTest).
  */
-class FakeClientTlsDriver(hostname: String, port: Int, trustManager: X509TrustManager? = null) {
+class FakeClientTlsDriver(
+    hostname: String,
+    port: Int,
+    trustManager: X509TrustManager? = null,
+    applicationProtocols: List<String> = emptyList()
+) {
 
     val engine: SSLEngine
 
@@ -39,6 +44,11 @@ class FakeClientTlsDriver(hostname: String, port: Int, trustManager: X509TrustMa
         sslContext.init(null, trustManagers, null)
         engine = sslContext.createSSLEngine(hostname, port)
         engine.useClientMode = true
+        if (applicationProtocols.isNotEmpty()) {
+            engine.sslParameters = engine.sslParameters.apply {
+                this.applicationProtocols = applicationProtocols.toTypedArray()
+            }
+        }
         engine.beginHandshake()
     }
 

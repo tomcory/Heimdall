@@ -94,6 +94,7 @@ public class StressClient {
                     case "tlsparallel": tlsParallel(); break;
                     case "tlspinning": tlsPinning(); break;
                     case "tlsupstream": tlsUpstream(); break;
+                    case "tlsalpn": tlsAlpn(); break;
                     default: result(test, false, "unknown test");
                 }
             } catch (Throwable t) {
@@ -921,6 +922,66 @@ public class StressClient {
             } else {
                 result(name, secondIssuer != null && !"Heimdall".equals(secondIssuer), detail);
             }
+        }
+    }
+
+    /**
+     * Opens a TLS connection to host:443 offering [protocols] through ALPN (by reflection: the
+     * API is Java 9 / Android 10, this client is built for Java 8) and returns
+     * {issuer CN, negotiated protocol or "none"}.
+     */
+    static String[] alpnHandshake(String host, String[] protocols) throws Exception {
+        SSLSocket s = (SSLSocket) trustAllFactory.createSocket();
+        try {
+            s.connect(new InetSocketAddress(host, 443), CONNECT_TIMEOUT);
+            s.setSoTimeout(READ_TIMEOUT);
+            if (protocols.length > 0) {
+                javax.net.ssl.SSLParameters params = s.getSSLParameters();
+                javax.net.ssl.SSLParameters.class.getMethod("setApplicationProtocols", String[].class).invoke(params, (Object) protocols);
+                s.setSSLParameters(params);
+            }
+            s.startHandshake();
+            String dn = ((X509Certificate) s.getSession().getPeerCertificates()[0]).getIssuerX500Principal().getName();
+            String alpn = (String) SSLSocket.class.getMethod("getApplicationProtocol").invoke(s);
+            if (alpn == null || alpn.isEmpty() || alpn.equals("http/1.1")) {
+                // Use the connection like a real client. One closed without any data right
+                // after its handshake counts toward pinning detection, and two of those would
+                // make the VPN pass the host through (docs/vpn-mitm-audit.md PKT-54).
+                s.getOutputStream().write(("HEAD / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                readHead(s.getInputStream());
+            }
+            return new String[]{dn.replaceAll(".*CN=([^,]+).*", "$1"), alpn == null || alpn.isEmpty() ? "none" : alpn};
+        } finally {
+            s.close();
+        }
+    }
+
+    /**
+     * ALPN through the MitM (docs/vpn-mitm-audit.md PKT-57). With MitM on, a client offering h2
+     * and HTTP/1.1 is intercepted and gets HTTP/1.1, and a client offering only h2 is passed
+     * through and gets h2 from the real server. Without MitM, everyone gets what the server picks.
+     */
+    static void tlsAlpn() throws Exception {
+        initTls();
+        String host = "www.cloudflare.com";
+        try {
+            String[] none = alpnHandshake(host, new String[0]);
+            boolean mitm = "Heimdall".equals(none[0]);
+            result("tlsalpn-no-alpn", "none".equals(none[1]), "issuer " + none[0] + ", alpn " + none[1]);
+
+            String[] both = alpnHandshake(host, new String[]{"h2", "http/1.1"});
+            if (mitm) {
+                result("tlsalpn-h2-and-http1.1", "Heimdall".equals(both[0]) && "http/1.1".equals(both[1]),
+                        "issuer " + both[0] + ", alpn " + both[1] + " (expected Heimdall, http/1.1)");
+            } else {
+                result("tlsalpn-h2-and-http1.1", true, "not intercepted: issuer " + both[0] + ", alpn " + both[1]);
+            }
+
+            String[] h2 = alpnHandshake(host, new String[]{"h2"});
+            result("tlsalpn-h2-only", !"Heimdall".equals(h2[0]) && "h2".equals(h2[1]),
+                    "issuer " + h2[0] + ", alpn " + h2[1] + " (expected the real issuer, h2)");
+        } catch (Throwable t) {
+            result("tlsalpn", false, t.toString());
         }
     }
 
