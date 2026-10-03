@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.hilt.navigation.compose.hiltViewModel
+import de.tomcory.heimdall.MitmQuicPolicy
 import de.tomcory.heimdall.TrafficRetentionUnit
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.ui.settings.ActionPreference
@@ -104,6 +105,15 @@ fun MitMPreferences(
             text = "Trust all upstream TLS certificates",
             value = viewModel.preferences.mitmTrustAllUpstreamCerts.collectAsState(initial = viewModel.prefInit.mitmTrustAllUpstreamCertsInitial).value,
             onValueChange = { value -> viewModel.preferences.setMitmTrustAllUpstreamCerts(value) }
+        )
+
+        // docs/vpn-mitm-audit.md PKT-51: off by default
+        BooleanPreference(
+            text = "Block QUIC (force TLS fallback)",
+            value = viewModel.preferences.mitmQuicPolicy.collectAsState(initial = viewModel.prefInit.mitmQuicPolicyInitial).value == MitmQuicPolicy.QUIC_BLOCK,
+            onValueChange = { value ->
+                viewModel.preferences.setMitmQuicPolicy(if (value) MitmQuicPolicy.QUIC_BLOCK else MitmQuicPolicy.QUIC_PASSTHROUGH)
+            }
         )
 
         MonitoringScopePreference(

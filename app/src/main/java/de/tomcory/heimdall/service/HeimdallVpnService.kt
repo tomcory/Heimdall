@@ -85,6 +85,7 @@ class HeimdallVpnService : VpnService() {
             Timber.i("VpnService restarted by the system without an intent, starting the VPN")
         }
         val existingSessionId = intent?.getLongExtra(SESSION_ID_EXTRA, -1) ?: -1
+        val quicPolicyOverride = intent?.getStringExtra(QUIC_POLICY_EXTRA)
 
         return when(intent?.getIntExtra(VPN_ACTION, START_SERVICE) ?: START_SERVICE) {
 
@@ -117,7 +118,7 @@ class HeimdallVpnService : VpnService() {
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     Timber.d("Launching service components...")
-                    if (launchServiceComponents(existingSessionId)) {
+                    if (launchServiceComponents(existingSessionId, quicPolicyOverride)) {
                         Timber.d("VpnService started")
                         preferences.setVpnActive(true)
                         preferences.setVpnLastUpdated(System.currentTimeMillis())
@@ -226,18 +227,21 @@ class HeimdallVpnService : VpnService() {
     /**
      * Launches the VPN components. This function is responsible for establishing the VPN interface
      * and launching the traffic-handling threads via the [ComponentManager].
+     * @param quicPolicyOverride The QUIC policy for this session only, see [QUIC_POLICY_EXTRA].
      * @return Whether the VPN interface was established and the components were launched successfully.
      * @see [onStartCommand]
      */
-    private suspend fun launchServiceComponents(existingSessionId: Long): Boolean {
+    private suspend fun launchServiceComponents(existingSessionId: Long, quicPolicyOverride: String?): Boolean {
 
         // determine whether to launch in MitM mode
         val doMitm = preferences.mitmEnable.first()
         val trustAllUpstreamCertificates = preferences.mitmTrustAllUpstreamCerts.first()
         val mitmScope = if (doMitm) resolveMitmScope() else MitmScope.ALL
         val learnPassthrough = preferences.mitmAppLayerPassthrough.first()
+        val quicPolicy = QuicPolicyResolver.resolve(doMitm, preferences.mitmQuicPolicy.first(), quicPolicyOverride)
 
         Timber.d("MitM mode: $doMitm")
+        Timber.d("QUIC policy: $quicPolicy${if (quicPolicyOverride != null) " (session override '$quicPolicyOverride')" else ""}")
         if (doMitm) {
             Timber.d("MitM scope: apps included=${mitmScope.includedApps?.size ?: "all"}, excluded=${mitmScope.excludedApps.size}, hosts=${mitmScope.hostMode} (${mitmScope.hosts.size}); learn passthrough: $learnPassthrough")
         }
@@ -260,6 +264,7 @@ class HeimdallVpnService : VpnService() {
                 trustAllUpstreamCertificates = trustAllUpstreamCertificates,
                 mitmScope = mitmScope,
                 learnPassthrough = learnPassthrough,
+                quicPolicy = quicPolicy,
                 existingSessionId = existingSessionId,
                 keyStoreDir = File(this.filesDir, "keystore"),
                 protectDatagramSocket = { socket -> protect(socket) },
@@ -566,6 +571,15 @@ class HeimdallVpnService : VpnService() {
          * instead of creating a second, disconnected session that nothing observes.
          */
         const val SESSION_ID_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_ID"
+
+        /**
+         * Optional intent extra that sets the QUIC policy for this session only, overriding the
+         * stored preference without changing it: "block" or "passthrough". Meant for scripted
+         * tests (`scripts/emulator-traffic.sh vpn-start --quic-policy`). The service is not
+         * exported, so only the app itself or a root shell can pass it
+         * (docs/vpn-mitm-audit.md PKT-51).
+         */
+        const val QUIC_POLICY_EXTRA = "de.tomcory.heimdall.core.vpn.QUIC_POLICY"
 
         /**
          * Notification ID for the foreground notification.

@@ -24,6 +24,15 @@ enum ReportRetentionMode {
   REPORT_RETENTION_LATEST_ONLY = 1;
 }
 
+// What the MitM-VPN does with QUIC flows (docs/vpn-mitm-audit.md PKT-51). Only applies while MitM is
+// enabled. Passthrough is the zero value and with it the default, including for existing installs.
+enum MitmQuicPolicy {
+  // forward QUIC flows; their ClientHello is still read for the hostname
+  QUIC_PASSTHROUGH = 0;
+  // block HTTP/3 over QUIC where the TLS fallback would be intercepted, so that it is
+  QUIC_BLOCK = 1;
+}
+
 enum TrafficRetentionUnit {
   TRAFFIC_RETENTION_AGE_DAYS = 0;
   TRAFFIC_RETENTION_SESSION_COUNT = 1;
@@ -104,4 +113,5 @@ message Preferences {
   // whether the MitM proxy validates the real upstream server's TLS certificate against the
   // system/user trust store (false, the default) or trusts any certificate (true)
   bool mitm_trust_all_upstream_certs = 49;
+  MitmQuicPolicy mitm_quic_policy = 50;
 }

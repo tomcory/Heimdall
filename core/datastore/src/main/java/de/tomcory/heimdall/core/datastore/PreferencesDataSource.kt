@@ -1,6 +1,7 @@
 package de.tomcory.heimdall.core.datastore
 
 import androidx.datastore.core.DataStore
+import de.tomcory.heimdall.MitmQuicPolicy
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeHosts
 import de.tomcory.heimdall.Preferences
@@ -41,6 +42,7 @@ class PreferencesDataSource @Inject constructor(
     val mitmWhitelistHosts: Flow<List<String>> = datastore.data.map { it.mitmWhitelistHostsList }
     val mitmBlacklistHosts: Flow<List<String>> = datastore.data.map { it.mitmBlacklistHostsList }
     val mitmTrustAllUpstreamCerts: Flow<Boolean> = datastore.data.map { it.mitmTrustAllUpstreamCerts }
+    val mitmQuicPolicy: Flow<MitmQuicPolicy> = datastore.data.map { it.mitmQuicPolicy }
 
     val libraryActive: Flow<Boolean> = datastore.data.map { it.libraryActive }
     val libraryOnInstall: Flow<Boolean> = datastore.data.map { it.libraryOnInstall }
@@ -168,6 +170,12 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setMitmTrustAllUpstreamCerts(mitmTrustAllUpstreamCerts: Boolean) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setMitmTrustAllUpstreamCerts(mitmTrustAllUpstreamCerts).build()
+        }
+    }
+
+    suspend fun setMitmQuicPolicy(mitmQuicPolicy: MitmQuicPolicy) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setMitmQuicPolicy(mitmQuicPolicy).build()
         }
     }
 

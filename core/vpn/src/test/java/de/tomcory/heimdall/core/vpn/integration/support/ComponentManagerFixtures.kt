@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.integration.support
 
+import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
 import android.os.Handler
 import android.os.Message
 import de.tomcory.heimdall.core.util.AppFinder
@@ -61,7 +62,8 @@ object ComponentManagerFixtures {
         sessionId: Long = 1,
         maxPacketSize: Int = 16413,
         mitmScope: MitmScope = MitmScope.ALL,
-        learnPassthrough: Boolean = true
+        learnPassthrough: Boolean = true,
+        quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -91,6 +93,8 @@ object ComponentManagerFixtures {
         // shouldIntercept() is false, and false for learnPassthrough, silently disabling MitM
         every { componentManager.mitmScope } returns mitmScope
         every { componentManager.learnPassthrough } returns learnPassthrough
+        // explicit for the same reason: a relaxed mock would return a mock enum value
+        every { componentManager.quicPolicy } returns quicPolicy
         every { componentManager.sessionId } returns sessionId
         every { componentManager.protectSocket } returns { _: Socket -> }
         every { componentManager.protectDatagramSocket } returns { _: DatagramSocket -> }

@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.datastore
 
+import de.tomcory.heimdall.MitmQuicPolicy
 import de.tomcory.heimdall.MonitoringScopeApps
 import de.tomcory.heimdall.MonitoringScopeHosts
 import de.tomcory.heimdall.ReportRetentionMode
@@ -30,6 +31,8 @@ data class PreferencesInitialValues(
     // strict by default: the MitM proxy validates the real upstream server's TLS certificate
     // against the system/user trust store, rather than trusting any certificate
     val mitmTrustAllUpstreamCertsInitial: Boolean = false,
+    // QUIC is passed through unless the user opts into blocking it (docs/vpn-mitm-audit.md PKT-51)
+    val mitmQuicPolicyInitial: MitmQuicPolicy = MitmQuicPolicy.QUIC_PASSTHROUGH,
 
     val libraryActiveInitial: Boolean = true,
     val libraryOnInstallInitial: Boolean = true,

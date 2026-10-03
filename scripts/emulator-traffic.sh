@@ -5,9 +5,14 @@
 # retyping the same adb commands every time.
 #
 # Usage:
-#   scripts/emulator-traffic.sh run [--install] [GROUP...]   start VPN, send traffic, report, stop VPN
+#   scripts/emulator-traffic.sh run [--install] [--quic-policy P] [GROUP...]
+#                                                            start VPN, send traffic, report, stop VPN
 #   scripts/emulator-traffic.sh install                      install app/build/outputs/apk/debug/app-debug.apk
-#   scripts/emulator-traffic.sh vpn-start | vpn-stop
+#   scripts/emulator-traffic.sh vpn-start [--quic-policy P] | vpn-stop
+#
+# --quic-policy block|passthrough sets the VPN's QUIC policy for this session only, without
+# changing the stored preference (docs/vpn-mitm-audit.md PKT-51). It only acts while MitM is on.
+# A VPN that is already running keeps its policy; stop it first.
 #   scripts/emulator-traffic.sh traffic [GROUP...]           send traffic (VPN must be running)
 #   scripts/emulator-traffic.sh report                       pull the database, summarise the latest session
 #
@@ -60,6 +65,8 @@ PKG="de.tomcory.heimdall"
 SERVICE="$PKG/.service.HeimdallVpnService"
 ACTIVITY="$PKG/.ui.main.MainActivity"
 VPN_ACTION_EXTRA="de.tomcory.heimdall.net.vpn.ACTION_START"
+QUIC_POLICY_EXTRA="de.tomcory.heimdall.core.vpn.QUIC_POLICY"
+QUIC_POLICY=""
 DEVICE_TMP="/data/local/tmp/heimdall-traffic"
 ALL_GROUPS="dns http raw tls quic apps"
 
@@ -141,7 +148,9 @@ cmd_vpn_start() {
     # the service needs the app process (Hilt) to be up before it is started
     adb shell am start -n "$ACTIVITY" >/dev/null 2>&1
     sleep 4
-    root "am start-foreground-service -n $SERVICE" >/dev/null
+    local extras=""
+    [ -n "$QUIC_POLICY" ] && extras="--es $QUIC_POLICY_EXTRA $QUIC_POLICY"
+    root "am start-foreground-service -n $SERVICE $extras" >/dev/null
     local waited=0
     until vpn_is_up; do
         sleep 1
@@ -150,7 +159,7 @@ cmd_vpn_start() {
     done
     # the tracker list and traffic handlers are initialised after the interface is established
     sleep 3
-    info "tun0 is up; $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'MitM mode: [a-z]*' | tail -1)"
+    info "tun0 is up; $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'MitM mode: [a-z]*' | tail -1); $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'QUIC policy: [A-Z]*' | tail -1)"
     adb shell input keyevent KEYCODE_HOME
 }
 
@@ -407,6 +416,20 @@ cmd_report() {
 [ $# -ge 1 ] || { sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 command="$1"; shift
 
+# options that may come before the groups
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --quic-policy)
+            [ $# -ge 2 ] || die "--quic-policy needs a value (block or passthrough)"
+            case "$2" in block|passthrough) QUIC_POLICY="$2" ;; *) die "--quic-policy is block or passthrough, not '$2'" ;; esac
+            shift 2 ;;
+        --install)
+            INSTALL_FIRST=1
+            shift ;;
+        *) break ;;
+    esac
+done
+
 need adb
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/heimdall-traffic.XXXXXX")"
 say "Heimdall emulator traffic test"
@@ -414,15 +437,12 @@ pick_device
 
 case "$command" in
     install)   cmd_install ;;
-    vpn-start) cmd_vpn_start ;;
-    vpn-stop)  cmd_vpn_stop ;;
+    vpn-start) [ $# -eq 0 ] || die "unexpected arguments for vpn-start: $*"; cmd_vpn_start ;;
+    vpn-stop)  [ $# -eq 0 ] || die "unexpected arguments for vpn-stop: $*"; cmd_vpn_stop ;;
     traffic)   cmd_traffic "$@" ;;
     report)    cmd_report ;;
     run)
-        if [ "${1:-}" = "--install" ]; then
-            shift
-            cmd_install
-        fi
+        [ "${INSTALL_FIRST:-0}" = "1" ] && cmd_install
         cmd_vpn_start
         cmd_traffic "$@"
         cmd_report

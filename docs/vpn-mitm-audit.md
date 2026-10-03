@@ -3089,6 +3089,29 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   `PASSTHROUGH`. Behaviour is covered by PKT-52. Device: `vpn-start --quic-policy block`
   logs the policy the session runs with, and a start without the option logs `PASSTHROUGH`
   on a fresh install.
+- **Implementation notes (2026-10-03):**
+  - As planned for the proto (`MitmQuicPolicy`, field 50), the datastore, `quic/QuicPolicy.kt`
+    and `ComponentManager(quicPolicy)`. No database change.
+  - The mapping lives in a new `app/.../service/QuicPolicyResolver.kt`, next to
+    `MitmScopeResolver`: MitM off gives `PASSTHROUGH` whatever is stored or requested; else the
+    session override (`block`/`passthrough`, case-insensitive) wins; else the preference. An
+    unknown override value or an `UNRECOGNIZED` stored value falls back to the next rule.
+  - `HeimdallVpnService.QUIC_POLICY_EXTRA` is read in `onStartCommand()` and handed to
+    `launchServiceComponents()`, which logs `QUIC policy: …` (with the override, if any).
+  - `scripts/emulator-traffic.sh`: `--quic-policy block|passthrough` before the command's
+    groups, for `vpn-start` and `run`; the "tun0 is up" line now shows the policy. `--install`
+    is parsed the same way. `vpn-start`/`vpn-stop` now reject arguments they do not know,
+    after a test call whose option was passed as one word was silently ignored.
+  - Tests: `QuicPolicyResolverTest` (app, four cases, including that an install without the
+    field reads Passthrough). `ComponentManagerFixtures` stubs `quicPolicy`. 335 `core:vpn`
+    and 15 `app` tests pass.
+  - Emulator, MitM on: a start without the option logs `PASSTHROUGH`; `--quic-policy block`
+    logs `BLOCK (session override 'block')`, and the next plain start is `PASSTHROUGH` again,
+    so the stored value is untouched. The new switch "Block QUIC (force TLS fallback)" is
+    shown off; switched on, a plain start logs `BLOCK` and `--quic-policy passthrough` still
+    wins; the switch keeps its state when the screen is reopened; switched off again (as it
+    was left), a plain start logs `PASSTHROUGH`. A session with `--quic-policy block` runs
+    normally; nothing is blocked yet, that is PKT-52.
 - **Commit:** `feat(prefs): add a QUIC policy preference (block or passthrough)`
 
 ### PKT-52 — Block HTTP/3 over QUIC while MitM is on
@@ -3177,8 +3200,8 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   correct, not a failure.
 - **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
 
-**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29, PKT-49
-and PKT-50 are done. Then PKT-51, then PKT-52. None of the
+**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29 and
+PKT-49 to PKT-51 are done. PKT-52 is the last. None of the
 remaining four changes the database version.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either

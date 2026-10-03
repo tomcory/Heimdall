@@ -16,6 +16,7 @@ import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
+import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,6 +60,9 @@ class ComponentManager(
     val trustAllUpstreamCertificates: Boolean = false,
     val mitmScope: MitmScope = MitmScope.ALL,
     val learnPassthrough: Boolean = true,
+    // what to do with QUIC flows while MitM is on; PASSTHROUGH whenever MitM is off
+    // (docs/vpn-mitm-audit.md PKT-51)
+    val quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
     keyStoreDir: File,
     val appFinder: AppFinder,
     val maxPacketSize: Int = 16413,

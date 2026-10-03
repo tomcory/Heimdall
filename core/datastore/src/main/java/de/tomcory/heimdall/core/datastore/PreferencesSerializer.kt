@@ -33,6 +33,7 @@ object PreferencesSerializer : Serializer<Preferences> {
         .addAllMitmWhitelistHosts(initialValues.mitmWhitelistHostsInitial)
         .addAllMitmBlacklistHosts(initialValues.mitmBlacklistHostsInitial)
         .setMitmTrustAllUpstreamCerts(initialValues.mitmTrustAllUpstreamCertsInitial)
+        .setMitmQuicPolicy(initialValues.mitmQuicPolicyInitial)
 
         .setLibraryActive(initialValues.libraryActiveInitial)
         .setLibraryOnInstall(initialValues.libraryOnInstallInitial)
