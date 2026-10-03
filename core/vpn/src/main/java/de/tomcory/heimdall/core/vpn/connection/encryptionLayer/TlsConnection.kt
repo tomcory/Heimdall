@@ -74,7 +74,7 @@ class TlsConnection(
     )
 
     private var state: ConnectionState = ConnectionState.NEW
-    private var hostname: String = transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: ""
+    private var hostname: String = interceptionHost(null)
 
     private lateinit var originalClientHello: ByteArray
     private var sni: String? = null
@@ -289,10 +289,8 @@ class TlsConnection(
             )
 
             // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)
-            // that aren't marked for passthrough
-            doMitm = doMitm
-                    && componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, hostname)
-                    && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, hostname) } ?: false)
+            // that aren't marked for passthrough; the QUIC block rule makes the same check
+            doMitm = doMitm && wouldIntercept(hostname)
         }
 
         // if we don't want to MITM, we can hand the unprocessed record straight to the application layer

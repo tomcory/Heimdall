@@ -78,6 +78,27 @@ abstract class EncryptionLayerConnection(
     private var lastSecurityWrite: Job? = null
 
     /**
+     * The name under which this connection is judged for interception: the server name from the
+     * ClientHello if there is one, else the name the DNS cache gave the remote address, else the
+     * address itself. It is also the key of the passthrough cache.
+     */
+    protected fun interceptionHost(sni: String?): String {
+        return sni ?: transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: ""
+    }
+
+    /**
+     * Whether the TLS MitM intercepts a connection of this app to [host], provided MitM is on:
+     * the app and host are within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24), and no
+     * passthrough has been learned for them. The one place this is decided, so that the QUIC
+     * block rule, which predicts what a TLS fallback will meet, cannot drift from the TLS path
+     * (PKT-52).
+     */
+    protected fun wouldIntercept(host: String): Boolean {
+        return componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, host)
+                && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, host) } ?: false)
+    }
+
+    /**
      * Passes an outbound payload to the application layer, creating an [AppLayerConnection] instance if necessary.
      *
      * @param payload The outbound payload to pass to the application layer.

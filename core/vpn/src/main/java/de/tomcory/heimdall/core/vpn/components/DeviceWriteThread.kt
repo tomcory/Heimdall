@@ -45,18 +45,22 @@ class DeviceWriteThread(
     }
 
     private fun handleMessageImpl(msg: Message) {
-        if (msg.obj !is IpPacket) {
-            Timber.e("Got unknown message type: %s (what=%d, should be org.pcap4j.packet.IpPacket)", msg.obj?.javaClass?.name, msg.what)
-            return
+        // packets are usually pcap4j objects; ones built byte by byte (the ICMP errors of
+        // WRITE_ICMP) come as raw bytes
+        val rawData = when (val obj = msg.obj) {
+            is IpPacket -> obj.rawData
+            is ByteArray -> obj
+            else -> {
+                Timber.e("Got unknown message type: %s (what=%d, should be org.pcap4j.packet.IpPacket or ByteArray)", obj?.javaClass?.name, msg.what)
+                return
+            }
         }
 
-        val packet = msg.obj as IpPacket
-
         try {
-            outputStream.write(packet.rawData)
+            outputStream.write(rawData)
             outputStream.flush()
         } catch (e: IOException) {
-            Timber.e(e, "Error writing packet of size ${packet.length()} to device")
+            Timber.e(e, "Error writing packet of size ${rawData.size} to device")
         }
     }
 
@@ -74,5 +78,8 @@ class DeviceWriteThread(
 
         /** A one-off packet not tied to any tracked connection, e.g. an RST answering a segment for an unknown flow. */
         const val WRITE_STRAY = 2
+
+        /** An ICMP error built as raw bytes, e.g. the answer to a blocked QUIC datagram (docs/vpn-mitm-audit.md PKT-52). */
+        const val WRITE_ICMP = 3
     }
 }

@@ -3198,10 +3198,48 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   after the first blocked attempt their host is learned as passthrough and their QUIC is
   forwarded again. Blocked rows followed by forwarded ones for the same host are therefore
   correct, not a failure.
+- **Implementation notes (2026-10-03):**
+  - **Shared decision.** `EncryptionLayerConnection.interceptionHost(sni)` (SNI, else DNS
+    name, else address) and `wouldIntercept(host)` (MitM scope and passthrough cache).
+    `TlsConnection` now uses both instead of its own copy; `QuicConnection` calls the same.
+  - **Holding and blocking** in `QuicConnection` as planned. Datagrams are only held when the
+    session runs with MitM and the Block policy, so the Passthrough path is unchanged.
+    Blocking marks the row, calls `transportLayer.closeSoft()` (socket released, cache entry
+    kept) and answers the held and later datagrams with at most three ICMP errors.
+  - **Deviations.** The ICMP error is built byte by byte (`IcmpUnreachableBuilder`) rather
+    than with pcap4j's ICMP classes: it quotes a truncated IP packet, which pcap4j's builders
+    do not represent. The quoted UDP header is rebuilt from the ports and the datagram (with
+    a correct checksum), because the encryption layer receives the UDP payload, not the UDP
+    packet; the revision assumed otherwise. `DeviceWriteThread` now also writes raw byte
+    arrays, posted with the new `WRITE_ICMP`.
+  - Tests: `IcmpUnreachableBuilderTest` (four cases, checked against pcap4j-built datagrams)
+    and `QuicBlockPolicyTest` (eleven cases: blocked with ICMP, released socket and cached
+    flow; retransmissions without new rows and at most three ICMP errors; a two-datagram
+    ClientHello blocked once complete and flushed in order when forwarded; non-h3; `h3-29`;
+    out of scope; learned passthrough; MitM off and the Passthrough policy; an unreadable
+    ClientHello; ECH with a differing DNS name decided on the SNI). The fixture can add an
+    ECH extension. 350 `core:vpn` and 15 `app` tests pass.
+  - **Device check scripted.** `nc` does not use a connected UDP socket, so it never sees an
+    ICMP error. The `quic` group now sends through `scripts/quic-probe/QuicProbe.java`, which
+    the script compiles, pushes and runs with `app_process`, and reports per case what the
+    socket saw. With MitM on and `--quic-policy block`: `h3`, `split` and `v2` are refused
+    after 52 to 103 ms and their rows are `blocked`; `doq` gets no answer (forwarded) and is
+    not blocked. With `--quic-policy passthrough` all four get no answer and nothing is
+    blocked. A capture confirms the ICMP error on `tun0` 31 ms after the datagram, and the
+    kernel counts it in `InDestUnreachs` without errors. So an ICMP error written to the TUN
+    does reach the app's socket.
+  - **Real apps under Block** (`apps` group): the Play Store's QUIC to `play-fe.googleapis.com`
+    was blocked four times within 1.2 s, and the app fell back to TLS over TCP to the same host
+    (three rows, ALPN `h2,http/1.1`). It rejected the forged certificate there, and passthrough
+    was learned ten seconds later, as the packet predicted for Cronet-based apps.
+  - Regression with the default policy: the full stress suite passes 72 of 72, and the full
+    traffic script is clean.
+  - V-41 is resolved for users who turn the policy on; Alt-Svc and HTTPS-record stripping stay
+    out of scope.
 - **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
 
-**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29 and
-PKT-49 to PKT-51 are done. PKT-52 is the last. None of the
+**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** all done (phases Q0 to
+Q2 of `docs/quic_mitm.md`). None of the
 remaining four changes the database version.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either

@@ -136,9 +136,9 @@ object QuicInitialFixtures {
     /**
      * A ClientHello handshake message with a server name, an ALPN list and TLS 1.3 in
      * supported_versions, made [extraLength] bytes longer by a padding extension, as hybrid key
-     * shares make real ones.
+     * shares make real ones, and with an Encrypted Client Hello extension if [ech] is set.
      */
-    fun clientHello(sni: String?, alpn: List<String>, extraLength: Int = 0): ByteArray {
+    fun clientHello(sni: String?, alpn: List<String>, extraLength: Int = 0, ech: Boolean = false): ByteArray {
         val extensions = ByteArrayOutputStream()
         fun extension(type: Int, body: ByteArray) {
             extensions.write(u16(type))
@@ -154,6 +154,10 @@ object QuicInitialFixtures {
             extension(16, u16(list.size) + list)
         }
         extension(43, byteArrayOf(2, 0x03, 0x04))
+        if (ech) {
+            // encrypted_client_hello; the body does not matter for what is read here
+            extension(0xfe0d, ByteArray(32) { it.toByte() })
+        }
         if (extraLength > 0) {
             extension(21, ByteArray(extraLength))
         }
