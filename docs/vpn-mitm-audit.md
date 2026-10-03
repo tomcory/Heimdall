@@ -3018,6 +3018,38 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
     a ClientHello over two datagrams; QUIC v2. Expected in the report: one `UDP / QUIC` row
     per case with the SNI and ALPN filled in. Also run the `apps` group once and note how
     many of its QUIC rows carry an SNI.
+- **Implementation notes (2026-10-03):**
+  - `quic/QuicInitialInspector.kt` as planned. CRYPTO data is collected into a buffer of
+    `maxCryptoBytes` with a bit set of the bytes received, so overlapping and repeated frames
+    are harmless; the ClientHello is complete when the bytes from 0 to its declared length are
+    all there. ACK frames (both types) are skipped, a CONNECTION_CLOSE or any other frame type
+    ends the inspection. A first datagram with no decryptable Initial gives up at once.
+  - `QuicConnection` forwards each datagram, then offers it to the inspector, and drops the
+    inspector when it has a result, so later datagrams of the flow cost nothing extra. An
+    exception from the inspector counts as giving up; one log line per flow.
+  - **Bug found on the device and fixed:** in one run a canned flow got its hostname from the
+    SNI but no SNI or ALPN in its row. `QuicConnection` writes the security fields twice in
+    quick succession (the `QUIC` label when the flow is created, then what the ClientHello
+    revealed), each from its own coroutine, and the earlier write landed last. Each write
+    replaces all the fields, so `EncryptionLayerConnection.persistSecurity()` now chains a
+    connection's writes so that they land in the order they were made. TLS writes only once,
+    but gets the same guarantee. A test that delays the first write fails without the change.
+  - Tests: `QuicInitialInspectorTest` (ten cases: the RFC sample; one datagram in v1 and v2;
+    two datagrams in order and shuffled; the second half first; a later Initial naming another
+    connection ID; a Retry; ACK frames; an unknown version, random input and a damaged
+    Initial; the datagram limit; the buffer limit). `QuicPassthroughInspectionTest` (four
+    cases through a real `UdpConnection` and socket: datagrams arrive unchanged and the row
+    gets QUIC, SNI, ALPN and the hostname; the write order; an unreadable ClientHello; an
+    inspector that throws). `QuicCannedInitialsTest` keeps `scripts/quic-initials.txt` in sync
+    with the fixture and checks every canned flight. 335 `core:vpn` tests pass.
+  - `scripts/emulator-traffic.sh` has the `quic` group (cases `h3`, `doq`, `split`, `v2`, sent
+    to `10.0.2.2:443`). The datagrams are in `scripts/quic-initials.txt`, written by
+    `QuicCannedInitialsTest` when `HEIMDALL_WRITE_QUIC_INITIALS=1` is set. The script needs
+    `xxd` now.
+  - Emulator: all four canned cases appear as QUIC rows with SNI, ALPN and the SNI as
+    hostname, version 2 included, in three runs after the fix. The `apps` group produced three
+    QUIC flows (Play Store, Google services framework), all three with SNI, ALPN `h3` and ECH
+    offered. The full traffic script is clean, and `run-stress.sh udp,tls` passes 28 of 28.
 - **Commit:** `feat(vpn): record SNI and ALPN of QUIC flows from the Initial packet`
 
 ### PKT-51 — Add the QUIC policy preference
@@ -3145,8 +3177,8 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   correct, not a failure.
 - **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
 
-**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29 and
-PKT-49 are done. PKT-51 is independent of PKT-50; PKT-52 comes last. None of the
+**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29, PKT-49
+and PKT-50 are done. Then PKT-51, then PKT-52. None of the
 remaining four changes the database version.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either

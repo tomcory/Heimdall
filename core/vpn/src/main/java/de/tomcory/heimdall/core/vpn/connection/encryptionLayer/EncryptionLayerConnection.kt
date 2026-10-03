@@ -7,6 +7,7 @@ import de.tomcory.heimdall.core.vpn.connection.appLayer.RawConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
@@ -57,11 +58,24 @@ abstract class EncryptionLayerConnection(
         echOffered: Boolean = false
     ) {
         if (id > 0) {
-            CoroutineScope(Dispatchers.IO).launch {
-                componentManager.databaseConnector.updateConnectionSecurity(id, securityProtocol, sni, alpn, echOffered)
+            // Each write replaces all of these fields, so a connection's writes must land in the
+            // order they were made. QUIC writes twice in quick succession (the label when the
+            // flow is created, then what the ClientHello revealed), and two independent
+            // coroutines did not always run in that order (docs/vpn-mitm-audit.md PKT-50).
+            synchronized(securityWriteLock) {
+                val previous = lastSecurityWrite
+                lastSecurityWrite = CoroutineScope(Dispatchers.IO).launch {
+                    previous?.join()
+                    componentManager.databaseConnector.updateConnectionSecurity(id, securityProtocol, sni, alpn, echOffered)
+                }
             }
         }
     }
+
+    private val securityWriteLock = Any()
+
+    /** The most recent write started by [persistSecurity]; the next one waits for it. Guarded by [securityWriteLock]. */
+    private var lastSecurityWrite: Job? = null
 
     /**
      * Passes an outbound payload to the application layer, creating an [AppLayerConnection] instance if necessary.
