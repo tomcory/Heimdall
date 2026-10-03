@@ -48,5 +48,10 @@ data class Connection(
     // GREASE, so this alone does not mean the real server name was hidden.
     val echOffered: Boolean = false,
     // Heimdall dropped this connection's traffic instead of forwarding it
-    val blocked: Boolean = false
+    val blocked: Boolean = false,
+    // why a TLS connection was not decrypted although MitM was on: the passthrough reason
+    // learned for its app and host (e.g. CLIENT_HANDSHAKE_ERROR), OUT_OF_SCOPE, or
+    // UPSTREAM_HANDSHAKE_FAILED for a connection whose own upstream handshake failed. Null when it
+    // was decrypted, or when MitM was off.
+    val passthroughReason: String? = null
 )

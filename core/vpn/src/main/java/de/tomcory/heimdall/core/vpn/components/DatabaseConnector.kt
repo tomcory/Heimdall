@@ -80,6 +80,15 @@ interface DatabaseConnector {
         id: Long
     )
 
+    /**
+     * Records why a TLS connection was not decrypted although MitM was on
+     * (docs/vpn-mitm-audit.md PKT-56).
+     */
+    suspend fun updateConnectionPassthroughReason(
+        id: Long,
+        reason: String
+    )
+
     suspend fun persistHttpRequest(
         connectionId: Long,
         timestamp: Long,

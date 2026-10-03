@@ -147,6 +147,33 @@ class TlsPassthroughCacheTest {
         assertEquals(5, suspectCounts(bounded).size)
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-56: upstream failures and stored reasons ----
+
+    @Test
+    fun `an upstream handshake failure marks the pair at once`() {
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.UPSTREAM_HANDSHAKE_FAILED))
+        assertTrue(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `the reason a pair was marked for is stored`() {
+        assertNull(cache.getReason(1000, "example.com"))
+
+        cache.recordFailure(1000, "example.com", PassthroughReason.UPSTREAM_HANDSHAKE_FAILED)
+        cache.recordFailure(1000, "pinned.com", PassthroughReason.CLOSED_WITHOUT_DATA)
+        cache.recordFailure(1000, "pinned.com", PassthroughReason.CLOSED_WITHOUT_DATA)
+
+        assertEquals(PassthroughReason.UPSTREAM_HANDSHAKE_FAILED, cache.getReason(1000, "example.com"))
+        assertEquals(PassthroughReason.CLOSED_WITHOUT_DATA, cache.getReason(1000, "pinned.com"))
+    }
+
+    @Test
+    fun `a later failure does not replace the reason a pair was marked for`() {
+        cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.UPSTREAM_HANDSHAKE_FAILED))
+        assertEquals(PassthroughReason.CLIENT_HANDSHAKE_ERROR, cache.getReason(1000, "example.com"))
+    }
+
     // ---- docs/vpn-mitm-audit.md PKT-54: idle closes after data was decrypted ----
 
     @Test

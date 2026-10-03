@@ -172,6 +172,15 @@ class RoomDatabaseConnector(
         }
     }
 
+    override suspend fun updateConnectionPassthroughReason(id: Long, reason: String) {
+        awaitConnection(id)
+        try {
+            database.connectionDao().updatePassthroughReason(id, reason)
+        } catch (e: Exception) {
+            Timber.e(e, "Error while recording the passthrough reason (cID: $id)")
+        }
+    }
+
     override suspend fun persistHttpRequest(
         connectionId: Long,
         timestamp: Long,

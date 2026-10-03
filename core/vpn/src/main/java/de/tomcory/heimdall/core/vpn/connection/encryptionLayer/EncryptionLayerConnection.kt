@@ -93,9 +93,31 @@ abstract class EncryptionLayerConnection(
      * block rule, which predicts what a TLS fallback will meet, cannot drift from the TLS path
      * (PKT-52).
      */
-    protected fun wouldIntercept(host: String): Boolean {
-        return componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, host)
-                && !(transportLayer.appId?.let { componentManager.tlsPassthroughCache.get(it, host) } ?: false)
+    protected fun wouldIntercept(host: String): Boolean = interceptionSkipReason(host) == null
+
+    /**
+     * Why the TLS MitM would not intercept a connection of this app to [host] (see
+     * [wouldIntercept]), or null if it would: [OUT_OF_SCOPE], or the name of the
+     * [de.tomcory.heimdall.core.vpn.metadata.PassthroughReason] learned for the app and host
+     * (docs/vpn-mitm-audit.md PKT-56).
+     */
+    protected fun interceptionSkipReason(host: String): String? {
+        if (!componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, host)) {
+            return OUT_OF_SCOPE
+        }
+        return transportLayer.appId?.let { componentManager.tlsPassthroughCache.getReason(it, host) }?.name
+    }
+
+    /**
+     * Asynchronously records why this connection was not decrypted although MitM was on
+     * (docs/vpn-mitm-audit.md PKT-56). Connections without a database entry are skipped.
+     */
+    protected fun persistPassthroughReason(reason: String) {
+        if (id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.updateConnectionPassthroughReason(id, reason)
+            }
+        }
     }
 
     /**
@@ -199,6 +221,9 @@ abstract class EncryptionLayerConnection(
     }
 
     companion object {
+
+        /** Passthrough reason for an app or host outside the user's MitM scope (PKT-24, PKT-56). */
+        const val OUT_OF_SCOPE = "OUT_OF_SCOPE"
 
         /**
          * Creates an [EncryptionLayerConnection] instance based on the protocol of the supplied payload (must be the very first transport-layer payload of the connection).

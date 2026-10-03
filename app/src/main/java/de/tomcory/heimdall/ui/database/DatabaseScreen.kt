@@ -278,6 +278,7 @@ private fun ConnectionDetail(
             if (connection.blocked) {
                 ConnectionMetadataRow("QUIC", "blocked")
             }
+            connection.passthroughReason?.let { ConnectionMetadataRow("Not decrypted", passthroughReasonLabel(it)) }
             ConnectionMetadataRow("↑ Out", formatBytes(connection.bytesOut))
             ConnectionMetadataRow("↓ In", formatBytes(connection.bytesIn))
 
@@ -390,6 +391,16 @@ private fun formatBytes(bytes: Long): String = when {
     bytes < 1_048_576     -> "${"%.1f".format(bytes / 1_024f)}KB"
     bytes < 1_073_741_824 -> "${"%.1f".format(bytes / 1_048_576f)}MB"
     else                  -> "${"%.1f".format(bytes / 1_073_741_824f)}GB"
+}
+
+/** A readable form of [de.tomcory.heimdall.core.database.entity.Connection.passthroughReason]. */
+private fun passthroughReasonLabel(reason: String): String = when (reason) {
+    "OUT_OF_SCOPE"                   -> "outside the MitM scope"
+    "CLIENT_HANDSHAKE_ERROR"         -> "app rejected the certificate"
+    "CLIENT_CLOSED_DURING_HANDSHAKE" -> "app closed during the handshake"
+    "CLOSED_WITHOUT_DATA"            -> "app closed without sending data"
+    "UPSTREAM_HANDSHAKE_FAILED"      -> "server handshake failed"
+    else                             -> reason
 }
 
 private fun relativeTime(ts: Long): String {

@@ -65,7 +65,8 @@ object ComponentManagerFixtures {
         mitmScope: MitmScope = MitmScope.ALL,
         learnPassthrough: Boolean = true,
         quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
-        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS
+        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
+        trustAllUpstream: Boolean = true
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -75,7 +76,9 @@ object ComponentManagerFixtures {
         // certs are self-signed and not chained to any system-trusted CA - upstream cert
         // validation is orthogonal to what these tests exercise (MITM interception logic), so
         // this intentionally diverges from the strict production default (see PKT-07).
-        val mitmManager = CertificateSniffingMitmManager(authority, trustAllServers = true)
+        // (trustAllUpstream = false makes the upstream handshake with such a test double fail,
+        // for the tests of docs/vpn-mitm-audit.md PKT-56)
+        val mitmManager = CertificateSniffingMitmManager(authority, trustAllServers = trustAllUpstream)
         val dnsCache = DnsCache()
         val tlsPassthroughCache = TlsPassthroughCache()
 

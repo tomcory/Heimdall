@@ -15,7 +15,7 @@
 #
 # Tests (default: all): download upload keepalive parallel churn slowserver slowclient
 #   slowupload idle serverabort clientabort unreachable duplex halfclose udp tls tlsbulk tlsclose tlsparallel
-#   tlspinning
+#   tlspinning tlsupstream
 # Not in the default set: bigbody (a 300 MB download, which takes a while and a lot of memory)
 #
 # Around the run it records Heimdall's open file descriptors, threads and memory, and afterwards
@@ -29,7 +29,7 @@ TRAFFIC="$HERE/../emulator-traffic.sh"
 PKG="de.tomcory.heimdall"
 BASE_PORT="${HEIMDALL_STRESS_PORT:-18080}"
 DEVICE_DEX="/data/local/tmp/heimdall-stress.dex"
-ALL_TESTS="download,upload,keepalive,parallel,churn,slowserver,slowclient,slowupload,idle,serverabort,clientabort,unreachable,duplex,halfclose,udp,tls,tlsbulk,tlsclose,tlsparallel,tlspinning"
+ALL_TESTS="download,upload,keepalive,parallel,churn,slowserver,slowclient,slowupload,idle,serverabort,clientabort,unreachable,duplex,halfclose,udp,tls,tlsbulk,tlsclose,tlsparallel,tlspinning,tlsupstream"
 SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
 if ! command -v adb >/dev/null 2>&1; then PATH="$PATH:$SDK/platform-tools"; fi
@@ -113,8 +113,9 @@ fi
 adb shell "CLASSPATH=$DEVICE_DEX app_process / StressClient 10.0.2.2 $BASE_PORT $tests" 2>&1 | tr -d '\r' | tee "$WORK/client.log"
 
 say "Summary"
-info "checks passed: $(grep -c '^RESULT .* PASS' "$WORK/client.log")   failed: $(grep -c '^RESULT .* FAIL' "$WORK/client.log")"
+info "checks passed: $(grep -c '^RESULT .* PASS' "$WORK/client.log")   failed: $(grep -c '^RESULT .* FAIL' "$WORK/client.log")   skipped: $(grep -c '^RESULT .* SKIP' "$WORK/client.log")"
 grep '^RESULT .* FAIL' "$WORK/client.log" | sed 's/^RESULT /   FAIL /'
+grep '^RESULT .* SKIP' "$WORK/client.log" | sed 's/^RESULT /   SKIP /'
 
 if [ "$baseline" = "0" ]; then
     # let closing connections settle before measuring what is left behind

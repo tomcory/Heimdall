@@ -394,9 +394,9 @@ cmd_report() {
     sqlite3 -header -column "$db" "
         select initiatorPkg app, securityProtocol sec, remotePort port,
                coalesce(remoteHost, '-') host, coalesce(sni, '-') sni, coalesce(alpn, '-') alpn,
-               echOffered ech, isTracker trk, blocked blk, count(*) n
+               echOffered ech, isTracker trk, blocked blk, coalesce(passthroughReason, '-') passthrough, count(*) n
         from Connection where sessionId = $session and securityProtocol in ('TLS', 'QUIC')
-        group by 1, 2, 3, 4, 5, 6, 7, 8, 9 order by 2, 1, 4;"
+        group by 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 order by 2, 1, 4;"
 
     say "Other connections"
     sqlite3 -header -column "$db" "

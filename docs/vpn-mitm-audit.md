@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings", with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-55 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-56 are implemented.
 
 ---
 
@@ -3749,6 +3749,57 @@ remaining four changes the database version.
     reset, and the second succeeds and shows the real issuer. The test depends on badssl.com
     being up, so on a network error it reports SKIP, not FAIL. `emulator-traffic.sh` shows the
     reasons in its TLS table.
+- **Implementation notes (2026-10-03):**
+  - `TlsConnection.upstreamHandshakeFailed()` learns `UPSTREAM_HANDSHAKE_FAILED` and marks the
+    failing connection, once per connection. It is called from `handleWrap()` (outbound),
+    `handleUnwrap()` (inbound) and `runDelegatedTasks()` (server-facing engine), each only in
+    SERVER_HANDSHAKE. A delegated task's exception counts only if it or one of its causes is an
+    `SSLException` or a `GeneralSecurityException`. On the emulator the badssl failures
+    surfaced in `handleUnwrap()`. The record hex dump after an `SSLException` is now behind
+    `log`.
+  - `TlsPassthroughCache` stores the reason for each pair. The new `getReason()` returns it,
+    and `get()` stays a Boolean on top of it, so callers are unchanged. `put()` (only used by
+    tests) takes an optional reason. A later failure does not replace the stored reason.
+  - `EncryptionLayerConnection.interceptionSkipReason()` returns `OUT_OF_SCOPE`, the learned
+    reason's name, or null. `wouldIntercept()` is now defined through it, so the QUIC block rule
+    still follows the same decision. `TlsConnection` records the reason through the new
+    `persistPassthroughReason()` when it decides not to intercept a connection while MitM is on.
+    With MitM off nothing is recorded.
+  - Database: `Connection.passthroughReason` (nullable `String`, so that PKT-57 can add
+    `ALPN_UNSUPPORTED` without another type change), `ConnectionDao.updatePassthroughReason()`,
+    `DatabaseConnector.updateConnectionPassthroughReason()` (waits for the row like the other
+    updates), version 9. `CLAUDE.md` updated. The database screen shows "Not decrypted: …" with a
+    readable label. `emulator-traffic.sh` has a `passthrough` column in its TLS table.
+  - Tests: `TlsPassthroughCacheTest` +3. `TlsPassthroughLearningTest` +2: an upstream failure
+    (the fixture's new `trustAllUpstream = false` makes Heimdall reject the test server) resets
+    the client, learns the pair, marks the row, and the retry is passed through with the real
+    certificate and the same reason; an intercepted connection records no reason. Plus an
+    `OUT_OF_SCOPE` assertion on the scope test. 370 `core:vpn` and 15 `app` tests pass.
+  - Stress suite: new `tlsupstream` test (in the default set) and a SKIP outcome, which the
+    summary counts separately. Fixed `tlspinning` on the way: its idle case's third connection
+    closed straight after the handshake, which counted as one quick close, so a second run in
+    the same VPN session learned the host. It now stays open as long as the first two. Its
+    no-MitM note now also names the other cause, a host learned earlier in the session.
+  - Emulator:
+
+    | `tlsupstream` | Before (PKT-55 build) | After |
+    |---|---|---|
+    | `expired.badssl.com` | reset, reset: FAIL | reset, then real issuer (COMODO): PASS |
+    | `self-signed.badssl.com` | reset, reset: FAIL | reset, then real issuer: PASS |
+    | `untrusted-root.badssl.com` | reset, reset: FAIL | reset, then real issuer (BadSSL Untrusted Root): PASS |
+
+    Without the VPN all three pass (trust-all client). Full suite, run one test at a time:
+    21/21 tests, 79 checks, no failure. `emulator-traffic.sh run` is clean, and its TLS table
+    shows `CLIENT_CLOSED_DURING_HANDSHAKE` for the `tls` group's later `www.wikipedia.org`
+    connections and `-` for intercepted ones.
+  - Environment, not this packet: the first stress run after installing this build failed DNS
+    for about 80 s, with `NetworkMonitor` reporting a data stall before the VPN was even
+    started; the rerun was clean. A full-suite run later stalled for 30 minutes while the Mac's
+    load average was around 25, and `adb` calls hung; run test by test once the host recovered,
+    the suite passed. Also seen once, about two minutes before the VPN was started:
+    `Scudo OOM: The process has exhausted 256M for size class 1104` in the freshly installed
+    Heimdall process. The VPN was not running, so it is not `core:vpn`. The scan Heimdall runs
+    after a package install is the likely source; not investigated.
 - **Commit:** `feat(vpn): pass through hosts whose upstream TLS handshake fails, and record why a connection was not decrypted`
 
 ### PKT-57 — Negotiate ALPN as HTTP/1.1 explicitly, and pass through clients that do not offer it

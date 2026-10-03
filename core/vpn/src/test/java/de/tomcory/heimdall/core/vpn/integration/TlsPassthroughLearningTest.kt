@@ -8,8 +8,10 @@ import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.FakeClientTlsDriver
 import de.tomcory.heimdall.core.vpn.integration.support.FakeTlsServer
 import de.tomcory.heimdall.core.vpn.integration.support.PacketFixtures
+import de.tomcory.heimdall.core.vpn.integration.support.RecordingDatabaseConnector
 import de.tomcory.heimdall.core.vpn.integration.support.RecordingDeviceWriter
 import de.tomcory.heimdall.core.vpn.integration.support.SelectorPump
+import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import org.junit.After
@@ -64,14 +66,16 @@ class TlsPassthroughLearningTest {
     private fun useComponentManager(
         mitmScope: MitmScope = MitmScope.ALL,
         learnPassthrough: Boolean = true,
-        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS
+        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
+        trustAllUpstream: Boolean = true
     ) {
         if (::pump.isInitialized) pump.stop()
         componentManager = ComponentManagerFixtures.buildTestComponentManager(
             keyStoreDir = createTempDir(),
             mitmScope = mitmScope,
             learnPassthrough = learnPassthrough,
-            pinningCloseWindowMs = pinningCloseWindowMs
+            pinningCloseWindowMs = pinningCloseWindowMs,
+            trustAllUpstream = trustAllUpstream
         )
         cache = componentManager.tlsPassthroughCache
         pump = SelectorPump(componentManager.selector)
@@ -262,12 +266,54 @@ class TlsPassthroughLearningTest {
         assertFalse(cache.get(appId, hostname))
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-56: upstream handshake failures ----
+
+    @Test
+    fun `an upstream handshake failure resets the client, and the next connection is passed through`() {
+        // Heimdall verifies the server's certificate, which the test server's is not chained to
+        useComponentManager(trustAllUpstream = false)
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val failingFlow = Flow(localPort = 45060)
+        failingFlow.send(FakeClientTlsDriver(hostname, fakeTlsServer.port).wrap()!!) // ClientHello
+
+        awaitCondition("the client should be reset") { failingFlow.sawReset() }
+        awaitCondition("the pair should have been marked for passthrough") {
+            cache.getReason(appId, hostname) == PassthroughReason.UPSTREAM_HANDSHAKE_FAILED
+        }
+        awaitCondition("the failing connection should record why it was not decrypted") {
+            passthroughReasonOf(45060) == "UPSTREAM_HANDSHAKE_FAILED"
+        }
+
+        // the app's retry reaches the server directly and decides about its certificate itself
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val retryDriver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull("the passthrough handshake should succeed", runClientHandshake(Flow(localPort = 45061), retryDriver))
+        assertEquals(fakeTlsServer.leafCert, retryDriver.engine.session.peerCertificates[0])
+        awaitCondition("the retry should record the learned reason") {
+            passthroughReasonOf(45061) == "UPSTREAM_HANDSHAKE_FAILED"
+        }
+    }
+
+    @Test
+    fun `an intercepted connection records no passthrough reason`() {
+        fakeTlsServer.acceptOnce(::holdUntilClosed)
+        val driver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull(runClientHandshake(Flow(localPort = 45062), driver))
+        assertNotEquals(fakeTlsServer.leafCert, driver.engine.session.peerCertificates[0])
+
+        Thread.sleep(300)
+        assertNull(passthroughReasonOf(45062))
+    }
+
     // ---- MitM scope and learning switch (docs/vpn-mitm-audit.md PKT-24) ----
 
     @Test
     fun `host outside the MitM scope is passed through`() {
         useComponentManager(mitmScope = MitmScope(hostMode = MitmScope.HostMode.BLACKLIST, hosts = listOf(hostname)))
         assertPassedThrough(localPort = 45040)
+        awaitCondition("the connection should record why it was not decrypted (PKT-56)") {
+            passthroughReasonOf(45040) == "OUT_OF_SCOPE"
+        }
     }
 
     @Test
@@ -350,6 +396,9 @@ class TlsPassthroughLearningTest {
             connection.unwrapOutbound(packet.payload)
         }
 
+        /** Whether the VPN has reset this flow. */
+        fun sawReset(): Boolean = deviceWriter.sentMessages.any { ((it.obj as IpPacket).payload as TcpPacket).header.rst }
+
         /** Returns the next non-empty TCP payload written back to the device, or null on timeout. */
         fun nextPayload(timeoutMs: Long = 10000): ByteArray? {
             val deadline = System.currentTimeMillis() + timeoutMs
@@ -421,6 +470,12 @@ class TlsPassthroughLearningTest {
         } catch (e: Exception) {
             // closed
         }
+    }
+
+    /** The passthrough reason recorded for the connection from [localPort], or null. */
+    private fun passthroughReasonOf(localPort: Int): String? {
+        val db = componentManager.databaseConnector as RecordingDatabaseConnector
+        return db.connections.lastOrNull { it.localPort == localPort }?.passthroughReason
     }
 
     private fun suspectCount(): Int {

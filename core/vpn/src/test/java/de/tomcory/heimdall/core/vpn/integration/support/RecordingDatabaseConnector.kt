@@ -27,7 +27,8 @@ data class RecordedConnection(
     @Volatile var sni: String? = null,
     @Volatile var alpn: String? = null,
     @Volatile var echOffered: Boolean = false,
-    @Volatile var blocked: Boolean = false
+    @Volatile var blocked: Boolean = false,
+    @Volatile var passthroughReason: String? = null
 )
 
 data class RecordedRequest(
@@ -170,6 +171,10 @@ class RecordingDatabaseConnector : DatabaseConnector {
 
     override suspend fun markConnectionBlocked(id: Long) {
         connections.find { it.id == id }?.blocked = true
+    }
+
+    override suspend fun updateConnectionPassthroughReason(id: Long, reason: String) {
+        connections.find { it.id == id }?.passthroughReason = reason
     }
 
     override suspend fun persistHttpRequest(

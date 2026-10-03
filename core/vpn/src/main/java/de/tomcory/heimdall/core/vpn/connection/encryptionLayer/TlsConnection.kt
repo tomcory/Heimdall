@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 import java.nio.ByteBuffer
+import java.security.GeneralSecurityException
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
@@ -126,6 +127,9 @@ class TlsConnection(
 
     /** Wall-clock time at which the client-facing handshake completed (see [recordPinningSuspect]). */
     private var clientEstablishedAt = 0L
+
+    /** Whether [upstreamHandshakeFailed] has run for this connection. */
+    private var upstreamFailureRecorded = false
 
     private val log = false
 
@@ -313,8 +317,14 @@ class TlsConnection(
             )
 
             // only MitM connections within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24)
-            // that aren't marked for passthrough; the QUIC block rule makes the same check
-            doMitm = doMitm && wouldIntercept(hostname)
+            // that aren't marked for passthrough; the QUIC block rule makes the same check. A
+            // connection that is passed through records why (PKT-56).
+            if (doMitm) {
+                interceptionSkipReason(hostname)?.let { reason ->
+                    doMitm = false
+                    persistPassthroughReason(reason)
+                }
+            }
         }
 
         // if we don't want to MITM, we can hand the unprocessed record straight to the application layer
@@ -867,6 +877,9 @@ class TlsConnection(
             sslEngine?.wrap(appBuffer, netBuffer)
         } catch (sslException: SSLException) {
             Timber.e("tls$id handleWrap ($direction) SSLException in state $state\n${sslException.message}")
+            if(isOutbound && state == ConnectionState.SERVER_HANDSHAKE) {
+                upstreamHandshakeFailed()
+            }
             null
         }
 
@@ -996,7 +1009,14 @@ class TlsConnection(
             if(isOutbound && state == ConnectionState.CLIENT_HANDSHAKE) {
                 learnPassthrough(PassthroughReason.CLIENT_HANDSHAKE_ERROR)
             }
-            Timber.e("tls$id ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
+            // the server-facing engine failing on the server's data mid-handshake: typically
+            // its certificate did not verify (docs/vpn-mitm-audit.md PKT-56)
+            if(!isOutbound && state == ConnectionState.SERVER_HANDSHAKE) {
+                upstreamHandshakeFailed()
+            }
+            // the record is traffic (for an upstream failure, the server's certificate chain),
+            // so it is only logged when per-record logging is on
+            if(log) Timber.e("tls$id ${record.size} bytes: ${ByteUtils.bytesToHex(record)}")
             null
         }
 
@@ -1373,6 +1393,34 @@ class TlsConnection(
     }
 
     /**
+     * Records that Heimdall's own handshake with the server failed (docs/vpn-mitm-audit.md
+     * PKT-56): the app and host are passed through from now on, so the app's retry reaches the
+     * server and the app applies its own trust decision. This connection cannot be saved, since
+     * its ClientHello went into the failed handshake; it is marked so the database says why it
+     * was not decrypted. Only called during the server-facing handshake, and only once.
+     */
+    private fun upstreamHandshakeFailed() {
+        if(upstreamFailureRecorded) {
+            return
+        }
+        upstreamFailureRecorded = true
+        learnPassthrough(PassthroughReason.UPSTREAM_HANDSHAKE_FAILED)
+        persistPassthroughReason(PassthroughReason.UPSTREAM_HANDSHAKE_FAILED.name)
+    }
+
+    /** Whether [e] or one of its causes is a TLS or certificate failure, rather than e.g. an I/O error. */
+    private fun isTlsFailure(e: Throwable): Boolean {
+        var cause: Throwable? = e
+        while(cause != null) {
+            if(cause is SSLException || cause is GeneralSecurityException) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
+    }
+
+    /**
      * Tells the passthrough cache that this connection's app accepts the certificate for the
      * host: it has sent application data through the MitM (docs/vpn-mitm-audit.md PKT-54).
      */
@@ -1394,6 +1442,10 @@ class TlsConnection(
             }
         } catch (e: Exception) {
             Timber.e(e, "tls$id continueHandshake ($direction) delegated task threw, closing connection")
+            // certificate verification runs as a delegated task with some providers
+            if(engine != null && engine === serverSSLEngine && state == ConnectionState.SERVER_HANDSHAKE && isTlsFailure(e)) {
+                upstreamHandshakeFailed()
+            }
             closeConnection()
             return false
         }

@@ -25,7 +25,8 @@ class TlsPassthroughCache(
         Timber.d("TlsPassthroughCache initialised with maxSize=$maxSize")
     }
 
-    private val cache = boundedMap<Boolean>()
+    /** Pairs marked for passthrough, with the reason they were marked for. */
+    private val cache = boundedMap<PassthroughReason>()
 
     /** Number of [PassthroughReason.CLOSED_WITHOUT_DATA] hits so far for pairs not yet marked for passthrough. */
     private val suspectCounts = boundedMap<Int>()
@@ -47,24 +48,32 @@ class TlsPassthroughCache(
         }
     }
 
-    fun put(initiator: Int, hostname: String) {
+    /** Marks a pair for passthrough directly, without the thresholds of [recordFailure]. */
+    fun put(initiator: Int, hostname: String, reason: PassthroughReason = PassthroughReason.CLIENT_HANDSHAKE_ERROR) {
         lock.write {
-            cache[TlsPassthroughCacheEntry(initiator, hostname)] = true
+            cache[TlsPassthroughCacheEntry(initiator, hostname)] = reason
         }
     }
 
-    fun get(initiator: Int, hostname: String): Boolean {
+    fun get(initiator: Int, hostname: String): Boolean = getReason(initiator, hostname) != null
+
+    /**
+     * The reason the pair was marked for passthrough, or null if it is not marked
+     * (docs/vpn-mitm-audit.md PKT-56).
+     */
+    fun getReason(initiator: Int, hostname: String): PassthroughReason? {
         // an access-order LinkedHashMap reorders its internal list on reads too (to track
         // recency for eviction), so this needs the write lock just like put() does
         return lock.write {
-            cache[TlsPassthroughCacheEntry(initiator, hostname)] != null
+            cache[TlsPassthroughCacheEntry(initiator, hostname)]
         }
     }
 
     /**
-     * Records a client-side MitM failure for the given pair. [PassthroughReason.CLIENT_HANDSHAKE_ERROR]
-     * and [PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE] mark the pair for passthrough
-     * immediately; [PassthroughReason.CLOSED_WITHOUT_DATA] only once it has been seen
+     * Records a MitM failure for the given pair. [PassthroughReason.CLIENT_HANDSHAKE_ERROR],
+     * [PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE] and
+     * [PassthroughReason.UPSTREAM_HANDSHAKE_FAILED] mark the pair for passthrough immediately;
+     * [PassthroughReason.CLOSED_WITHOUT_DATA] only once it has been seen
      * [closedWithoutDataThreshold] times.
      *
      * @return true if this call newly marked the pair for passthrough, false if it was already
@@ -89,7 +98,7 @@ class TlsPassthroughCache(
                 }
             }
             suspectCounts.remove(key)
-            cache[key] = true
+            cache[key] = reason
             true
         }
     }
@@ -130,7 +139,8 @@ class TlsPassthroughCache(
 }
 
 /**
- * Client-side signals that an app won't accept Heimdall's forged certificate for a host.
+ * Why a pair is passed through: signals that an app won't accept Heimdall's forged certificate
+ * for a host, or that Heimdall could not complete its own handshake with the server.
  */
 enum class PassthroughReason {
     /** The client-facing TLS handshake failed on data sent by the client, e.g. a fatal alert such as certificate_unknown. */
@@ -140,7 +150,15 @@ enum class PassthroughReason {
     CLIENT_CLOSED_DURING_HANDSHAKE,
 
     /** The client completed the handshake, then closed without sending any application data (typical of certificate pinning). */
-    CLOSED_WITHOUT_DATA
+    CLOSED_WITHOUT_DATA,
+
+    /**
+     * Heimdall's own handshake with the server failed: its certificate did not verify, or the
+     * handshake failed otherwise. The app may trust the server where Heimdall does not, e.g.
+     * through its own CA, so it decides for itself on the next connection (docs/vpn-mitm-audit.md
+     * PKT-56).
+     */
+    UPSTREAM_HANDSHAKE_FAILED
 }
 
 data class TlsPassthroughCacheEntry(val initiator: Int, val hostname: String)

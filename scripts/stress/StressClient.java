@@ -93,6 +93,7 @@ public class StressClient {
                     case "tlsclose": tlsClose(); break;
                     case "tlsparallel": tlsParallel(); break;
                     case "tlspinning": tlsPinning(); break;
+                    case "tlsupstream": tlsUpstream(); break;
                     default: result(test, false, "unknown test");
                 }
             } catch (Throwable t) {
@@ -107,6 +108,11 @@ public class StressClient {
     static synchronized void result(String name, boolean pass, String detail) {
         if (!pass) failures.incrementAndGet();
         System.out.println("RESULT " + name + " " + (pass ? "PASS" : "FAIL") + " " + detail);
+    }
+
+    /** A check that could not run, e.g. because a public server was unreachable; counts as neither. */
+    static synchronized void skip(String name, String detail) {
+        System.out.println("RESULT " + name + " SKIP " + detail);
     }
 
     // ---- helpers ----------------------------------------------------------------------------
@@ -850,10 +856,14 @@ public class StressClient {
                 }
                 SSLSocket s = (SSLSocket) trustAllFactory.createSocket();
                 String thirdIssuer = handshakeIssuer(s, host);
+                // closed like the first two, or this close would itself count as a quick one
+                // and a second run in the same VPN session would see the host learned
+                Thread.sleep(idle);
                 s.close();
                 boolean mitm = "Heimdall".equals(firstIssuer);
                 if (!mitm) {
-                    result(name, true, "not intercepted (issuer " + firstIssuer + "), nothing to learn");
+                    result(name, true, "not intercepted from the first connection on (issuer " + firstIssuer
+                            + "): MitM is off, or the host was learned earlier in this VPN session");
                 } else if (idle > 0) {
                     result(name, "Heimdall".equals(thirdIssuer), "third connection's issuer " + thirdIssuer + " (expected Heimdall: still intercepted)");
                 } else {
@@ -861,6 +871,55 @@ public class StressClient {
                 }
             } catch (Throwable t) {
                 result(name, false, t.toString());
+            }
+        }
+    }
+
+    /**
+     * Servers whose certificate Heimdall's MitM does not trust (docs/vpn-mitm-audit.md PKT-56).
+     * The first connection to each is reset, because Heimdall's own handshake with the server
+     * fails; the VPN then passes the host through, so the second connection reaches the server
+     * and this trust-all client sees its real certificate. Without MitM both connections succeed.
+     * The servers are public (badssl.com): a connection that cannot even be opened is a SKIP.
+     */
+    static void tlsUpstream() throws Exception {
+        initTls();
+        for (String host : new String[]{"expired.badssl.com", "self-signed.badssl.com", "untrusted-root.badssl.com"}) {
+            String name = "tlsupstream-" + host.substring(0, host.indexOf('.'));
+            String[] outcomes = new String[2];
+            String secondIssuer = null;
+            boolean unreachable = false;
+            for (int i = 0; i < 2 && !unreachable; i++) {
+                Socket raw = new Socket();
+                try {
+                    raw.connect(new InetSocketAddress(host, 443), CONNECT_TIMEOUT);
+                } catch (IOException e) {
+                    unreachable = true;
+                    outcomes[i] = "connect failed: " + e;
+                    raw.close();
+                    break;
+                }
+                try {
+                    raw.setSoTimeout(READ_TIMEOUT);
+                    SSLSocket s = (SSLSocket) trustAllFactory.createSocket(raw, host, 443, true);
+                    s.startHandshake();
+                    String dn = ((X509Certificate) s.getSession().getPeerCertificates()[0]).getIssuerX500Principal().getName();
+                    String issuer = dn.replaceAll(".*CN=([^,]+).*", "$1");
+                    outcomes[i] = "issuer " + issuer;
+                    if (i == 1) secondIssuer = issuer;
+                    s.close();
+                } catch (IOException e) {
+                    outcomes[i] = e.getClass().getSimpleName() + ": " + e.getMessage();
+                    raw.close();
+                }
+                // the VPN learns asynchronously
+                Thread.sleep(500);
+            }
+            String detail = "first: " + outcomes[0] + "; second: " + outcomes[1];
+            if (unreachable) {
+                skip(name, detail);
+            } else {
+                result(name, secondIssuer != null && !"Heimdall".equals(secondIssuer), detail);
             }
         }
     }
