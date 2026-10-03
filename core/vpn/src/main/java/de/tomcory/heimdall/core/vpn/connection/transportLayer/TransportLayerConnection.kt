@@ -291,6 +291,18 @@ abstract class TransportLayerConnection protected constructor(
         }
     }
 
+    /**
+     * Gives a connection that has no hostname yet the name [name], e.g. from an HTTP request's
+     * Host header, and re-evaluates the tracker label (docs/vpn-mitm-audit.md PKT-58). A name the
+     * connection already has is never replaced, unlike with [refineRemoteHost] and an SNI.
+     */
+    fun fillMissingRemoteHost(name: String) {
+        if (remoteHost.isNullOrEmpty()) {
+            // the ECH rule of refineRemoteHost() is exactly "fill a missing name, replace none"
+            refineRemoteHost(name, echOffered = true)
+        }
+    }
+
     protected fun deleteDatabaseEntity() {
         if (id > 0) {
             CoroutineScope(Dispatchers.IO).launch {
@@ -415,6 +427,12 @@ abstract class TransportLayerConnection protected constructor(
     }
 
     companion object {
+        /** Whether [tcpPacket], the first segment of a new flow, opens DNS over TLS that is to be refused. */
+        private fun refusesDnsOverTls(initialPacket: IpPacket, tcpPacket: TcpPacket, componentManager: ComponentManager): Boolean {
+            val refused = componentManager.refuseDnsOverTlsTo ?: return false
+            return tcpPacket.header.syn && tcpPacket.header.dstPort.valueAsInt() == 853 && initialPacket.header.dstAddr == refused
+        }
+
         /**
          * Creates a [TransportLayerConnection] instance based on the transport protocol and IP version of the supplied packet.
          *
@@ -438,11 +456,6 @@ abstract class TransportLayerConnection protected constructor(
             val connection =  when (initialPacket.payload) {
                 is TcpPacket -> {
                     val tcpPacket = initialPacket.payload as TcpPacket
-//                    if(tcpPacket.header.dstPort.valueAsInt() == 853) {
-//                        Timber.w("Resetting DoT packet to %s:%s", initialPacket.header.dstAddr.hostAddress, tcpPacket.header.dstPort.valueAsInt())
-//                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
-//                        null
-//                    } else
                     if(tcpPacket.header.rst) {
                         // A reset for a connection that is not (or no longer) known. There is
                         // nothing to reset, and a reset is never answered: the answer would be
@@ -452,6 +465,12 @@ abstract class TransportLayerConnection protected constructor(
                         val headerString = if(tcpPacket.header.fin) "FIN" else "" + if(tcpPacket.header.ack) "ACK" else "" + if (tcpPacket.header.rst) "RST" else ""
                         Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
+                        null
+                    } else if(refusesDnsOverTls(initialPacket, tcpPacket, componentManager)) {
+                        // Private DNS in opportunistic mode: the resolver then uses plain DNS on
+                        // the VPN, which fills the DNS cache (docs/vpn-mitm-audit.md PKT-58)
+                        Timber.d("Refusing DNS over TLS to ${initialPacket.header.dstAddr.hostAddress}:853")
+                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildSynRefusal(initialPacket))))
                         null
                     } else {
                         TcpConnection(

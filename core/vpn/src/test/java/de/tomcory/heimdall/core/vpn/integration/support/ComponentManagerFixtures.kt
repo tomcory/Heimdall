@@ -16,6 +16,7 @@ import io.mockk.every
 import io.mockk.mockk
 import java.io.File
 import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.Socket
 import java.nio.channels.Selector
 import java.util.concurrent.CopyOnWriteArrayList
@@ -66,7 +67,8 @@ object ComponentManagerFixtures {
         learnPassthrough: Boolean = true,
         quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
         pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
-        trustAllUpstream: Boolean = true
+        trustAllUpstream: Boolean = true,
+        refuseDnsOverTlsTo: InetAddress? = null
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -100,6 +102,7 @@ object ComponentManagerFixtures {
         every { componentManager.learnPassthrough } returns learnPassthrough
         // a relaxed mock would return 0, and no close would ever count as pinning (PKT-54)
         every { componentManager.pinningCloseWindowMs } returns pinningCloseWindowMs
+        every { componentManager.refuseDnsOverTlsTo } returns refuseDnsOverTlsTo
         // explicit for the same reason: a relaxed mock would return a mock enum value
         every { componentManager.quicPolicy } returns quicPolicy
         every { componentManager.sessionId } returns sessionId

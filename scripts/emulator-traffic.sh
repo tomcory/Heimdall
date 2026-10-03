@@ -77,6 +77,8 @@ ALL_GROUPS="dns http raw tls quic apps"
 TRACKER_HOST="googleads.g.doubleclick.net"
 HTTP_HOSTS="example.com connectivitycheck.gstatic.com"
 TLS_HOST="www.wikipedia.org"
+# queried over TCP/53 only, so that nothing else names its address (PKT-58)
+TCP_DNS_QUERY_HOST="neverssl.com"
 # served from the same addresses and certificate as $TLS_HOST
 EARLY_ALERT_HOST="en.wikipedia.org"
 MISMATCH_DNS_HOST="example.org"
@@ -200,12 +202,61 @@ dns_query() {
         | tr -d '\r' | { read -r bytes; info "A $host -> ${bytes:-0} byte answer"; }
 }
 
+# Sends an A query for $1 over TCP (two-byte length prefix) to 8.8.8.8:53 and stores the first
+# address of the answer in TCP_DNS_IP (docs/vpn-mitm-audit.md PKT-58).
+dns_query_tcp() {
+    local host="$1" qname="" label length hex
+    local IFS='.'
+    for label in $host; do
+        qname="$qname$(printf '\\x%02x' "${#label}")$label"
+    done
+    unset IFS
+    # header (12) + name (one length byte per label, plus the labels and the root) + type and class (4)
+    length=$(( 12 + ${#host} + 2 + 4 ))
+    hex="$(adb shell "{ printf '\\x00\\x$(printf '%02x' "$length")\\x48\\x45\\x01\\x00\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00${qname}\\x00\\x00\\x01\\x00\\x01'; sleep 2; } | timeout 6 nc -w 3 8.8.8.8 53 | xxd -p" < /dev/null | tr -d '\r\n')"
+    TCP_DNS_IP="$(python3 - "$hex" <<'PY'
+import sys
+data = bytes.fromhex(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1] else b""
+msg = data[2:]
+def skip_name(i):
+    while i < len(msg):
+        n = msg[i]
+        if n == 0:
+            return i + 1
+        if n & 0xC0 == 0xC0:
+            return i + 2
+        i += n + 1
+    return i
+try:
+    i = skip_name(12) + 4
+    for _ in range(int.from_bytes(msg[6:8], "big")):
+        i = skip_name(i)
+        rtype = int.from_bytes(msg[i:i + 2], "big")
+        rdlen = int.from_bytes(msg[i + 8:i + 10], "big")
+        if rtype == 1 and rdlen == 4:
+            print(".".join(str(b) for b in msg[i + 10:i + 14]))
+            break
+        i += 10 + rdlen
+except Exception:
+    pass
+PY
+)"
+    TCP_DNS_HOST="$host"
+    info "A $host over TCP -> ${TCP_DNS_IP:-no address}"
+}
+
 group_dns() {
-    say "dns: plain DNS over UDP/53"
+    say "dns: plain DNS over UDP/53, and one query over TCP/53"
     local host
     for host in $HTTP_HOSTS $TLS_HOST $MISMATCH_DNS_HOST $TRACKER_HOST; do
         dns_query "$host"
     done
+    dns_query_tcp "$TCP_DNS_QUERY_HOST"
+    if [ -n "${TCP_DNS_IP:-}" ]; then
+        # not HTTP, so that no Host header can name the connection: only the TCP answer can
+        adb shell "printf 'heimdall-traffic' | timeout 6 nc -w 3 $TCP_DNS_IP 80 >/dev/null 2>&1" < /dev/null
+        info "connected to $TCP_DNS_IP:80, which only the TCP answer names"
+    fi
 }
 
 group_http() {
@@ -433,6 +484,24 @@ cmd_report() {
         case "$underlying_caps" in *NOT_METERED*) underlying_unmetered=yes ;; esac
         info "VPN network unmetered: $vpn_unmetered (expected $underlying_unmetered, as its underlying network: ${underlying_caps%% Capabilities*})"
     fi
+    # DNS over TCP fills the DNS cache (PKT-58)
+    if [ -n "${TCP_DNS_IP:-}" ]; then
+        local tcp_dns_name
+        tcp_dns_name="$(sqlite3 "$db" "select coalesce(remoteHost, '-') from Connection where sessionId = $session
+            and remoteIp = '$TCP_DNS_IP' and remotePort = 80 order by id desc limit 1")"
+        info "connection to $TCP_DNS_IP named after the DNS-over-TCP answer: ${tcp_dns_name:-no connection} (expected $TCP_DNS_HOST)"
+    fi
+    # opportunistic DNS over TLS to the VPN's DNS server is refused, so it is not validated (PKT-58)
+    local vpn_link private_dns
+    vpn_link="$(adb shell dumpsys connectivity 2>/dev/null | grep -oE 'InterfaceName: tun0[^}]*' | head -1)"
+    if [ -z "$vpn_link" ]; then
+        private_dns="no VPN network"
+    else
+        # the fields are left out while the resolver does not use Private DNS on the network
+        private_dns="$(printf '%s\n' "$vpn_link" | grep -oE 'ValidatedPrivateDnsAddresses: \[[^]]*\]' | head -1)"
+        private_dns="${private_dns:-not in use}"
+    fi
+    info "Private DNS on the VPN network: $private_dns (expected not in use, unless Private DNS is strict)"
     crashes="$(adb logcat -d 2>/dev/null | grep -c "FATAL EXCEPTION.*\|Process: $PKG")"
     info "Heimdall crash lines in logcat: $crashes (expected 0)"
     info "Heimdall process: $(adb shell pidof "$PKG" | tr -d '\r' | sed 's/^$/not running/')"

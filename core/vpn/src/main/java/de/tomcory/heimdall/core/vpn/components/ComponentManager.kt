@@ -42,6 +42,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.Socket
 import java.nio.channels.Selector
 import java.util.concurrent.atomic.AtomicBoolean
@@ -64,6 +65,10 @@ class ComponentManager(
     // how soon after its handshake a client must close a connection without data for the close
     // to count as certificate pinning (docs/vpn-mitm-audit.md PKT-54)
     val pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
+    // the VPN's DNS server, if connections to it on port 853 are to be refused: in Private DNS's
+    // opportunistic mode the resolver then falls back to plain DNS, which Heimdall can read
+    // (docs/vpn-mitm-audit.md PKT-58). Null in strict mode, where refusing would break DNS.
+    val refuseDnsOverTlsTo: InetAddress? = null,
     // what to do with QUIC flows while MitM is on; PASSTHROUGH whenever MitM is off
     // (docs/vpn-mitm-audit.md PKT-51)
     val quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,

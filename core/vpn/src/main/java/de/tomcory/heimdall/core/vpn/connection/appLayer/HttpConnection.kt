@@ -400,6 +400,12 @@ class HttpConnection(
         state.resetMessage()
 
         if (isOutbound) {
+            // Without a name from the DNS cache or an SNI, the request's own Host header names
+            // the server; it also names the connection from now on (docs/vpn-mitm-audit.md PKT-58)
+            if (encryptionLayer.transportLayer.remoteHost.isNullOrEmpty()) {
+                hostHeaderName(headers)?.let { encryptionLayer.transportLayer.fillMissingRemoteHost(it) }
+            }
+
             // register this request's placeholder in wire order *before* launching the async
             // persist, so a response processed while the persist is still in flight still
             // correlates with the right request regardless of how long the DB write takes
@@ -499,6 +505,22 @@ class HttpConnection(
         }
 
         return listOf(parts[0], parts[1], parts[2])
+    }
+
+    /**
+     * The host name in a request's Host header, without a port, or null if there is no header or
+     * it names an IP address (which says nothing a connection does not already know).
+     */
+    private fun hostHeaderName(headers: Map<String, String>?): String? {
+        val value = headers?.entries?.firstOrNull { it.key.equals("Host", ignoreCase = true) }?.value?.trim()
+        if (value.isNullOrEmpty() || value.startsWith("[")) {
+            return null
+        }
+        val name = value.substringBefore(':').lowercase()
+        if (name.isEmpty() || name.all { it.isDigit() || it == '.' }) {
+            return null
+        }
+        return name
     }
 
     private fun parseHeaders(message: String): Map<String, String>? {

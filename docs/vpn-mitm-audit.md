@@ -55,8 +55,8 @@ Each revised packet lists what changed.
 re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered the full stress
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
-probe. Findings V-59–V-67 are in "Second-audit findings", with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-57 are implemented.
+probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-58 are implemented.
 
 ---
 
@@ -136,6 +136,7 @@ dead code, misleading comments — see the Appendix, not given a full write-up h
 | V-65 | M | Under load, request rows are written more than 30 s late, and responses that wait longer than that for their request are discarded |
 | V-66 | M | The VPN network is reported as metered, so apps and the system treat an unmetered Wi-Fi as metered while Heimdall runs |
 | V-67 | M | A new UDP flow, including every plain DNS query, is still set up with blocking binder calls on the thread that handles every packet from the device |
+| V-68 | H | About one DNS query in 256 is taken for TLS and swallowed, so the lookup fails until the resolver retries (found while implementing PKT-58, fixed by it) |
 
 ---
 
@@ -1634,6 +1635,25 @@ app starting) is the UDP equivalent.
 **Recommendation:** set UDP flows up asynchronously like TCP: queue the datagrams that arrive
 until the channel is connected. Short-cut DNS flows, which need no app lookup before the query
 can be forwarded (PKT-61).
+
+### V-68 — One DNS query in 256 is taken for TLS (High)
+
+Found on 2026-10-03 while verifying PKT-58, which makes the system resolver send its queries
+over plain UDP through the VPN. In one `tlsparallel` run, one of 72 requests failed with
+`UnknownHostException` after 10 s. The log showed a DNS query for `www.mozilla.org` reaching a
+`TlsConnection` (`prepareRecords (outbound) Invalid TLS record type: 01`).
+
+`EncryptionLayerConnection.detectTls()` takes a first segment for TLS when byte 0 is `0x16` and
+byte 5 is `1`. In a DNS query, bytes 0 and 1 are the random query ID, and byte 5 is the low byte
+of the question count, which is 1. So every query whose ID begins with `0x16`, one in 256, was
+handed to a TLS connection, which drops it as an invalid record. The resolver gets no answer,
+times out, and retries with a new ID. The detection also ran on any transport, so TLS-looking
+bytes over UDP and QUIC-looking bytes over TCP could be misclassified as well. The bug is old,
+but it bit rarely while the resolver used DNS over TLS; with plain DNS through the VPN, a busy
+device would hit it several times an hour.
+
+**Recommendation:** never apply TLS or QUIC detection to DNS ports, and apply TLS detection to
+TCP flows only and QUIC detection to UDP flows only (done in PKT-58).
 
 ### Still open from earlier work
 
@@ -3880,7 +3900,7 @@ remaining four changes the database version.
 ### PKT-58 — Fill the DNS cache when the resolver uses TCP or DNS over TLS
 
 - **Priority:** Medium · **Depends on:** none
-- **Resolves:** V-63
+- **Resolves:** V-63, and V-68 (found while implementing it)
 - **Approach:**
   - Move the code that fills `DnsCache` from a DNS answer out of `DnsConnection` into a shared
     function, used by `DnsConnection` (UDP) and a new `DnsStreamConnection` for DNS over a
@@ -3923,6 +3943,62 @@ remaining four changes the database version.
     default Private DNS setting, `Creating TCP Connection to ...:443 (null)` no longer appears
     for hosts resolved through the system resolver. `dumpsys connectivity` shows Private DNS
     not validated on the VPN network.
+- **Implementation notes (2026-10-03):**
+  - `DnsConnection.cacheAnswers()` holds the code that fills the cache from a response (A and
+    AAAA), shared by `DnsConnection` (UDP) and the new `DnsStreamConnection`. A message that
+    cannot be read now returns false instead of throwing. `DnsConnection` passes queries on
+    without parsing them; it used to parse them and throw on anything that was not DNS.
+    `DnsStreamConnection` passes every byte on at once and reassembles responses on the side,
+    with at most one message (65,537 bytes) pending. A zero length marks the stream as not
+    framed DNS, and it is not read any further.
+  - `AppLayerConnection` decides by transport and port: UDP or TCP to port 53 over the plaintext
+    layer, and port 853 over a TLS connection that is decrypted (`doMitm`), are DNS. UDP gets
+    `DnsConnection`, a stream `DnsStreamConnection`. A passed-through DoT connection hands over
+    ciphertext and gets `RawConnection`. The packet variant still also takes a pcap4j
+    `DnsPacket` over UDP for DNS, as before (pcap4j only produces one for UDP port 53, and
+    `DnsResolutionTest` relies on it).
+  - Refusal: new `ComponentManager.refuseDnsOverTlsTo`. `TransportLayerConnection.getInstance()`
+    answers a SYN to that address on port 853 with the new `TcpConnection.buildSynRefusal()`
+    (RST-ACK acknowledging the SYN; the stray-reset builder does not set ACK, and a device in
+    SYN-SENT ignores a reset without it). The commented-out DoT code there is gone.
+  - Deviation from the plan, in how the mode is detected: the packet said to read
+    `isPrivateDnsActive` with no `privateDnsServerName` on the default network. Private DNS is
+    validated per network, against that network's own DNS servers. The Wi-Fi network's state
+    therefore says nothing about the VPN network, which uses 1.1.1.1, and on the emulator Wi-Fi
+    showed no Private DNS while the VPN network had DoT validated. `HeimdallVpnService` now only
+    asks whether strict mode is on (`privateDnsServerName` set on the default network, API 28+),
+    before establishing the interface, and refuses DoT to the VPN's DNS server otherwise. With
+    Private DNS off, the resolver never connects to port 853, so the refusal changes nothing.
+  - Not done: the note about strict mode in the DNS setting's description. `StringPreference`
+    has no description, only the dialog title, and changing the shared settings component for
+    one note is outside this packet. Strict mode stays a gap; this section and V-63 record it.
+  - `HttpConnection`: when the connection has no hostname, the request's `Host` header (port
+    removed; ignored if it is an IP address) names it through the new
+    `TransportLayerConnection.fillMissingRemoteHost()`, which never replaces a known name.
+  - V-68, found while verifying this packet and fixed in it: `EncryptionLayerConnection` no
+    longer runs TLS or QUIC detection for port 53, and runs TLS detection only for TCP flows and
+    QUIC detection only for UDP flows.
+  - Tests: new `DnsStreamConnectionTest` (7), `AppLayerSelectionTest` (5),
+    `DnsOverTlsRefusalTest` (3). `HttpParsingTest` +3 (Host header). `ProtocolDetectionTest` +2:
+    a DNS query whose ID begins with `0x16` passes `detectTls()` and still gets the plaintext
+    layer, and TLS bytes over UDP are not TLS. 399 `core:vpn` and 15 `app` tests pass.
+  - `emulator-traffic.sh`: the `dns` group also sends an A query for `neverssl.com` over TCP,
+    then connects to the answered address with non-HTTP bytes, so that only the TCP answer can
+    name it. The report checks that name and shows whether Private DNS is in use on the VPN
+    network.
+  - Emulator:
+
+    | | Before (PKT-57 build) | After |
+    |---|---|---|
+    | Connection to the DNS-over-TCP answer's address | no name | `neverssl.com` |
+    | Private DNS on the VPN network | `ValidatedPrivateDnsAddresses: [1.1.1.1]` | not in use |
+    | Port-443 connections without a name, `tls` test in three fresh VPN sessions | 127/127 in the audit's DoT session | 0/25, 0/20, 0/20 |
+
+    The service logs `Private DNS strict mode: false; refusing DNS over TLS to: 1.1.1.1`, and the
+    resolver's attempt at VPN start is refused once. Full suite, run one test at a time, after
+    the V-68 fix: 22/22 tests, 82 checks, no DNS query handed to TLS in any of the run's logs.
+    The run before that fix had one failure, the V-68 case above. `emulator-traffic.sh run` is
+    clean.
 - **Commit:** `fix(vpn): fill the DNS cache from DNS over TCP and keep opportunistic DNS over TLS off the VPN`
 
 ### PKT-59 — Store HTTP bodies as bytes, with a configurable limit

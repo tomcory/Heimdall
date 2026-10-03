@@ -24,6 +24,7 @@ class HttpParsingTest {
     private lateinit var componentManager: ComponentManager
     private lateinit var encryptionLayer: EncryptionLayerConnection
     private lateinit var httpConnection: HttpConnection
+    private lateinit var transportLayer: TransportLayerConnection
 
     @Before
     fun setup() {
@@ -44,7 +45,7 @@ class HttpParsingTest {
         every { ipPacketBuilder.remoteAddress } returns remoteAddr
         every { ipPacketBuilder.localAddress } returns localAddr
 
-        val transportLayer = mockk<TransportLayerConnection>(relaxed = true)
+        transportLayer = mockk(relaxed = true)
         every { transportLayer.ipPacketBuilder } returns ipPacketBuilder
         every { transportLayer.remoteHost } returns "example.com"
         every { transportLayer.remotePort } returns 80
@@ -86,6 +87,29 @@ class HttpParsingTest {
                 initiatorPkg = "com.example.test"
             )
         }
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-58: the Host header names an unnamed connection ----
+
+    @Test
+    fun `a connection without a hostname is named after the request's Host header`() {
+        every { transportLayer.remoteHost } returns null
+        httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: API.Example.org:8080\r\n\r\n".toByteArray())
+        verify { transportLayer.fillMissingRemoteHost("api.example.org") }
+    }
+
+    @Test
+    fun `a Host header with an IP address names nothing`() {
+        every { transportLayer.remoteHost } returns null
+        httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: 93.184.216.34\r\n\r\n".toByteArray())
+        httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: [2001:db8::1]:80\r\n\r\n".toByteArray())
+        verify(exactly = 0) { transportLayer.fillMissingRemoteHost(any()) }
+    }
+
+    @Test
+    fun `a connection that has a hostname keeps it`() {
+        httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: other.example\r\n\r\n".toByteArray())
+        verify(exactly = 0) { transportLayer.fillMissingRemoteHost(any()) }
     }
 
     @Test

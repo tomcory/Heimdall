@@ -8,6 +8,7 @@ import org.pcap4j.packet.DnsRDataAaaa
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 
+/** DNS over UDP: one message per datagram. DNS over a stream is [DnsStreamConnection]. */
 class DnsConnection(
     id: Long,
     encryptionLayer: EncryptionLayerConnection,
@@ -25,44 +26,47 @@ class DnsConnection(
     }
 
     override fun unwrapOutbound(payload: ByteArray) {
-        unwrapOutbound(DnsPacket.newPacket(payload, 0, payload.size))
+        // queries are forwarded as they are; only the answers are read
+        encryptionLayer.wrapOutbound(payload)
     }
 
     override fun unwrapOutbound(packet: Packet) {
-        val dnsPacket = packet as DnsPacket
-        encryptionLayer.wrapOutbound(dnsPacket.rawData)
+        unwrapOutbound(packet.rawData)
     }
 
     override fun unwrapInbound(payload: ByteArray) {
-        val dnsPacket = DnsPacket.newPacket(payload, 0, payload.size)
-        val hostname = dnsPacket.header.questions.firstOrNull()?.qName?.name
-
-        if (hostname == null) {
-            Timber.w("dns$id Received DNS response with no questions, dropping")
-            encryptionLayer.wrapInbound(dnsPacket.rawData)
-            return
+        if (!cacheAnswers(componentManager, payload)) {
+            Timber.w("dns$id Could not read a DNS response of ${payload.size} bytes, passing it on")
         }
+        encryptionLayer.wrapInbound(payload)
+    }
 
-        dnsPacket.header.answers.forEach {
-            val ip = when(it.rData) {
-                is DnsRDataA -> {
-                    val data = it.rData as DnsRDataA
-                    data.address.hostAddress
-                }
-
-                is DnsRDataAaaa -> {
-                    val data = it.rData as DnsRDataAaaa
-                    data.address.hostAddress
-                }
-
-                else -> ""
+    companion object {
+        /**
+         * Fills the DNS cache from the A and AAAA records of the DNS response [message], under the
+         * name the response's first question asked for (docs/vpn-mitm-audit.md PKT-58).
+         *
+         * @return false if [message] is not a DNS message that could be read.
+         */
+        fun cacheAnswers(componentManager: ComponentManager, message: ByteArray): Boolean {
+            val dnsPacket = try {
+                DnsPacket.newPacket(message, 0, message.size)
+            } catch (e: Exception) {
+                return false
             }
+            val hostname = dnsPacket.header.questions.firstOrNull()?.qName?.name ?: return true
 
-            if(ip.isNotEmpty()) {
-                componentManager.dnsCache.put(ip, hostname, it.ttlAsLong)
+            dnsPacket.header.answers.forEach {
+                val ip = when (val data = it.rData) {
+                    is DnsRDataA -> data.address.hostAddress
+                    is DnsRDataAaaa -> data.address.hostAddress
+                    else -> null
+                }
+                if (!ip.isNullOrEmpty()) {
+                    componentManager.dnsCache.put(ip, hostname, it.ttlAsLong)
+                }
             }
+            return true
         }
-
-        encryptionLayer.wrapInbound(dnsPacket.rawData)
     }
 }

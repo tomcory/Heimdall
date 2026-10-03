@@ -4,7 +4,9 @@ import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.appLayer.RawConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -237,9 +239,16 @@ abstract class EncryptionLayerConnection(
         fun getInstance(id: Long, transportLayer: TransportLayerConnection, componentManager: ComponentManager, rawPayload: ByteArray, isInbound: Boolean = false): EncryptionLayerConnection {
             return if (isInbound) {
                 PlaintextConnection(id, transportLayer, componentManager)
-            } else if (detectTls(rawPayload)) {
+            } else if (transportLayer.remotePort == 53) {
+                // DNS is never TLS or QUIC. A query's first two bytes are its random ID and its
+                // sixth byte is the low byte of the question count, 1, so one query in 256 used
+                // to pass detectTls() and was swallowed by a TLS connection
+                // (docs/vpn-mitm-audit.md PKT-58).
+                PlaintextConnection(id, transportLayer, componentManager)
+            } else if (transportLayer is TcpConnection && detectTls(rawPayload)) {
+                // TLS only runs over TCP (DTLS has a different record header)
                 TlsConnection(id, transportLayer, componentManager)
-            } else if(detectQuic(rawPayload)) {
+            } else if (transportLayer is UdpConnection && detectQuic(rawPayload)) {
                 QuicConnection(id, transportLayer, componentManager)
             } else {
                 PlaintextConnection(id, transportLayer, componentManager)

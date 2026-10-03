@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -49,6 +50,9 @@ class HeimdallVpnService : VpnService() {
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
     private var componentManager: ComponentManager? = null
     private var vpnInterface: ParcelFileDescriptor? = null
+
+    /** The DNS server the VPN interface announces; set by [establishInterface]. */
+    private var vpnDnsServerAddress: InetAddress? = null
     private var startTime: Long = 0
     private var notificationUpdateHandler: Handler? = null
     private var notificationUpdateRunnable: Runnable? = null
@@ -246,10 +250,19 @@ class HeimdallVpnService : VpnService() {
             Timber.d("MitM scope: apps included=${mitmScope.includedApps?.size ?: "all"}, excluded=${mitmScope.excludedApps.size}, hosts=${mitmScope.hostMode} (${mitmScope.hosts.size}); learn passthrough: $learnPassthrough")
         }
 
+        // Read before the interface exists: Heimdall's own traffic bypasses the VPN, so this is
+        // the network the device uses without it (docs/vpn-mitm-audit.md PKT-58)
+        val strictPrivateDns = isPrivateDnsStrict()
+
         // establish the VPN interface
         if (!establishInterface(doMitm)) {
             return false
         }
+        // In Private DNS's opportunistic ("automatic") mode the resolver would use DNS over TLS
+        // to the VPN's DNS server, which leaves Heimdall's DNS cache empty. Refusing it makes the
+        // resolver fall back to plain DNS. In strict mode that would break DNS, so it is left.
+        val refuseDnsOverTlsTo = if (strictPrivateDns) null else vpnDnsServerAddress
+        Timber.d("Private DNS strict mode: $strictPrivateDns; refusing DNS over TLS to: ${refuseDnsOverTlsTo?.hostAddress ?: "none"}")
         val interfaceDescriptor = vpnInterface?.fileDescriptor ?: return false
 
         // launch the traffic-handling components through the ComponentManager
@@ -265,6 +278,7 @@ class HeimdallVpnService : VpnService() {
                 mitmScope = mitmScope,
                 learnPassthrough = learnPassthrough,
                 quicPolicy = quicPolicy,
+                refuseDnsOverTlsTo = refuseDnsOverTlsTo,
                 existingSessionId = existingSessionId,
                 keyStoreDir = File(this.filesDir, "keystore"),
                 protectDatagramSocket = { socket -> protect(socket) },
@@ -317,6 +331,20 @@ class HeimdallVpnService : VpnService() {
             packageManager.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.MATCH_SYSTEM_ONLY)
         }
         return systemApps.map { it.packageName }.toSet()
+    }
+
+    /**
+     * Whether Private DNS is in strict mode, i.e. set to a named provider. On API 28+ the name is
+     * on the link properties of every network then; in "automatic" mode and with Private DNS off
+     * there is none. Below API 28 there is no Private DNS (docs/vpn-mitm-audit.md PKT-58).
+     */
+    private fun isPrivateDnsStrict(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return false
+        }
+        val connectivityManager = getSystemService(ConnectivityManager::class.java) ?: return false
+        val linkProperties = connectivityManager.getLinkProperties(connectivityManager.activeNetwork) ?: return false
+        return linkProperties.privateDnsServerName != null
     }
 
     /**
@@ -402,6 +430,8 @@ class HeimdallVpnService : VpnService() {
             Timber.e("Invalid route prefix length, using default")
             preferences.initialValues.vpnRouteInitial.split("/").toTypedArray()[1].toInt()
         }
+
+        vpnDnsServerAddress = dnsServerAddress
 
         // configure the VPN interface builder
         val builder: Builder = Builder()

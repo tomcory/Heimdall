@@ -3,7 +3,9 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.appLayer.AppLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.appLayer.HttpConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.*
@@ -245,5 +247,40 @@ class ProtocolDetectionTest {
 
         val connection = AppLayerConnection.getInstance(payload, 0, encryptionLayer, componentManager)
         assertTrue("expected an HttpConnection, got ${connection::class.simpleName}", connection is HttpConnection)
+    }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-58: which transports may carry TLS or QUIC
+    // -----------------------------------------------------------------------
+
+    private inline fun <reified T : TransportLayerConnection> transport(port: Int): T {
+        val transport = mockk<T>(relaxed = true)
+        every { transport.remotePort } returns port
+        return transport
+    }
+
+    private fun encryptionLayerFor(transport: TransportLayerConnection, payload: ByteArray): EncryptionLayerConnection {
+        val componentManager: ComponentManager = mockk(relaxed = true)
+        return EncryptionLayerConnection.getInstance(0, transport, componentManager, payload)
+    }
+
+    /** A DNS query whose random ID begins with 0x16: byte 5 (the question count's low byte) is 1. */
+    private val dnsQueryLookingLikeTls = byteArrayOf(
+        0x16, 0x2A, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x07, 0x65, 0x78, 0x61, 0x6D, 0x70, 0x6C, 0x65, 0x03, 0x63, 0x6F, 0x6D, 0x00, 0x00, 0x01, 0x00, 0x01
+    )
+
+    @Test
+    fun `a DNS query whose ID looks like a TLS record is still plain DNS`() {
+        assertTrue("the bytes alone pass detectTls", EncryptionLayerConnection.detectTls(dnsQueryLookingLikeTls))
+        assertTrue(encryptionLayerFor(transport<UdpConnection>(53), dnsQueryLookingLikeTls) is PlaintextConnection)
+        assertTrue(encryptionLayerFor(transport<TcpConnection>(53), dnsQueryLookingLikeTls) is PlaintextConnection)
+    }
+
+    @Test
+    fun `TLS is only detected over TCP`() {
+        val clientHello = byteArrayOf(0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x00)
+        assertTrue(encryptionLayerFor(transport<TcpConnection>(443), clientHello) is TlsConnection)
+        assertTrue(encryptionLayerFor(transport<UdpConnection>(443), clientHello) is PlaintextConnection)
     }
 }

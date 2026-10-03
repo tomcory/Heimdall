@@ -1528,6 +1528,37 @@ class TcpConnection internal constructor(
                 }
         }
 
+        /**
+         * Builds the reset that refuses a connection the device is opening: it acknowledges the
+         * SYN, so the device's connect() fails with "connection refused" at once (the same form
+         * as in [buildRst] before our SYN-ACK).
+         */
+        fun buildSynRefusal(synPacket: IpPacket): TcpPacket.Builder? {
+            val syn = synPacket.payload as? TcpPacket ?: return null
+            return TcpPacket.Builder()
+                .srcAddr(synPacket.header.dstAddr)
+                .dstAddr(synPacket.header.srcAddr)
+                .srcPort(syn.header.dstPort)
+                .dstPort(syn.header.srcPort)
+                .sequenceNumber(0)
+                .acknowledgmentNumber(syn.header.sequenceNumber + 1)
+                .dataOffset(5.toByte())
+                .reserved(0.toByte())
+                .urg(false)
+                .ack(true)
+                .psh(false)
+                .rst(true)
+                .syn(false)
+                .fin(false)
+                .window(0.toShort())
+                .urgentPointer(0.toShort())
+                .padding(ByteArray(0))
+                .options(ArrayList())
+                .correctChecksumAtBuild(true)
+                .correctLengthAtBuild(true)
+                .paddingAtBuild(true)
+        }
+
         fun buildStrayRst(strayPacket: IpPacket): TcpPacket.Builder? {
             if(strayPacket.payload is TcpPacket) {
                 val tcpPacket = strayPacket.payload as TcpPacket
