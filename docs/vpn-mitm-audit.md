@@ -38,10 +38,18 @@ per-segment counter updates, not body buffering, freeze the VPN after a large up
 **Addendum 2026-10-02:** PKT-39 is implemented. Verifying it on the emulator produced V-57 /
 PKT-48 (no reordering buffer, so real packet loss on the tunnel stalls uploads) and V-58 /
 PKT-40 (the VPN service crashes when the interface cannot be established, and again on the
-restart that follows). PKT-40 to PKT-48 are implemented. It was numbered first among the pending packets because it had to be
-done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47 and
-the QUIC packets to PKT-49–PKT-52. References were checked against
-`bugfix/mitm-vpn` at `ac57197`.
+restart that follows). PKT-40 was numbered first among the pending packets because it had to
+be done first, so the pending stress-test packets moved from PKT-40–PKT-46 to PKT-41–PKT-47
+and the QUIC packets to PKT-49–PKT-52. References were checked against `bugfix/mitm-vpn` at
+`ac57197`. PKT-40 to PKT-48 are implemented.
+
+**Addendum 2026-10-02 (QUIC packets reviewed):** PKT-49 to PKT-52 were checked against
+`bugfix/mitm-vpn` at `d48a514`, after all fix packets. The design holds; PKT-49 is unchanged.
+Revised: the default policy is Passthrough (PKT-51); the block rule uses the same hostname and
+decision as the TLS path and no longer depends on port 443 (PKT-52); a blocked flow releases
+its socket at once (PKT-52); the device checks are scripted, with a `quic` group in
+`emulator-traffic.sh` (PKT-50) and a per-session policy override on the VPN service (PKT-51).
+Each revised packet lists what changed.
 
 ---
 
@@ -848,7 +856,7 @@ re-run the tracker label (PKT-28).
 QUIC Initial packets are protected with keys derived from public values (the Destination
 Connection ID and a per-version salt, RFC 9001 §5.2), so any on-path observer can read the
 ClientHello inside. `QuicConnection` does not: it forwards every datagram unread
-(`QuicConnection.kt:27-35`). A QUIC flow is therefore labelled only by V-39's DNS lookup, and
+(`QuicConnection.kt:29-37`). A QUIC flow is therefore labelled only by V-39's DNS lookup, and
 its ALPN (`h3`, `doq`, …) is unknown.
 
 **Recommendation:** decrypt the client Initial passively and record SNI and ALPN, with MitM on
@@ -856,15 +864,15 @@ or off (PKT-29, PKT-49, PKT-50).
 
 ### V-41 — HTTP/3 bypasses the MitM entirely (High)
 
-`QuicConnection` sets `doMitm = false` unconditionally (`QuicConnection.kt:22`). With MitM
+`QuicConnection` sets `doMitm = false` unconditionally (`QuicConnection.kt:23`). With MitM
 enabled, every app that speaks HTTP/3 sends that traffic past the decryption pipeline; only its
 TCP traffic is intercepted. Almost all such clients fall back to TCP+TLS when UDP/443 fails, and
 for Chromium-based clients (Chrome, Cronet) a fallback is the only possible outcome anyway,
 because they refuse QUIC certificates that do not chain to a public root
 (`docs/quic_mitm.md` §2.6). There is currently no way to trigger that fallback.
 
-**Recommendation:** a user preference to block h3 QUIC while MitM is on, enforced only where
-the TLS fallback would actually be intercepted (PKT-51, PKT-52).
+**Recommendation:** a user preference to block h3 QUIC while MitM is on, off by default,
+enforced only where the TLS fallback would actually be intercepted (PKT-51, PKT-52).
 
 ---
 
@@ -2905,8 +2913,9 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
 
 - **Priority:** Medium · **Depends on:** —
 - **Resolves:** — (enabler for PKT-50) · **Phase:** Q1, part 1
-- **Approach:** new package `quic/`. Plain JCA only (`Mac "HmacSHA256"`, `AES/ECB/NoPadding`,
-  `AES/GCM/NoPadding`), all available on API 24. No new dependency.
+- **Approach:** new package `quic/` inside `connection/encryptionLayer/`. 
+  - Plain JCA only (`Mac "HmacSHA256"`, `AES/ECB/NoPadding`, `AES/GCM/NoPadding`), 
+    all available on API 24. No new dependency.
   - `QuicVarInt.kt`: variable-length integer decoding (RFC 9000 §16).
   - `QuicInitialKeys.kt`: HKDF-Extract and HKDF-Expand-Label, and the client Initial `key`,
     `iv` and `hp` for a given version and Destination Connection ID.
@@ -2927,6 +2936,38 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   - New test helper `integration/support/QuicInitialFixtures.kt` that *protects* a given
     ClientHello into Initial datagrams, optionally split over two packets and with shuffled
     CRYPTO frames. Validate it by reproducing the RFC 9001 A.2 packet. PKT-50 and PKT-52 use it.
+- **Implementation notes (2026-10-03):**
+  - As planned: `quic/QuicVarInt.kt` (decode, plus encode for the fixture and later use),
+    `quic/QuicInitialKeys.kt` (`forClient`, and `forServer` for the RFC vectors),
+    `quic/QuicInitialPacket.kt` (`decrypt(datagram, offset, keys)`). Plain JCA, no dependency.
+  - `decrypt()` takes optional keys: PKT-50 needs to keep the keys of the first Initial when
+    later ones name another connection ID. `AuthenticationFailed` carries the packet's
+    connection ID so the caller can retry with keys derived from it.
+  - Packet types: other long header types are skipped by their length field; Retry, Version
+    Negotiation and short header packets take the rest of the datagram; an unknown version
+    stops the walk, since its layout is unknown. Only the long-header bit is required, not
+    the fixed bit, which a peer may grease (RFC 9287).
+  - The truncated packet number is used as the full one; client Initials start at the lowest
+    numbers, so that is what RFC 9000 Appendix A.3 gives with no packet received yet.
+  - Test vectors: the RFC 9001 and RFC 9369 Appendix A values were copied from the RFC texts
+    by a script into `integration/support/QuicRfcVectors.kt`, not typed in.
+  - Tests: `QuicVarIntTest` (RFC 9000 examples), `QuicInitialKeysTest` (secrets and keys of
+    both RFCs, client and server), `QuicInitialPacketTest` (client and server Initials of both
+    RFCs; the fixture reproducing all four sample packets byte for byte; a changed byte and
+    wrong keys fail authentication; truncation; skipping coalesced Handshake, Retry, Version
+    Negotiation and short header packets; 2000 random or damaged inputs without an exception;
+    fixture flights over one to three datagrams, shuffled, rebuild the ClientHello). 320
+    `core:vpn` tests pass.
+  - `integration/support/QuicInitialFixtures.kt` also builds ClientHellos with an SNI, an ALPN
+    list and padding to any size, for PKT-50's multi-datagram cases.
+  - **Real traffic.** Nothing is wired in yet, so the device check was a capture: UDP/443 on
+    `tun0` while `emulator-traffic.sh run apps` ran, the client's Initial datagrams decrypted
+    with this code through a throwaway test (not committed). Four Initials from the Play Store
+    (packet numbers 1, 2, 4, 5) all decrypted. The ClientHello is 1741 bytes over two
+    datagrams in 11 out-of-order CRYPTO frames, and parses to SNI `play-fe.googleapis.com`,
+    ALPN `h3`, ECH offered. The fourth Initial already names another connection ID and
+    decrypts only with the first one's keys. This confirms PKT-50's assumptions: keep the
+    first keys, reassemble across datagrams, expect shuffled frames and ACK frames.
 - **Commit:** `feat(vpn): decrypt QUIC v1/v2 client Initial packets`
 
 ### PKT-50 — Record SNI and ALPN of QUIC flows from the Initial packet
@@ -2952,7 +2993,14 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
     `persistSecurity(QUIC, sni, alpn, echOffered)` and `transportLayer.refineRemoteHost(...)`.
     The inspector is touched only from the outbound handler thread. Remove the `//TODO`
     placeholders this replaces; keep the unconditional `doMitm = false`.
-- **Files:** new `quic/QuicInitialInspector.kt`, `connection/encryptionLayer/QuicConnection.kt`.
+  - **An inspector failure must not cost the flow.** `OutboundTrafficHandler` closes a
+    connection on any uncaught exception. Wrap the call to `offer()`: an exception is logged
+    once and counts as `GaveUp`.
+  - **No log line per datagram.** `Timber.d` on a per-packet path cost half of the packet
+    thread's time (PKT-45). Log only when the inspector reaches a terminal result.
+- **Revised 2026-10-02:** the two points above and the scripted device check are new.
+- **Files:** new `quic/QuicInitialInspector.kt`, `connection/encryptionLayer/QuicConnection.kt`,
+  `scripts/emulator-traffic.sh`.
 - **Tests:**
   - `QuicInitialInspectorTest`: single-packet ClientHello; ClientHello over two datagrams;
     shuffled CRYPTO frames with PING and PADDING between them; an unknown version and random
@@ -2960,21 +3008,31 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   - `integration/QuicPassthroughInspectionTest`, in the style of `TlsMitmHttpFlowTest`: push
     fixture datagrams through a `UdpConnection` towards a local `DatagramSocket`. Assert the
     socket receives them byte-identical and in order, and that `RecordingDatabaseConnector`
-    holds `QUIC`, the SNI, the ALPN and the refined hostname.
+    holds `QUIC`, the SNI, the ALPN and the refined hostname. One case with an inspector that
+    throws: the datagrams are still forwarded and the connection stays open.
+  - **Device.** New group `quic` in `scripts/emulator-traffic.sh`, built like the `tls` group:
+    it sends canned client Initial datagrams with `nc -u`. Initial keys depend only on the
+    version and the Destination Connection ID, so a datagram produced once by PKT-49's
+    `QuicInitialFixtures` stays valid; embed it as hex (add a small `main`-style test or
+    Gradle task note on how the hex was produced). Cases: `h3` with an SNI; a non-h3 ALPN;
+    a ClientHello over two datagrams; QUIC v2. Expected in the report: one `UDP / QUIC` row
+    per case with the SNI and ALPN filled in. Also run the `apps` group once and note how
+    many of its QUIC rows carry an SNI.
 - **Commit:** `feat(vpn): record SNI and ALPN of QUIC flows from the Initial packet`
 
 ### PKT-51 — Add the QUIC policy preference
 
 - **Priority:** High · **Depends on:** —
 - **Resolves:** — (enabler for PKT-52) · **Phase:** Q2, part 1
-- **Decided (2026-10-01):** the policy is a user preference with two values, Block and
-  Passthrough. The default is Block. It only takes effect while MitM is enabled.
+- **Decided:** the policy is a user preference with two values, Block and Passthrough
+  (2026-10-01). The default is **Passthrough** (2026-10-02; the earlier text assumed Block).
+  Block only takes effect while MitM is enabled.
+- **Revised 2026-10-02:** the default and with it the enum numbering; the per-session override.
 - **Approach:**
-  - **Proto.** `enum MitmQuicPolicy { QUIC_BLOCK = 0; QUIC_PASSTHROUGH = 1; }` and field
-    `MitmQuicPolicy mitm_quic_policy = 50` in `preferences.proto`. Block is the zero value, so
-    existing installs, which have no stored value, get the default as well. Flipping the
-    default later means swapping the two enum numbers before release, or setting it explicitly
-    in the serializer.
+  - **Proto.** `enum MitmQuicPolicy { QUIC_PASSTHROUGH = 0; QUIC_BLOCK = 1; }` and field
+    `MitmQuicPolicy mitm_quic_policy = 50` in `preferences.proto` (50 is free; 49 is the
+    highest in use). Passthrough is the zero value, so existing installs, which have no
+    stored value, get the default without a special case in the serializer.
   - **Datastore.** `PreferencesInitialValues.mitmQuicPolicyInitial`, the serializer default,
     and `PreferencesDataSource.mitmQuicPolicy` with a setter, following
     `mitmTrustAllUpstreamCerts`.
@@ -2982,15 +3040,23 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
     preference schema, as with `MitmScope`. Add `ComponentManager(quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH)`.
   - **App.** `HeimdallVpnService.launchServiceComponents()` maps the preference and forces
     `PASSTHROUGH` when MitM is off. `MitMPreferences` in `TrafficScannerPreferences.kt` gets a
-    `BooleanPreference` "Block QUIC (force TLS fallback)".
+    `BooleanPreference` "Block QUIC (force TLS fallback)", off by default.
+  - **Per-session override, for scripted tests.** `onStartCommand()` reads an optional string
+    extra `QUIC_POLICY_EXTRA` (`block` or `passthrough`) next to `SESSION_ID_EXTRA` and hands
+    it to `launchServiceComponents()`, where it replaces the preference for that session. The
+    stored preference is not changed. The service is not exported, so only the app itself or
+    a root shell can pass it. `scripts/emulator-traffic.sh vpn-start` (and `run`) get an
+    option `--quic-policy block|passthrough` that passes the extra.
 - **Files:** `core/datastore-proto/.../preferences.proto`,
   `core/datastore/.../{PreferencesInitialValues,PreferencesSerializer,PreferencesDataSource}.kt`,
   new `quic/QuicPolicy.kt`, `components/ComponentManager.kt`,
   `app/.../service/HeimdallVpnService.kt`,
-  `app/.../ui/scanner/traffic/TrafficScannerPreferences.kt`.
+  `app/.../ui/scanner/traffic/TrafficScannerPreferences.kt`, `scripts/emulator-traffic.sh`.
 - **Tests:** stub `componentManager.quicPolicy` explicitly in `ComponentManagerFixtures` (a
   relaxed mock would return a mock enum) with a `quicPolicy` parameter defaulting to
-  `PASSTHROUGH`. Behaviour is covered by PKT-52.
+  `PASSTHROUGH`. Behaviour is covered by PKT-52. Device: `vpn-start --quic-policy block`
+  logs the policy the session runs with, and a start without the option logs `PASSTHROUGH`
+  on a fresh install.
 - **Commit:** `feat(prefs): add a QUIC policy preference (block or passthrough)`
 
 ### PKT-52 — Block HTTP/3 over QUIC while MitM is on
@@ -3001,12 +3067,23 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
   - **Decision.** Taken in `QuicConnection` once the inspector is terminal. Block only if all
     of these hold, which together mean "the TLS fallback would actually be intercepted":
     - `componentManager.quicPolicy == BLOCK` and `componentManager.doMitm`;
-    - the remote port is 443;
     - the inspector completed and the ALPN offer contains `h3` or an `h3-*` draft token;
-    - `componentManager.mitmScope.shouldIntercept(appPackage, host)`;
-    - no learned passthrough: `tlsPassthroughCache.get(appId, host)` is false.
+    - the TLS path would intercept this app and host.
 
-    `host` is the transport connection's refined hostname. If the inspector gave up, forward.
+    If the inspector gave up (unknown version, undecryptable, limits hit), forward, whatever
+    the policy.
+  - **One decision shared with the TLS path.** `TlsConnection` decides with the SNI if there
+    is one, else the DNS-derived name, else the IP address (`TlsConnection.kt:77, 281`), and
+    checks `mitmScope.shouldIntercept(appPackage, hostname)` and the passthrough cache with
+    that value (`:294-295`). That is not always the transport connection's refined hostname:
+    with ECH offered, `refineRemoteHost()` keeps an existing DNS name while the TLS path uses
+    the SNI. The QUIC rule predicts what the TLS fallback will do, so it has to use the same
+    value. Move the host choice and the two checks into one function on
+    `EncryptionLayerConnection` (for example `wouldIntercept(sni: String?): Boolean`) and
+    call it from both classes, so that they cannot drift apart.
+  - **No port condition.** An earlier version of this packet also required port 443. The
+    ALPN offer already identifies HTTP/3; QUIC protocols without a TCP fallback (DoQ, media,
+    games) offer other ALPNs and pass. The TLS MitM is not tied to a port either.
   - **Holding.** Under the Block policy, hold outbound datagrams until the verdict instead of
     forwarding them first. The inspector's limit bounds this at 4 datagrams, and clients send
     the datagrams of one flight back to back, so the hold lasts microseconds. On "forward",
@@ -3018,35 +3095,59 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
     - New `connection/inetLayer/IcmpUnreachableBuilder.kt`, using pcap4j's
       `IcmpV4CommonPacket`, `IcmpV4DestinationUnreachablePacket` and
       `IcmpV4Code.PORT_UNREACHABLE`. The quoted "invoking packet" is the IPv4 header plus UDP
-      header, reconstructed from `ipPacketBuilder` and the two ports; that is what the kernel
-      matches against the app's socket. Source is the remote address, destination the local one.
+      header; that is what the kernel matches against the app's socket. The UDP header is
+      the dropped datagram's own (`QuicConnection.unwrapOutbound(packet)` receives the
+      `UdpPacket`), the IPv4 header is reconstructed from `ipPacketBuilder`. Source of the
+      ICMP packet is the remote address, destination the local one.
     - IPv4 only. An IPv6 flow is dropped silently; the VPN routes IPv4 only today.
     - Post it with a new `DeviceWriteThread.WRITE_ICMP` code.
   - **Lifecycle.** The flow stays in `ConnectionCache`, so the client's retransmissions hit the
     blocked flag instead of creating new connections and rows. The existing UDP idle sweep
-    (PKT-13) reaps it after five minutes.
+    (PKT-13) reaps it after five minutes. Its socket is released at once: call
+    `transportLayer.closeSoft()` when the flow is blocked. That closes the `DatagramChannel`
+    and leaves the cache entry; `UdpConnection.unwrapOutbound()` still reaches
+    `QuicConnection`, which drops. Without it every blocked attempt holds a socket and two
+    16 kB buffers' worth of connection for five minutes.
   - **Out of scope:** stripping `h3` from `Alt-Svc` headers and from DNS HTTPS/SVCB records.
     Both need rewriting that the application layer cannot do yet.
-- **Files:** `connection/encryptionLayer/QuicConnection.kt`, new
-  `connection/inetLayer/IcmpUnreachableBuilder.kt`, `components/DeviceWriteThread.kt`.
+- **Revised 2026-10-02:** the shared decision, no port condition, the socket release, the
+  quoted UDP header, and the scripted device check.
+- **Files:** `connection/encryptionLayer/QuicConnection.kt`,
+  `connection/encryptionLayer/EncryptionLayerConnection.kt`, `TlsConnection.kt` (the shared
+  decision), new `connection/inetLayer/IcmpUnreachableBuilder.kt`,
+  `components/DeviceWriteThread.kt`.
 - **Tests:**
   - `IcmpUnreachableBuilderTest`: type and code, the quoted header, checksum, swapped addresses.
   - `integration/QuicBlockPolicyTest`, with `RecordingDeviceWriter` and a local `DatagramSocket`:
-    - An in-scope h3 flow on port 443 is blocked: nothing reaches the socket, an ICMP packet is
-      written to the device, the row is marked blocked.
-    - Each of these forwards byte-identical instead: a non-h3 ALPN; a port other than 443; a
-      host outside the `MitmScope`; a host with learned passthrough; MitM off; the Passthrough
-      policy; an undecryptable Initial.
+    - An in-scope h3 flow is blocked: nothing reaches the socket, an ICMP packet is written to
+      the device, the row is marked blocked, and the flow's `DatagramChannel` is closed.
+    - Each of these forwards byte-identical instead: a non-h3 ALPN; a host outside the
+      `MitmScope`; a host with learned passthrough; MitM off; the Passthrough policy; an
+      undecryptable Initial.
+    - With ECH offered and a DNS name that differs from the SNI, the scope and the
+      passthrough cache are consulted with the SNI, as the TLS path does.
     - A ClientHello spanning two datagrams is flushed in order when the verdict is "forward".
     - Retransmitted datagrams of a blocked flow create no further connection rows.
-- **Manual check:** on a device, with MitM on and the policy set to Block, an HTTP/3-capable
-  app's requests appear as decrypted HTTP over TCP and its UDP/443 rows are marked blocked. This
-  is also the first real check that an ICMP error written to the TUN reaches the app's socket.
-  If it does not, fallback still happens, only after the client's own timeout.
+  - The existing TLS tests cover the shared decision from the TLS side and must stay green.
+- **Device:** `emulator-traffic.sh run --quic-policy block quic` with MitM on. Expected:
+  - the h3 Initial is answered with "connection refused" on the sending UDP socket. That is
+    the ICMP error reaching the app, and the first real check that one written to the TUN
+    does. If it does not arrive, fallback still happens, only after the client's own timeout;
+    record which it is;
+  - that flow's row is `blocked`; the non-h3 case is forwarded and not blocked;
+  - the same run with `--quic-policy passthrough` blocks nothing.
+
+  Then one run of the `apps` group under Block as a sanity check with real clients. What to
+  expect there: Chrome is excluded from the VPN while MitM is on, and Cronet-based apps
+  (Play Store, YouTube, Play services) reject the forged certificate on the TLS fallback, so
+  after the first blocked attempt their host is learned as passthrough and their QUIC is
+  forwarded again. Blocked rows followed by forwarded ones for the same host are therefore
+  correct, not a failure.
 - **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
 
-**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** 26, 27, 29, 49 and 51 are
-independent of each other. Then 28, then 50, then 52. Only PKT-27 changes the database version.
+**Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** PKT-26 to PKT-29 and
+PKT-49 are done. PKT-51 is independent of PKT-50; PKT-52 comes last. None of the
+remaining four changes the database version.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either
 narrow-trigger (V-07 needs a CN shared across differing-SAN certs within a 5-minute window; V-17
