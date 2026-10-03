@@ -15,6 +15,7 @@
 #
 # Tests (default: all): download upload keepalive parallel churn slowserver slowclient
 #   slowupload idle serverabort clientabort unreachable duplex halfclose udp tls tlsbulk tlsclose tlsparallel
+#   tlspinning
 # Not in the default set: bigbody (a 300 MB download, which takes a while and a lot of memory)
 #
 # Around the run it records Heimdall's open file descriptors, threads and memory, and afterwards
@@ -28,7 +29,7 @@ TRAFFIC="$HERE/../emulator-traffic.sh"
 PKG="de.tomcory.heimdall"
 BASE_PORT="${HEIMDALL_STRESS_PORT:-18080}"
 DEVICE_DEX="/data/local/tmp/heimdall-stress.dex"
-ALL_TESTS="download,upload,keepalive,parallel,churn,slowserver,slowclient,slowupload,idle,serverabort,clientabort,unreachable,duplex,halfclose,udp,tls,tlsbulk,tlsclose,tlsparallel"
+ALL_TESTS="download,upload,keepalive,parallel,churn,slowserver,slowclient,slowupload,idle,serverabort,clientabort,unreachable,duplex,halfclose,udp,tls,tlsbulk,tlsclose,tlsparallel,tlspinning"
 SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
 if ! command -v adb >/dev/null 2>&1; then PATH="$PATH:$SDK/platform-tools"; fi

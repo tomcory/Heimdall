@@ -9,6 +9,7 @@ import de.tomcory.heimdall.core.vpn.R
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
@@ -60,6 +61,9 @@ class ComponentManager(
     val trustAllUpstreamCertificates: Boolean = false,
     val mitmScope: MitmScope = MitmScope.ALL,
     val learnPassthrough: Boolean = true,
+    // how soon after its handshake a client must close a connection without data for the close
+    // to count as certificate pinning (docs/vpn-mitm-audit.md PKT-54)
+    val pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
     // what to do with QUIC flows while MitM is on; PASSTHROUGH whenever MitM is off
     // (docs/vpn-mitm-audit.md PKT-51)
     val quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,

@@ -147,6 +147,75 @@ class TlsPassthroughCacheTest {
         assertEquals(5, suspectCounts(bounded).size)
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-54: idle closes after data was decrypted ----
+
+    @Test
+    fun `closed-without-data never marks a pair that has carried data`() {
+        cache.recordDecrypted(1000, "example.com")
+
+        repeat(5) {
+            assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        }
+        assertFalse(cache.get(1000, "example.com"))
+        assertEquals(0, suspectCounts(cache).size)
+    }
+
+    @Test
+    fun `carrying data drops closed-without-data hits counted before`() {
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        cache.recordDecrypted(1000, "example.com")
+        assertEquals(0, suspectCounts(cache).size)
+
+        assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        assertFalse(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `a rejection still marks a pair that has carried data`() {
+        cache.recordDecrypted(1000, "example.com")
+        assertTrue(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR))
+        assertTrue(cache.get(1000, "example.com"))
+    }
+
+    @Test
+    fun `carrying data is recorded per pair`() {
+        cache.recordDecrypted(1000, "example.com")
+
+        cache.recordFailure(2000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA)
+        assertTrue(cache.recordFailure(2000, "example.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+        cache.recordFailure(1000, "other.com", PassthroughReason.CLOSED_WITHOUT_DATA)
+        assertTrue(cache.recordFailure(1000, "other.com", PassthroughReason.CLOSED_WITHOUT_DATA))
+    }
+
+    @Test
+    fun `pairs that carried data never grow past maxSize`() {
+        val bounded = TlsPassthroughCache(maxSize = 5)
+
+        for (i in 0 until 1000) {
+            bounded.recordDecrypted(i, "host$i.com")
+        }
+
+        val field = TlsPassthroughCache::class.java.getDeclaredField("decrypted")
+        field.isAccessible = true
+        assertEquals(5, (field.get(bounded) as Map<*, *>).size)
+    }
+
+    @Test
+    fun `a blocked QUIC pair is remembered per pair and bounded`() {
+        assertFalse(cache.wasQuicBlocked(1000, "example.com"))
+        cache.recordQuicBlocked(1000, "example.com")
+        assertTrue(cache.wasQuicBlocked(1000, "example.com"))
+        assertFalse(cache.wasQuicBlocked(2000, "example.com"))
+        assertFalse(cache.wasQuicBlocked(1000, "other.com"))
+
+        val bounded = TlsPassthroughCache(maxSize = 5)
+        for (i in 0 until 1000) {
+            bounded.recordQuicBlocked(i, "host$i.com")
+        }
+        assertTrue(bounded.wasQuicBlocked(999, "host999.com"))
+        assertFalse(bounded.wasQuicBlocked(0, "host0.com"))
+    }
+
     private fun suspectCounts(target: TlsPassthroughCache): Map<*, *> {
         val field = TlsPassthroughCache::class.java.getDeclaredField("suspectCounts")
         field.isAccessible = true

@@ -131,6 +131,8 @@ class QuicBlockPolicyTest {
         assertEquals("port unreachable", 3, icmp[21].toInt())
         awaitUntil("the row must be marked blocked") { dbConnector.connections.single().blocked }
         assertEquals("h3.example", dbConnector.connections.single().sni)
+        assertTrue("the block must be recorded for passthrough learning on the TLS fallback (PKT-54)",
+            componentManager.tlsPassthroughCache.wasQuicBlocked(1000, "h3.example"))
 
         val channel = UdpConnection::class.java.getDeclaredField("selectableChannel").apply { isAccessible = true }.get(connection) as DatagramChannel
         assertFalse("the flow's socket must be released at once", channel.isOpen)
@@ -172,6 +174,7 @@ class QuicBlockPolicyTest {
         val datagrams = flight("doq.example", listOf("doq"))
         send(datagrams)
         assertForwarded(datagrams)
+        assertFalse(componentManager.tlsPassthroughCache.wasQuicBlocked(1000, "doq.example"))
     }
 
     @Test

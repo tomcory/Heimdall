@@ -124,6 +124,9 @@ class TlsConnection(
      */
     private var outboundAppBytes = 0L
 
+    /** Wall-clock time at which the client-facing handshake completed (see [recordPinningSuspect]). */
+    private var clientEstablishedAt = 0L
+
     private val log = false
 
     /**
@@ -369,6 +372,9 @@ class TlsConnection(
                 unwrappedPayload?.let {
                     if(it.isNotEmpty()) {
                         if(log) Timber.d("tls$id handleOutboundRecord unwrapped ${it.size} bytes, passing to app layer")
+                        if(outboundAppBytes == 0L) {
+                            recordDecrypted()
+                        }
                         outboundAppBytes += it.size
                         passOutboundToAppLayer(it)
                     }
@@ -1342,11 +1348,37 @@ class TlsConnection(
      * Counts a pinning-style close (handshake completed, then closed without any application
      * data) toward passthrough. Called both when the client closes the TCP connection and when it
      * sends close_notify; the latter tears this connection down, so the two never double-count.
+     *
+     * Only a close soon after the handshake counts. A client that rejects a pin closes right
+     * after its handshake; connections that sit idle in a pool, were opened in advance or lost a
+     * race against QUIC are closed seconds to minutes later, when the app evicts them or is
+     * stopped, and say nothing about the certificate (docs/vpn-mitm-audit.md PKT-54).
+     *
+     * The exception is a TLS fallback that Heimdall forced by blocking the pair's HTTP/3
+     * (PKT-52): a client that refuses to use it rejects it, however long it keeps it open first
+     * (the Play Store closes its fallback about ten seconds after the handshake). Not learning
+     * that would leave the app with neither QUIC nor TLS for the rest of the session.
      */
     private fun recordPinningSuspect() {
-        if(state == ConnectionState.CLIENT_ESTABLISHED && outboundAppBytes == 0L) {
-            learnPassthrough(PassthroughReason.CLOSED_WITHOUT_DATA)
+        if(state != ConnectionState.CLIENT_ESTABLISHED || outboundAppBytes != 0L) {
+            return
         }
+        val idleMs = System.currentTimeMillis() - clientEstablishedAt
+        val forcedFallback = transportLayer.appId?.let { componentManager.tlsPassthroughCache.wasQuicBlocked(it, hostname) } ?: false
+        if(idleMs > componentManager.pinningCloseWindowMs && !forcedFallback) {
+            if(log) Timber.d("tls$id closed without data ${idleMs}ms after the handshake, not counted as pinning")
+            return
+        }
+        learnPassthrough(PassthroughReason.CLOSED_WITHOUT_DATA)
+    }
+
+    /**
+     * Tells the passthrough cache that this connection's app accepts the certificate for the
+     * host: it has sent application data through the MitM (docs/vpn-mitm-audit.md PKT-54).
+     */
+    private fun recordDecrypted() {
+        val appId = transportLayer.appId ?: return
+        componentManager.tlsPassthroughCache.recordDecrypted(appId, hostname)
     }
 
     /**
@@ -1369,7 +1401,20 @@ class TlsConnection(
     }
 
     private fun switchState(newState: ConnectionState) {
+        if(newState == ConnectionState.CLIENT_ESTABLISHED && state != ConnectionState.CLIENT_ESTABLISHED) {
+            clientEstablishedAt = System.currentTimeMillis()
+        }
         state = newState
+    }
+
+    companion object {
+        /**
+         * How soon after its handshake a client must close a connection without data for the
+         * close to count as certificate pinning (docs/vpn-mitm-audit.md PKT-54). Pinning is
+         * checked right after the handshake, so a rejecting client closes within milliseconds;
+         * the margin allows for a slow device.
+         */
+        const val DEFAULT_PINNING_CLOSE_WINDOW_MS = 3_000L
     }
 
     ////////////////////////////////////////////////////////////////////////

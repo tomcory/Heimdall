@@ -73,7 +73,8 @@ class QuicConnection(
         val verdict = inspect(payload) ?: return
         this.held = null
         if (shouldBlock(verdict)) {
-            block(held)
+            // shouldBlock() only blocks a flow whose ClientHello was read
+            block(held, interceptionHost((verdict as QuicInitialInspector.Result.Complete).clientHello.sni))
         } else {
             held.forEach { passOutboundToAppLayer(it) }
         }
@@ -143,8 +144,13 @@ class QuicConnection(
         return offersHttp3 && wouldIntercept(interceptionHost(verdict.clientHello.sni))
     }
 
-    private fun block(held: List<ByteArray>) {
+    /**
+     * @param host The name the TLS path will use for the fallback connection, under which the
+     * block is recorded for passthrough learning (docs/vpn-mitm-audit.md PKT-54).
+     */
+    private fun block(held: List<ByteArray>, host: String) {
         blocked = true
+        transportLayer.appId?.let { componentManager.tlsPassthroughCache.recordQuicBlocked(it, host) }
         Timber.d("quic$id Blocking HTTP/3 to ${transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress} so that the client falls back to TLS")
         if (id > 0) {
             CoroutineScope(Dispatchers.IO).launch {

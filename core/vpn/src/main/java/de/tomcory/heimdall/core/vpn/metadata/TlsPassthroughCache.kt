@@ -30,6 +30,15 @@ class TlsPassthroughCache(
     /** Number of [PassthroughReason.CLOSED_WITHOUT_DATA] hits so far for pairs not yet marked for passthrough. */
     private val suspectCounts = boundedMap<Int>()
 
+    /**
+     * Pairs that have carried application data through the MitM, see [recordDecrypted]. The
+     * value is unused; a map keeps the same bound and eviction as the others.
+     */
+    private val decrypted = boundedMap<Boolean>()
+
+    /** Pairs whose HTTP/3 the QUIC block policy has blocked, see [recordQuicBlocked]. The value is unused. */
+    private val quicBlocked = boundedMap<Boolean>()
+
     private val lock = ReentrantReadWriteLock()
 
     private fun <V> boundedMap() = object : LinkedHashMap<TlsPassthroughCacheEntry, V>(maxSize + 1, .75f, true) {
@@ -67,6 +76,11 @@ class TlsPassthroughCache(
             if (cache[key] != null) {
                 return@write false
             }
+            if (reason == PassthroughReason.CLOSED_WITHOUT_DATA && decrypted[key] != null) {
+                // the app has already sent data through the MitM for this host, so it accepts
+                // the certificate; this was an idle connection (docs/vpn-mitm-audit.md PKT-54)
+                return@write false
+            }
             if (reason == PassthroughReason.CLOSED_WITHOUT_DATA) {
                 val hits = (suspectCounts[key] ?: 0) + 1
                 if (hits < closedWithoutDataThreshold) {
@@ -77,6 +91,40 @@ class TlsPassthroughCache(
             suspectCounts.remove(key)
             cache[key] = true
             true
+        }
+    }
+
+    /**
+     * Records that a MitM'd connection of the pair has carried application data from the client,
+     * which proves that the app accepts Heimdall's certificate for the host. From then on,
+     * [PassthroughReason.CLOSED_WITHOUT_DATA] is ignored for the pair, and hits counted before are
+     * dropped: apps keep idle connections (pools, pre-connects, the loser of a TCP/QUIC race) and
+     * close them without data, which is not a rejection (docs/vpn-mitm-audit.md PKT-54). The
+     * other reasons are direct evidence of a rejection and still count.
+     */
+    fun recordDecrypted(initiator: Int, hostname: String) {
+        val key = TlsPassthroughCacheEntry(initiator, hostname)
+        lock.write {
+            decrypted[key] = true
+            suspectCounts.remove(key)
+        }
+    }
+
+    /**
+     * Records that the QUIC block policy blocked HTTP/3 for the pair (docs/vpn-mitm-audit.md
+     * PKT-52), so the client was forced onto a TLS fallback.
+     */
+    fun recordQuicBlocked(initiator: Int, hostname: String) {
+        lock.write {
+            quicBlocked[TlsPassthroughCacheEntry(initiator, hostname)] = true
+        }
+    }
+
+    /** Whether [recordQuicBlocked] was called for the pair (and the entry has not been evicted). */
+    fun wasQuicBlocked(initiator: Int, hostname: String): Boolean {
+        // the write lock, because a read reorders an access-order LinkedHashMap (see get())
+        return lock.write {
+            quicBlocked[TlsPassthroughCacheEntry(initiator, hostname)] != null
         }
     }
 }

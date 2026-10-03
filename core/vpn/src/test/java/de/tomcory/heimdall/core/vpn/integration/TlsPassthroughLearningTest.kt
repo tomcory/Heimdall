@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.integration
 
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
+import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.integration.support.ComponentManagerFixtures
 import de.tomcory.heimdall.core.vpn.integration.support.FakeClientTlsDriver
@@ -60,12 +61,17 @@ class TlsPassthroughLearningTest {
     }
 
     /** (Re)builds the shared ComponentManager with the given MitM settings (PKT-24). */
-    private fun useComponentManager(mitmScope: MitmScope = MitmScope.ALL, learnPassthrough: Boolean = true) {
+    private fun useComponentManager(
+        mitmScope: MitmScope = MitmScope.ALL,
+        learnPassthrough: Boolean = true,
+        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS
+    ) {
         if (::pump.isInitialized) pump.stop()
         componentManager = ComponentManagerFixtures.buildTestComponentManager(
             keyStoreDir = createTempDir(),
             mitmScope = mitmScope,
-            learnPassthrough = learnPassthrough
+            learnPassthrough = learnPassthrough,
+            pinningCloseWindowMs = pinningCloseWindowMs
         )
         cache = componentManager.tlsPassthroughCache
         pump = SelectorPump(componentManager.selector)
@@ -188,6 +194,72 @@ class TlsPassthroughLearningTest {
         Thread.sleep(500)
         assertFalse(cache.get(appId, hostname))
         assertEquals(0, suspectCount())
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-54: idle connections are not pinning ----
+
+    @Test
+    fun `connections closed without data long after the handshake are not counted`() {
+        useComponentManager(pinningCloseWindowMs = 200)
+        for (localPort in listOf(45050, 45051)) {
+            fakeTlsServer.acceptOnce(::holdUntilClosed)
+            val flow = Flow(localPort)
+            assertNull(runClientHandshake(flow, FakeClientTlsDriver(hostname, fakeTlsServer.port)))
+            // idle in a pool, then evicted or the app is stopped
+            Thread.sleep(600)
+            flow.sendFin()
+        }
+
+        // negative assertion: allow time for the closes to be processed (see the normal-flow test)
+        Thread.sleep(500)
+        assertEquals(0, suspectCount())
+        assertFalse(cache.get(appId, hostname))
+    }
+
+    @Test
+    fun `late closes without data still count on a TLS fallback forced by the QUIC block`() {
+        useComponentManager(pinningCloseWindowMs = 200)
+        // like the Play Store under the Block policy: its HTTP/3 was blocked, and it opens the
+        // TLS fallback but closes it unused after a while
+        cache.recordQuicBlocked(appId, hostname)
+        for (localPort in listOf(45052, 45053)) {
+            fakeTlsServer.acceptOnce(::holdUntilClosed)
+            val flow = Flow(localPort)
+            assertNull(runClientHandshake(flow, FakeClientTlsDriver(hostname, fakeTlsServer.port)))
+            Thread.sleep(600)
+            flow.sendFin()
+            Thread.sleep(200)
+        }
+
+        awaitCondition("the pair should have been marked for passthrough") { cache.get(appId, hostname) }
+    }
+
+    @Test
+    fun `once a connection of the pair has carried data, idle closes never mark it`() {
+        val response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+        fakeTlsServer.acceptOnce { socket ->
+            socket.inputStream.read(ByteArray(8192))
+            socket.outputStream.write(response.toByteArray())
+            socket.outputStream.flush()
+            holdUntilClosed(socket)
+        }
+        val busyFlow = Flow(localPort = 45055)
+        val busyDriver = FakeClientTlsDriver(hostname, fakeTlsServer.port)
+        assertNull(runClientHandshake(busyFlow, busyDriver))
+        busyFlow.send(busyDriver.wrap("GET / HTTP/1.1\r\nHost: $hostname\r\n\r\n".toByteArray())!!)
+        assertNotNull("expected the response", busyFlow.nextPayload())
+
+        // two more connections that are closed right after the handshake, as a pool would
+        for (localPort in listOf(45056, 45057)) {
+            fakeTlsServer.acceptOnce(::holdUntilClosed)
+            val flow = Flow(localPort)
+            assertNull(runClientHandshake(flow, FakeClientTlsDriver(hostname, fakeTlsServer.port)))
+            flow.sendFin()
+        }
+
+        Thread.sleep(500)
+        assertEquals(0, suspectCount())
+        assertFalse(cache.get(appId, hostname))
     }
 
     // ---- MitM scope and learning switch (docs/vpn-mitm-audit.md PKT-24) ----

@@ -8,6 +8,7 @@ import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
@@ -63,7 +64,8 @@ object ComponentManagerFixtures {
         maxPacketSize: Int = 16413,
         mitmScope: MitmScope = MitmScope.ALL,
         learnPassthrough: Boolean = true,
-        quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH
+        quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
+        pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -93,6 +95,8 @@ object ComponentManagerFixtures {
         // shouldIntercept() is false, and false for learnPassthrough, silently disabling MitM
         every { componentManager.mitmScope } returns mitmScope
         every { componentManager.learnPassthrough } returns learnPassthrough
+        // a relaxed mock would return 0, and no close would ever count as pinning (PKT-54)
+        every { componentManager.pinningCloseWindowMs } returns pinningCloseWindowMs
         // explicit for the same reason: a relaxed mock would return a mock enum value
         every { componentManager.quicPolicy } returns quicPolicy
         every { componentManager.sessionId } returns sessionId

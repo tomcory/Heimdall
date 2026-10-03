@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings", with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 is implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 and PKT-54 are implemented.
 
 ---
 
@@ -3624,6 +3624,52 @@ remaining four changes the database version.
     (passthrough). `emulator-traffic.sh run`: the force-stops in the `apps` group no longer
     produce `learned passthrough ... (CLOSED_WITHOUT_DATA)` for YouTube's hosts, and
     `--quic-policy block` still decrypts YouTube's fallback requests.
+- **Implementation notes (2026-10-03):**
+  - `TlsConnection` records when the client-facing handshake completed (in `switchState()`).
+    `recordPinningSuspect()` ignores a close without data that comes more than
+    `pinningCloseWindowMs` after it, by default `TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS`
+    (3 s). The first application data of a connection calls the new
+    `TlsPassthroughCache.recordDecrypted()`. From then on `recordFailure()` ignores
+    `CLOSED_WITHOUT_DATA` for the pair, and pending hits are dropped. The new set is bounded like
+    the others.
+  - Deviation from the plan: the window is a `ComponentManager` constructor parameter
+    (`pinningCloseWindowMs`), not an injected clock. The `TlsConnection` is created deep inside
+    the pipeline, so a test cannot reach it to replace a clock. With the parameter, a test
+    shrinks the window and waits past it. The test fixture stubs the parameter, because its
+    relaxed mock would otherwise return 0 and nothing would ever be counted.
+  - Addition to the plan: the forced-fallback exception. Measured on the emulator, the Play
+    Store under the Block policy opens its TLS fallback and closes it unused about 10.8 s after
+    the handshake. The old rule learned that after two such closes; the window alone would have
+    stopped it, leaving the app with neither HTTP/3 nor TLS for the session. So
+    `QuicConnection.block()` now records the pair through the new
+    `TlsPassthroughCache.recordQuicBlocked()`, under the same hostname the TLS path uses
+    (`interceptionHost()`). For such a pair, a close without data counts whatever its delay.
+    YouTube under Block is unaffected: its fallback carries data and is recorded as decrypted.
+  - Burst suppression stays out, as planned.
+  - Tests: `TlsPassthroughCacheTest` +6 (decrypted pairs, dropped hits, rejections still
+    learned, per-pair, bounds, blocked QUIC pairs). `TlsPassthroughLearningTest` +3: late
+    closes are not counted; idle closes after a decrypted connection are not counted; late
+    closes on a forced fallback are. `QuicBlockPolicyTest` checks that a block is recorded and a
+    forwarded flow is not. 365 `core:vpn` and 15 `app` tests pass.
+  - Stress suite: new `tlspinning` test (in the default set). Two handshakes on
+    `www.example.net`, each closed after 5 s idle: the third connection must still be
+    intercepted. Two handshakes on `www.example.org`, closed at once: the third must be passed
+    through. Without MitM both pass with a note.
+  - Emulator:
+
+    | | Before (PKT-53 build) | After |
+    |---|---|---|
+    | `tlspinning-idle-closes-keep-mitm` | FAIL (`www.example.net` learned) | PASS |
+    | `tlspinning-quick-closes-learn-passthrough` | PASS | PASS |
+    | `apps` group, Passthrough policy: YouTube hosts learned at force-stop | 4 (audit run) | 0 |
+    | `apps` group, Block policy: YouTube hosts learned / requests decrypted | 1 / 16 (audit run) | 0 / 17 and 0 / 19 |
+
+    `tls,tlsbulk,tlsclose,tlsparallel,tlspinning`: 28/28, and the only host learned is
+    `www.example.org`. In one Block run the Play Store opened two fallback connections, which
+    under PKT-54 alone were not learned (that is why the exception exists). In the run after the
+    exception it opened only one, which is one hit below the threshold of two, so `play-fe` was
+    not learned in that run either. Whether a single rejected forced fallback should be enough
+    is open; the threshold is unchanged.
 - **Commit:** `fix(vpn): stop learning passthrough from idle connections that the app closes`
 
 ### PKT-55 — Report the VPN network as unmetered

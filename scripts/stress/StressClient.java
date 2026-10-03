@@ -92,6 +92,7 @@ public class StressClient {
                     case "tlsbulk": tlsBulk(); break;
                     case "tlsclose": tlsClose(); break;
                     case "tlsparallel": tlsParallel(); break;
+                    case "tlspinning": tlsPinning(); break;
                     default: result(test, false, "unknown test");
                 }
             } catch (Throwable t) {
@@ -806,6 +807,61 @@ public class StressClient {
             s.close();
         } catch (Throwable t) {
             result("tls-1.2-only-client", false, t.toString());
+        }
+    }
+
+    /** Completes a TLS handshake with host:443 and returns the leaf certificate's issuer CN; the socket is left to the caller. */
+    static String handshakeIssuer(SSLSocket s, String host) throws Exception {
+        s.connect(new InetSocketAddress(host, 443), CONNECT_TIMEOUT);
+        s.setSoTimeout(READ_TIMEOUT);
+        s.startHandshake();
+        String dn = ((X509Certificate) s.getSession().getPeerCertificates()[0]).getIssuerX500Principal().getName();
+        return dn.replaceAll(".*CN=([^,]+).*", "$1");
+    }
+
+    /**
+     * Passthrough learning from connections closed without data (docs/vpn-mitm-audit.md PKT-54).
+     * Two connections that sit idle after their handshake and are then closed, as a connection
+     * pool does, must not make Heimdall stop intercepting the host. Two that are closed right
+     * after the handshake, as a client that rejects a pinned certificate does, must. Each case
+     * uses its own host, so that what it teaches the VPN does not affect the other tests. Without
+     * MitM (baseline, plain mode) both pass with a note.
+     */
+    static void tlsPinning() throws Exception {
+        initTls();
+        String[][] cases = {
+                // name, host, how long each connection stays open after its handshake
+                {"tlspinning-idle-closes-keep-mitm", "www.example.net", "5000"},
+                {"tlspinning-quick-closes-learn-passthrough", "www.example.org", "0"},
+        };
+        for (String[] c : cases) {
+            String name = c[0], host = c[1];
+            long idle = Long.parseLong(c[2]);
+            try {
+                String firstIssuer = null;
+                for (int i = 0; i < 2; i++) {
+                    SSLSocket s = (SSLSocket) trustAllFactory.createSocket();
+                    String issuer = handshakeIssuer(s, host);
+                    if (firstIssuer == null) firstIssuer = issuer;
+                    Thread.sleep(idle);
+                    s.close();
+                    // the VPN handles the close asynchronously
+                    Thread.sleep(500);
+                }
+                SSLSocket s = (SSLSocket) trustAllFactory.createSocket();
+                String thirdIssuer = handshakeIssuer(s, host);
+                s.close();
+                boolean mitm = "Heimdall".equals(firstIssuer);
+                if (!mitm) {
+                    result(name, true, "not intercepted (issuer " + firstIssuer + "), nothing to learn");
+                } else if (idle > 0) {
+                    result(name, "Heimdall".equals(thirdIssuer), "third connection's issuer " + thirdIssuer + " (expected Heimdall: still intercepted)");
+                } else {
+                    result(name, !"Heimdall".equals(thirdIssuer), "third connection's issuer " + thirdIssuer + " (expected the real one: passed through)");
+                }
+            } catch (Throwable t) {
+                result(name, false, t.toString());
+            }
         }
     }
 
