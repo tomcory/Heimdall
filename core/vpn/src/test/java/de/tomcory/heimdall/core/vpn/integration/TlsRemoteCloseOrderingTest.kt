@@ -191,7 +191,7 @@ class TlsRemoteCloseOrderingTest {
         repeat(5) { round -> requestAndCheckOrdering(localPort = 48000 + round) }
 
         awaitUntil("expected every response to be persisted") { dbConnector.responses.size == 5 }
-        assertTrue(dbConnector.responses.all { it.statusCode == 200 && it.content == body })
+        assertTrue(dbConnector.responses.all { it.statusCode == 200 && String(it.content) == body })
     }
 
     @Test

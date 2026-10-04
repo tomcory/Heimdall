@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 
 /**
@@ -26,15 +27,19 @@ class HttpParsingTest {
     private lateinit var httpConnection: HttpConnection
     private lateinit var transportLayer: TransportLayerConnection
 
+    private val sizeLimit = HttpConnection.DEFAULT_MAX_BODY_SIZE
+
     @Before
     fun setup() {
         connector = mockk(relaxed = true)
         coEvery {
-            connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns 42
 
         componentManager = mockk(relaxed = true)
         every { componentManager.databaseConnector } returns connector
+        // a relaxed mock would return 0, and no body would be kept (PKT-59)
+        every { componentManager.maxHttpBodySize } returns HttpConnection.DEFAULT_MAX_BODY_SIZE
 
         val remoteAddr = mockk<InetAddress>(relaxed = true)
         val localAddr = mockk<InetAddress>(relaxed = true)
@@ -74,7 +79,7 @@ class HttpParsingTest {
                 connectionId = 0,
                 timestamp = any(),
                 headers = any(),
-                content = "",
+                content = "".toByteArray(),
                 contentLength = 0,
                 method = "GET",
                 remoteHost = "example.com",
@@ -84,7 +89,7 @@ class HttpParsingTest {
                 localIp = "10.0.0.1",
                 localPort = 12345,
                 initiatorId = 1000,
-                initiatorPkg = "com.example.test"
+                initiatorPkg = "com.example.test", contentTruncated = any()
             )
         }
     }
@@ -120,27 +125,29 @@ class HttpParsingTest {
 
         coVerify {
             connector.persistHttpRequest(
-                content = body,
+                content = body.toByteArray(),
                 contentLength = body.length,
                 method = "POST",
                 remotePath = "/submit",
                 connectionId = any(), timestamp = any(), headers = any(),
                 remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
 
     @Test
-    fun `request with body exceeding 1 MB stores truncation message`() {
-        val bigBody = "X".repeat(1024 * 1024 + 1)
+    fun `request with a body over the size limit keeps its first bytes`() {
+        val bigBody = "X".repeat(sizeLimit + 1)
         httpConnection.unwrapOutbound("POST /big HTTP/1.1\r\nHost: example.com\r\nContent-Length: ${bigBody.length}\r\n\r\n$bigBody".toByteArray())
         Thread.sleep(500)
 
         coVerify {
             connector.persistHttpRequest(
-                content = match { it.startsWith("<too large:") },
-                connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
+                content = bigBody.substring(0, sizeLimit).toByteArray(),
+                contentLength = sizeLimit + 1,
+                contentTruncated = true,
+                connectionId = any(), timestamp = any(), headers = any(),
                 method = any(), remoteHost = any(), remotePath = any(), remoteIp = any(),
                 remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
             )
@@ -152,12 +159,12 @@ class HttpParsingTest {
         httpConnection.unwrapOutbound("GET /partial HTTP/1.1\r\nHost: example".toByteArray())
         Thread.sleep(200)
 
-        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         httpConnection.unwrapOutbound(".com\r\n\r\n".toByteArray())
         Thread.sleep(500)
 
-        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -166,7 +173,7 @@ class HttpParsingTest {
         httpConnection.unwrapOutbound("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n".toByteArray())
         Thread.sleep(200)
 
-        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // The zero-size chunk and the empty line after it end the body
         httpConnection.unwrapOutbound("0\r\n\r\n".toByteArray())
@@ -174,11 +181,11 @@ class HttpParsingTest {
 
         coVerify {
             connector.persistHttpRequest(
-                content = "Hello",
+                content = "Hello".toByteArray(),
                 method = "POST",
                 connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
                 remoteHost = any(), remotePath = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -195,18 +202,18 @@ class HttpParsingTest {
             "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n$chunkSizeHex\r\n$chunkData\r\n".toByteArray()
         )
         Thread.sleep(200)
-        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         httpConnection.unwrapOutbound("0\r\n\r\n".toByteArray())
         Thread.sleep(500)
 
         coVerify {
             connector.persistHttpRequest(
-                content = chunkData,
+                content = chunkData.toByteArray(),
                 method = "POST",
                 connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
                 remoteHost = any(), remotePath = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -228,10 +235,10 @@ class HttpParsingTest {
             connector.persistHttpResponse(
                 statusCode = 200,
                 statusMsg = "OK",
-                content = "",
+                content = "".toByteArray(),
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 contentLength = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -250,7 +257,7 @@ class HttpParsingTest {
                 statusMsg = "Not Found",
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 content = any(), contentLength = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -258,7 +265,7 @@ class HttpParsingTest {
     @Test
     fun `response requestId correlates with request persistence result`() {
         coEvery {
-            connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns 99
 
         httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
@@ -273,7 +280,7 @@ class HttpParsingTest {
                 connectionId = any(), timestamp = any(), headers = any(), content = any(),
                 contentLength = any(), statusCode = any(), statusMsg = any(), remoteHost = any(),
                 remoteIp = any(), remotePort = any(), localIp = any(), localPort = any(),
-                initiatorId = any(), initiatorPkg = any()
+                initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -289,11 +296,11 @@ class HttpParsingTest {
 
         coVerify {
             connector.persistHttpResponse(
-                content = responseBody,
+                content = responseBody.toByteArray(),
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -320,7 +327,7 @@ class HttpParsingTest {
             "POST /submit HTTP/1.1\r\nHost: example.com\r\nContent-Length: ${requestBody.length}\r\n\r\n$firstHalf".toByteArray()
         )
         Thread.sleep(200)
-        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // the first request's response arrives while the second (POST) request is still
         // mid-body - with shared reassembly state this used to be misread as a continuation of
@@ -331,11 +338,11 @@ class HttpParsingTest {
 
         coVerify {
             connector.persistHttpResponse(
-                content = responseBody,
+                content = responseBody.toByteArray(),
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
 
@@ -346,13 +353,13 @@ class HttpParsingTest {
 
         coVerify {
             connector.persistHttpRequest(
-                content = requestBody,
+                content = requestBody.toByteArray(),
                 contentLength = requestBody.length,
                 method = "POST",
                 remotePath = "/submit",
                 connectionId = any(), timestamp = any(), headers = any(),
                 remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -367,7 +374,7 @@ class HttpParsingTest {
                 remotePath = "/first",
                 connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
                 method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         } coAnswers {
             delay(300)
@@ -378,7 +385,7 @@ class HttpParsingTest {
                 remotePath = "/second",
                 connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
                 method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         } returns 202L
 
@@ -387,7 +394,7 @@ class HttpParsingTest {
         httpConnection.unwrapOutbound("GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
         Thread.sleep(600)
 
-        coVerify(exactly = 2) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 2) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
 
         // responses arrive in the same order the requests were sent
         httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".toByteArray())
@@ -400,7 +407,7 @@ class HttpParsingTest {
                 statusCode = 200,
                 connectionId = any(), timestamp = any(), headers = any(), content = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
         coVerify {
@@ -409,7 +416,7 @@ class HttpParsingTest {
                 statusCode = 201,
                 connectionId = any(), timestamp = any(), headers = any(), content = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -427,19 +434,19 @@ class HttpParsingTest {
     private fun verifyResponse(statusCode: Int, content: String, requestId: Long? = null) {
         coVerify(exactly = 1) {
             connector.persistHttpResponse(
-                content = content,
+                content = content.toByteArray(),
                 statusCode = statusCode,
                 requestId = requestId ?: any(),
                 connectionId = any(), timestamp = any(), headers = any(),
                 contentLength = any(), statusMsg = any(), remoteHost = any(), remoteIp = any(),
-                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
 
     private fun verifyNoResponse() {
         coVerify(exactly = 0) {
-            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -545,7 +552,7 @@ class HttpParsingTest {
                 remotePath = "/first",
                 connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
                 method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         } returns 101L
         coEvery {
@@ -553,7 +560,7 @@ class HttpParsingTest {
                 remotePath = "/second",
                 connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
                 method = any(), remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         } returns 202L
 
@@ -584,10 +591,10 @@ class HttpParsingTest {
     }
 
     @Test
-    fun `chunked body over the size limit is persisted with a marker instead of its content`() {
+    fun `chunked body over the size limit is stored truncated to the limit`() {
         sendRequest()
         val chunk = ByteArray(64 * 1024) { 'a'.code.toByte() }
-        val chunkCount = 20 // 1.25 MB, above the 1 MB limit
+        val chunkCount = 20 // 1.25 MB, above the limit
 
         httpConnection.unwrapInbound(chunkedHeaders.toByteArray())
         repeat(chunkCount) {
@@ -602,8 +609,9 @@ class HttpParsingTest {
         val total = chunk.size * chunkCount
         coVerify(exactly = 1) {
             connector.persistHttpResponse(
-                content = "<too large: $total bytes>",
+                content = ByteArray(sizeLimit) { 'a'.code.toByte() },
                 contentLength = total,
+                contentTruncated = true,
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 statusMsg = any(), remoteHost = any(), remoteIp = any(),
@@ -656,9 +664,9 @@ class HttpParsingTest {
         stateField.isAccessible = true
         val state = stateField.get(httpConnection)
         val previousPayload = state.javaClass.getDeclaredField("previousPayload").apply { isAccessible = true }.get(state) as ByteArray
-        @Suppress("UNCHECKED_CAST")
-        val chunkCache = state.javaClass.getDeclaredField("chunkCache").apply { isAccessible = true }.get(state) as List<ByteArray>
-        return previousPayload.size + chunkCache.sumOf { it.size }
+        val body = state.javaClass.getDeclaredField("body").apply { isAccessible = true }.get(state)
+        val kept = body?.let { it.javaClass.getDeclaredField("kept").apply { isAccessible = true }.get(it) as ByteArrayOutputStream }
+        return previousPayload.size + (kept?.size() ?: 0)
     }
 
     @Test
@@ -715,7 +723,7 @@ class HttpParsingTest {
         // the interim response is not a response to record, and it must not use up the request
         verifyResponse(201, "ok", requestId = 42L)
         coVerify(exactly = 1) {
-            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -741,10 +749,10 @@ class HttpParsingTest {
                 connector.persistHttpRequest(
                     method = method,
                     remotePath = path,
-                    content = "",
+                    content = "".toByteArray(),
                     connectionId = any(), timestamp = any(), headers = any(), contentLength = any(),
                     remoteHost = any(), remoteIp = any(), remotePort = any(),
-                    localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                    localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
                 )
             }
         }
@@ -795,7 +803,7 @@ class HttpParsingTest {
         Thread.sleep(500)
 
         coVerify(exactly = 1) {
-            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
         verifyResponse(200, "part 0")
         assertEquals("nothing of the rest of the body may be held on to", 0, bufferedBytes(isOutbound = false))
@@ -819,9 +827,9 @@ class HttpParsingTest {
 
         assertEquals(0, bufferedBytes(isOutbound = true))
         assertEquals(0, bufferedBytes(isOutbound = false))
-        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 1) {
-            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
     }
 
@@ -839,11 +847,9 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-37 (V-52): bodies with a Content-Length above the size limit
-    // are counted, not buffered
+    // docs/vpn-mitm-audit.md PKT-37 (V-52), PKT-59 (V-64): of a body above the size limit only
+    // the first limit bytes are kept; the rest is counted, not buffered
     // -----------------------------------------------------------------------
-
-    private val sizeLimit = 1024 * 1024
 
     /** Feeds [total] body bytes in payloads of [payloadSize], calling [afterEach] after every payload. */
     private fun feedBody(total: Int, isOutbound: Boolean, payloadSize: Int = 16 * 1024, afterEach: () -> Unit = {}) {
@@ -859,7 +865,7 @@ class HttpParsingTest {
     }
 
     @Test
-    fun `large response with Content-Length is counted instead of buffered`() {
+    fun `large response with Content-Length is kept only up to the limit`() {
         sendRequest("GET", "/big")
         sendRequest("GET", "/next")
         val size = 5_000_000
@@ -869,11 +875,12 @@ class HttpParsingTest {
         feedBody(size, isOutbound = false) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = false)) }
         Thread.sleep(500)
 
-        assertEquals("nothing of a body that is too large to store may be held in memory", 0, maxBuffered)
+        assertTrue("no more than the limit may be held in memory, held $maxBuffered", maxBuffered <= sizeLimit)
         coVerify(exactly = 1) {
             connector.persistHttpResponse(
-                content = "<too large: $size bytes>",
+                content = ByteArray(sizeLimit) { 'b'.code.toByte() },
                 contentLength = size,
+                contentTruncated = true,
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 statusMsg = any(), remoteHost = any(), remoteIp = any(),
@@ -888,7 +895,7 @@ class HttpParsingTest {
     }
 
     @Test
-    fun `large request with Content-Length is counted instead of buffered`() {
+    fun `large request with Content-Length is kept only up to the limit`() {
         val size = 5_000_000
         var maxBuffered = 0
 
@@ -896,11 +903,12 @@ class HttpParsingTest {
         feedBody(size, isOutbound = true) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = true)) }
         Thread.sleep(500)
 
-        assertEquals(0, maxBuffered)
+        assertTrue(maxBuffered <= sizeLimit)
         coVerify(exactly = 1) {
             connector.persistHttpRequest(
-                content = "<too large: $size bytes>",
+                content = ByteArray(sizeLimit) { 'b'.code.toByte() },
                 contentLength = size,
+                contentTruncated = true,
                 method = "POST",
                 remotePath = "/upload",
                 connectionId = any(), timestamp = any(), headers = any(),
@@ -918,7 +926,7 @@ class HttpParsingTest {
                 remotePath = "/after",
                 connectionId = any(), timestamp = any(), headers = any(), content = any(), contentLength = any(),
                 remoteHost = any(), remoteIp = any(), remotePort = any(),
-                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+                localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any(), contentTruncated = any()
             )
         }
     }
@@ -932,11 +940,12 @@ class HttpParsingTest {
         feedBody(sizeLimit, isOutbound = false) { maxBuffered = maxOf(maxBuffered, bufferedBytes(isOutbound = false)) }
         Thread.sleep(500)
 
-        assertTrue("a storable body is buffered, but never more than the limit plus its headers", maxBuffered in 1..(sizeLimit + 1024))
+        assertTrue("a storable body is buffered, but never more than the limit", maxBuffered in 1..sizeLimit)
         coVerify(exactly = 1) {
             connector.persistHttpResponse(
-                content = match { it.length == sizeLimit && !it.startsWith("<too large") },
+                content = ByteArray(sizeLimit) { 'b'.code.toByte() },
                 contentLength = sizeLimit,
+                contentTruncated = false,
                 statusCode = 200,
                 connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
                 statusMsg = any(), remoteHost = any(), remoteIp = any(),
@@ -946,7 +955,7 @@ class HttpParsingTest {
     }
 
     @Test
-    fun `a body one byte over the size limit is not stored`() {
+    fun `a body one byte over the size limit is stored truncated`() {
         sendRequest("GET", "/")
         val size = sizeLimit + 1
 
@@ -954,8 +963,18 @@ class HttpParsingTest {
         feedBody(size, isOutbound = false)
         Thread.sleep(500)
 
-        verifyResponse(200, "<too large: $size bytes>")
-        assertEquals(0, bufferedBytes(isOutbound = false))
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = ByteArray(sizeLimit) { 'b'.code.toByte() },
+                contentLength = size,
+                contentTruncated = true,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+        assertEquals("the message is done, nothing of it may be held on to", 0, bufferedBytes(isOutbound = false))
     }
 
     @Test
@@ -970,7 +989,88 @@ class HttpParsingTest {
         httpConnection.unwrapInbound(ByteArray(100) { 'b'.code.toByte() } + "HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone".toByteArray())
         Thread.sleep(500)
 
-        verifyResponse(200, "<too large: $size bytes>")
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                contentLength = size,
+                contentTruncated = true,
+                statusCode = 200,
+                content = any(), connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
         verifyResponse(404, "gone")
     }
+
+    // -----------------------------------------------------------------------
+    // docs/vpn-mitm-audit.md PKT-59 (V-64): bodies are stored as bytes, unchanged
+    // -----------------------------------------------------------------------
+
+    /** Every byte value, including CR, LF and bytes that are not valid UTF-8. */
+    private val binaryBody = ByteArray(256) { it.toByte() } + ByteArray(256) { (255 - it).toByte() }
+
+    private fun verifyResponseBody(content: ByteArray, contentLength: Int, contentTruncated: Boolean) {
+        coVerify(exactly = 1) {
+            connector.persistHttpResponse(
+                content = content,
+                contentLength = contentLength,
+                contentTruncated = contentTruncated,
+                statusCode = 200,
+                connectionId = any(), requestId = any(), timestamp = any(), headers = any(),
+                statusMsg = any(), remoteHost = any(), remoteIp = any(),
+                remotePort = any(), localIp = any(), localPort = any(), initiatorId = any(), initiatorPkg = any()
+            )
+        }
+    }
+
+    @Test
+    fun `a binary body with Content-Length is stored byte for byte`() {
+        sendRequest("GET", "/image")
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${binaryBody.size}\r\n\r\n".toByteArray() + binaryBody)
+        Thread.sleep(500)
+        verifyResponseBody(binaryBody, binaryBody.size, contentTruncated = false)
+    }
+
+    @Test
+    fun `a binary body split across payloads is stored byte for byte`() {
+        sendRequest("GET", "/image")
+        httpConnection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: ${binaryBody.size}\r\n\r\n".toByteArray() + binaryBody.copyOf(100))
+        httpConnection.unwrapInbound(binaryBody.copyOfRange(100, binaryBody.size))
+        Thread.sleep(500)
+        verifyResponseBody(binaryBody, binaryBody.size, contentTruncated = false)
+    }
+
+    @Test
+    fun `a chunked binary body is decoded and stored byte for byte`() {
+        sendRequest("GET", "/image")
+        val first = binaryBody.copyOf(300)
+        val second = binaryBody.copyOfRange(300, binaryBody.size)
+        httpConnection.unwrapInbound(
+            chunkedHeaders.toByteArray() +
+                "${first.size.toString(16)}\r\n".toByteArray() + first + "\r\n".toByteArray() +
+                "${second.size.toString(16)}\r\n".toByteArray() + second + "\r\n0\r\n\r\n".toByteArray()
+        )
+        Thread.sleep(500)
+        verifyResponseBody(binaryBody, binaryBody.size, contentTruncated = false)
+    }
+
+    @Test
+    fun `a binary body delimited by connection close keeps its start and is marked truncated`() {
+        sendRequest("GET", "/stream")
+        httpConnection.unwrapInbound("HTTP/1.0 200 OK\r\n\r\n".toByteArray() + binaryBody)
+        Thread.sleep(500)
+        verifyResponseBody(binaryBody, binaryBody.size, contentTruncated = true)
+    }
+
+    @Test
+    fun `the size limit comes from the preference`() {
+        every { componentManager.maxHttpBodySize } returns 100
+        val connection = HttpConnection(0, encryptionLayer, componentManager)
+        connection.unwrapOutbound("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".toByteArray())
+        Thread.sleep(300)
+        connection.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: ${binaryBody.size}\r\n\r\n".toByteArray() + binaryBody)
+        Thread.sleep(500)
+        verifyResponseBody(binaryBody.copyOf(100), binaryBody.size, contentTruncated = true)
+    }
+
 }

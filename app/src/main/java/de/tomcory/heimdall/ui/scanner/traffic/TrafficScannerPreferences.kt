@@ -116,6 +116,16 @@ fun MitMPreferences(
             }
         )
 
+        // docs/vpn-mitm-audit.md PKT-59: 0 is what older installs read and means the default
+        IntPreference(
+            text = "Largest HTTP body to keep (KB)",
+            dialogText = "Largest HTTP body to keep, in KB (1 to 1024); longer bodies are stored truncated",
+            value = viewModel.preferences.mitmHttpBodyLimitKb.collectAsState(initial = viewModel.prefInit.mitmHttpBodyLimitKbInitial).value
+                .let { if (it > 0) it else viewModel.prefInit.mitmHttpBodyLimitKbInitial },
+            valueVerifier = { value -> value in 1..1024 },
+            onValueChange = { value -> viewModel.preferences.setMitmHttpBodyLimitKb(value) }
+        )
+
         MonitoringScopePreference(
             text = "Monitoring scope (apps)",
             dialogText = "Monitoring scope (apps)",

@@ -103,7 +103,7 @@ class RoomDatabaseConnectorTest {
         val host = scope.launch { connector.updateConnectionHost(id, "example.org", false) }
         val bytes = scope.launch { connector.updateConnectionBytesOut(id, 100) }
         val request = scope.launch {
-            connector.persistHttpRequest(id, 0, emptyMap(), "", 0, "GET", "example.org", "/", "93.184.216.34", 443, "10.0.0.1", 40000, 1000, "com.example.test")
+            connector.persistHttpRequest(id, 0, emptyMap(), ByteArray(0), 0, false, "GET", "example.org", "/", "93.184.216.34", 443, "10.0.0.1", 40000, 1000, "com.example.test")
         }
         val delete = scope.launch { connector.deleteTransportLayerConnection(id) }
 

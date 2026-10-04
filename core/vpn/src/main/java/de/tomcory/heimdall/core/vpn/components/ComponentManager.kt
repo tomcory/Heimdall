@@ -9,6 +9,7 @@ import de.tomcory.heimdall.core.vpn.R
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.connection.appLayer.HttpConnection
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TcpConnection
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
@@ -69,6 +70,9 @@ class ComponentManager(
     // opportunistic mode the resolver then falls back to plain DNS, which Heimdall can read
     // (docs/vpn-mitm-audit.md PKT-58). Null in strict mode, where refusing would break DNS.
     val refuseDnsOverTlsTo: InetAddress? = null,
+    // how many bytes of each HTTP body are kept; longer bodies are stored truncated
+    // (docs/vpn-mitm-audit.md PKT-59)
+    val maxHttpBodySize: Int = HttpConnection.DEFAULT_MAX_BODY_SIZE,
     // what to do with QUIC flows while MitM is on; PASSTHROUGH whenever MitM is off
     // (docs/vpn-mitm-audit.md PKT-51)
     val quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,

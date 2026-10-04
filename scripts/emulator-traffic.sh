@@ -463,6 +463,17 @@ cmd_report() {
         from Request r join Connection c on c.id = r.connectionId
         where c.sessionId = $session order by r.id limit 30;"
 
+    say "Stored HTTP bodies (kept bytes against real length; docs/vpn-mitm-audit.md PKT-59)"
+    sqlite3 -header -column "$db" "
+        select 'request' kind, count(*) n, coalesce(sum(length(content)), 0) kept_bytes,
+               coalesce(sum(contentLength), 0) real_bytes, coalesce(sum(contentTruncated), 0) truncated
+        from Request r join Connection c on c.id = r.connectionId where c.sessionId = $session
+        union all
+        select 'response', count(*), coalesce(sum(length(s.content)), 0), coalesce(sum(s.contentLength), 0),
+               coalesce(sum(s.contentTruncated), 0)
+        from Response s join Request r on r.id = s.requestId join Connection c on c.id = r.connectionId
+        where c.sessionId = $session;"
+
     say "Checks"
     local mismatches crashes
     mismatches="$(sqlite3 "$db" "select count(*) from Connection where sessionId = $session

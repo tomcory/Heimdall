@@ -15,13 +15,15 @@ import kotlinx.coroutines.flow.Flow
  * longer stores this (see the removed `Request.isTracker` field); the connection is the single
  * source of truth.
  */
+@Suppress("ArrayInDataClass") // never compared
 data class RequestWithConnectionIsTracker(
     val id: Long,
     val connectionId: Long,
     val timestamp: Long,
     val headers: String,
-    val content: String,
+    val content: ByteArray,
     val contentLength: Int,
+    val contentTruncated: Boolean,
     val method: String,
     val remoteHost: String,
     val remotePath: String,
@@ -49,7 +51,7 @@ interface RequestDao {
     suspend fun getAll(): List<Request>
 
     @Query("""
-        SELECT r.id, r.connectionId, r.timestamp, r.headers, r.content, r.contentLength, r.method,
+        SELECT r.id, r.connectionId, r.timestamp, r.headers, r.content, r.contentLength, r.contentTruncated, r.method,
                r.remoteHost, r.remotePath, r.remoteIp, r.remotePort, r.localIp, r.localPort,
                r.initiatorId, r.initiatorPkg, c.isTracker AS connectionIsTracker
         FROM Request r

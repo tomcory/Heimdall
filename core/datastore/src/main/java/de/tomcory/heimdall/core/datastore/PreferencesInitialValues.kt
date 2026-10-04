@@ -33,6 +33,8 @@ data class PreferencesInitialValues(
     val mitmTrustAllUpstreamCertsInitial: Boolean = false,
     // QUIC is passed through unless the user opts into blocking it (docs/vpn-mitm-audit.md PKT-51)
     val mitmQuicPolicyInitial: MitmQuicPolicy = MitmQuicPolicy.QUIC_PASSTHROUGH,
+    // largest HTTP body kept, in KB (docs/vpn-mitm-audit.md PKT-59)
+    val mitmHttpBodyLimitKbInitial: Int = 256,
 
     val libraryActiveInitial: Boolean = true,
     val libraryOnInstallInitial: Boolean = true,

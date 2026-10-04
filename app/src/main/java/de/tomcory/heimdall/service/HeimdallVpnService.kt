@@ -243,6 +243,7 @@ class HeimdallVpnService : VpnService() {
         val mitmScope = if (doMitm) resolveMitmScope() else MitmScope.ALL
         val learnPassthrough = preferences.mitmAppLayerPassthrough.first()
         val quicPolicy = QuicPolicyResolver.resolve(doMitm, preferences.mitmQuicPolicy.first(), quicPolicyOverride)
+        val maxHttpBodySize = HttpBodyLimitResolver.resolve(preferences.mitmHttpBodyLimitKb.first())
 
         Timber.d("MitM mode: $doMitm")
         Timber.d("QUIC policy: $quicPolicy${if (quicPolicyOverride != null) " (session override '$quicPolicyOverride')" else ""}")
@@ -279,6 +280,7 @@ class HeimdallVpnService : VpnService() {
                 learnPassthrough = learnPassthrough,
                 quicPolicy = quicPolicy,
                 refuseDnsOverTlsTo = refuseDnsOverTlsTo,
+                maxHttpBodySize = maxHttpBodySize,
                 existingSessionId = existingSessionId,
                 keyStoreDir = File(this.filesDir, "keystore"),
                 protectDatagramSocket = { socket -> protect(socket) },

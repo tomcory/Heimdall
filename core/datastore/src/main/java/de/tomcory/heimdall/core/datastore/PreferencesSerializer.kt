@@ -34,6 +34,7 @@ object PreferencesSerializer : Serializer<Preferences> {
         .addAllMitmBlacklistHosts(initialValues.mitmBlacklistHostsInitial)
         .setMitmTrustAllUpstreamCerts(initialValues.mitmTrustAllUpstreamCertsInitial)
         .setMitmQuicPolicy(initialValues.mitmQuicPolicyInitial)
+        .setMitmHttpBodyLimitKb(initialValues.mitmHttpBodyLimitKbInitial)
 
         .setLibraryActive(initialValues.libraryActiveInitial)
         .setLibraryOnInstall(initialValues.libraryOnInstallInitial)

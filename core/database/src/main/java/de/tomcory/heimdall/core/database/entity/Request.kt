@@ -17,14 +17,20 @@ import androidx.room.PrimaryKey
         androidx.room.Index(value = ["connectionId"])
     ]
 )
+@Suppress("ArrayInDataClass") // never compared; rows are identified by id
 data class Request(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val connectionId: Long,
     val timestamp: Long,
     val headers: String,
-    val content: String,
+    // the body as received (bytes, so binary and compressed bodies survive), at most the
+    // configured limit; contentLength is the body's real length (docs/vpn-mitm-audit.md PKT-59)
+    val content: ByteArray,
     val contentLength: Int,
+    // the body was longer than the limit, or ran until the connection closed, so content holds
+    // only its start
+    val contentTruncated: Boolean = false,
     val method: String,
     val remoteHost: String,
     val remotePath: String,

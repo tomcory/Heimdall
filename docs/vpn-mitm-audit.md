@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-58 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-59 are implemented.
 
 ---
 
@@ -4039,6 +4039,65 @@ remaining four changes the database version.
     hash the server reports (or is truncated to the limit, with the right length). After the
     full suite, the database is a fraction of the 439 MB measured in V-64. Record the number
     in the notes.
+- **Implementation notes (2026-10-03):**
+  - Database: `Request.content` and `Response.content` are `ByteArray` (BLOB), with a new
+    `contentTruncated` flag; `RequestWithConnectionIsTracker` follows. Version 10 (destructive).
+    `CLAUDE.md` updated.
+  - `HttpConnection` keeps each direction's current body in a `BoundedBody`: the first
+    `maximumBodySize` bytes plus the real length. That replaces the chunk cache, the
+    `tooLarge` path and the `<too large: N bytes>` placeholder. Memory per direction is now
+    bounded by the limit for every framing. Only the header block is decoded as text.
+    `persistMessage()` takes the header block and the body separately; `parseBody()`,
+    `dechunkHttpMessage()` and `combineChunks()` are gone.
+  - `ChunkedBodyTracker.feed()` takes an optional sink that receives the chunk data as it is
+    read, so a chunked body is decoded in the same pass that finds its end.
+  - Truncation: a body over the limit keeps its first limit bytes, with `contentLength` set to
+    the real length and `contentTruncated` set. A response delimited by connection close keeps
+    what arrived with its headers and is always marked truncated, because its end is never
+    seen. That is PKT-33's behaviour (parsing stops after such a response), unchanged here;
+    keeping more would need the app layer to learn about the connection's close.
+  - Limit: proto field 51 `mitm_http_body_limit_kb`, a "Largest HTTP body to keep (KB)" setting
+    (1 to 1024), `HttpBodyLimitResolver` in the service and `ComponentManager.maxHttpBodySize`.
+    Installs from before this field read 0, so 0 means the default (256 KB) rather than "keep
+    nothing". The resolver caps the limit at 1 MB (`HttpConnection.MAX_BODY_SIZE_LIMIT`).
+  - `CsvExport`: textual bodies (`text/*`, JSON, XML, JavaScript, form data, `+json`, `+xml`)
+    are written as text in their declared charset, everything else as Base64 (own encoder:
+    `java.util.Base64` needs API 26), with `contentEncoding` and `contentTruncated` columns.
+    Fixed on the way: the header row listed a `reqResId` column that the rows did not have, so
+    every column after it was shifted. Fields were never escaped, although `csvEscape()`
+    existed; they are now, and it also quotes line breaks (the stored headers are multi-line).
+    No UI shows bodies, so there was nothing else to change.
+  - Not done: the optional storing of gzip/deflate bodies decompressed.
+  - `emulator-traffic.sh report` summarises the stored bodies (rows, kept bytes, real bytes,
+    truncated).
+  - Tests: `HttpParsingTest` updated for bytes, with the old placeholder tests rewritten for
+    truncation, plus 5 new ones: a binary body with all 256 byte values, unsplit and split;
+    chunked with CRLF bytes in the data; close-delimited; and a limit from the preference.
+    New `CsvExportTest` (7, with JUnit added to `core:export`) and `HttpBodyLimitResolverTest`
+    (3). 404 `core:vpn`, 7 `core:export` and 18 `app` tests pass. Lint reports nothing in the
+    changed files.
+  - Emulator, `run-stress.sh download` (the server sends each body's SHA-256): every body with
+    `Content-Length` or chunked encoding up to the limit is stored with the server's hash. The
+    5 MB and 50 MB bodies are stored as their first 262,144 bytes, with the real length and the
+    flag. Full suite, run one test at a time: 21 of 22 tests passed. The exception was
+    `tlsparallel`, with 3 of 72 requests to `stackoverflow.com` timing out. In reruns it passed
+    2 of 3 times, and it also failed without the VPN (`heise.de` reset, `amazon.com` aborting
+    39 of 72): the public sites throttle the test. `emulator-traffic.sh run` is clean.
+  - Size: after the download test, the full suite and the traffic script, the database is
+    75 MB. Bodies in it: 68 MB kept of 367 MB received, in 5,290 rows, 135 of them truncated.
+    The old encoding would have stored roughly 38 MB (all text) to 76 MB (all binary, at about
+    twice the size) for the same rows. Bodies over 1 MB were a placeholder then, and each now
+    keeps 256 KB, which offsets the end of the doubling. So the gain is correctness (bodies are
+    stored exactly) and bounded rows, not a smaller database for this workload. The 439 MB in
+    V-64 came from a longer workload and is not directly comparable. A lower default limit
+    would shrink the database further.
+  - Observed on the first start after installing this build: the stress script's first two
+    connections timed out. `tun0` was up about 20 s before the traffic threads started, so
+    nothing read the tunnel in between. The likely cause is the first database access after
+    the schema change, which runs Room's destructive migration before the session row can be
+    written. It only affects the first start after a schema change; the next run was clean. It
+    may also explain the DNS failures seen right after installing PKT-56, which were put down
+    to the network at the time.
 - **Commit:** `fix(vpn): store HTTP bodies as bytes with a configurable size limit`
 
 ### PKT-60 — Do not discard responses whose request row is late

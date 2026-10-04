@@ -196,7 +196,7 @@ class TlsMitmHttpFlowTest {
         assertEquals("/test", dbConnector.requests[0].remotePath)
         assertEquals(1, dbConnector.responses.size)
         assertEquals(200, dbConnector.responses[0].statusCode)
-        assertEquals("Hello, world!", dbConnector.responses[0].content)
+        assertEquals("Hello, world!", String(dbConnector.responses[0].content))
 
         // the connection is recorded as TLS along with the server name the client asked for
         // (docs/vpn-mitm-audit.md PKT-27)

@@ -77,7 +77,7 @@ abstract fun exportToJsonObject(subReport: SubReport?): JsonObject
 
 Existing modules: `StaticPermissionsScore`, `TrackerScore`, `PrivacyPolicyScore`.
 
-## Database Schema (Room, v9, 14 entities)
+## Database Schema (Room, v10, 14 entities)
 
 ```
 App ──────── AppXPermission ── Permission

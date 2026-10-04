@@ -8,6 +8,7 @@ import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import de.tomcory.heimdall.core.vpn.metadata.DnsCache
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
+import de.tomcory.heimdall.core.vpn.connection.appLayer.HttpConnection
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
@@ -68,7 +69,8 @@ object ComponentManagerFixtures {
         quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
         pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
         trustAllUpstream: Boolean = true,
-        refuseDnsOverTlsTo: InetAddress? = null
+        refuseDnsOverTlsTo: InetAddress? = null,
+        maxHttpBodySize: Int = HttpConnection.DEFAULT_MAX_BODY_SIZE
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -103,6 +105,8 @@ object ComponentManagerFixtures {
         // a relaxed mock would return 0, and no close would ever count as pinning (PKT-54)
         every { componentManager.pinningCloseWindowMs } returns pinningCloseWindowMs
         every { componentManager.refuseDnsOverTlsTo } returns refuseDnsOverTlsTo
+        // a relaxed mock would return 0 and no body would be kept (PKT-59)
+        every { componentManager.maxHttpBodySize } returns maxHttpBodySize
         // explicit for the same reason: a relaxed mock would return a mock enum value
         every { componentManager.quicPolicy } returns quicPolicy
         every { componentManager.sessionId } returns sessionId

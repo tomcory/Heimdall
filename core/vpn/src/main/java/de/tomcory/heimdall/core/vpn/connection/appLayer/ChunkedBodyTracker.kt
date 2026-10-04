@@ -15,7 +15,9 @@ package de.tomcory.heimdall.core.vpn.connection.appLayer
  *
  * The end can only be found by honouring the declared sizes: chunk data may contain any bytes,
  * including sequences that look like a terminator. The tracker reads every byte once and keeps
- * no copy of the body, so it also works for bodies that are too large to keep.
+ * no copy of the body, so it also works for bodies that are too large to keep. The decoded body
+ * (the chunk data, without the framing) can be handed to a sink as it is read
+ * (docs/vpn-mitm-audit.md PKT-59).
  */
 internal class ChunkedBodyTracker {
 
@@ -54,11 +56,13 @@ internal class ChunkedBodyTracker {
     /**
      * Consumes body bytes from [bytes], starting at [from].
      *
+     * @param dataSink If given, receives each run of chunk data as (array, offset, length).
+     *
      * @return the index just past the end of the chunked body if it ends within [bytes],
      * [INCOMPLETE] if more bytes are needed, or [MALFORMED] if the bytes are not a valid chunked
      * body. After anything but [INCOMPLETE] the tracker must be [reset] before it is used again.
      */
-    fun feed(bytes: ByteArray, from: Int = 0): Int {
+    fun feed(bytes: ByteArray, from: Int = 0, dataSink: ((ByteArray, Int, Int) -> Unit)? = null): Int {
         var i = from
         while (i < bytes.size) {
             when (phase) {
@@ -88,6 +92,7 @@ internal class ChunkedBodyTracker {
 
                 Phase.DATA -> {
                     val take = minOf(remaining, (bytes.size - i).toLong()).toInt()
+                    dataSink?.invoke(bytes, i, take)
                     i += take
                     remaining -= take
                     bodyLength += take

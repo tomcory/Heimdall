@@ -43,6 +43,7 @@ class PreferencesDataSource @Inject constructor(
     val mitmBlacklistHosts: Flow<List<String>> = datastore.data.map { it.mitmBlacklistHostsList }
     val mitmTrustAllUpstreamCerts: Flow<Boolean> = datastore.data.map { it.mitmTrustAllUpstreamCerts }
     val mitmQuicPolicy: Flow<MitmQuicPolicy> = datastore.data.map { it.mitmQuicPolicy }
+    val mitmHttpBodyLimitKb: Flow<Int> = datastore.data.map { it.mitmHttpBodyLimitKb }
 
     val libraryActive: Flow<Boolean> = datastore.data.map { it.libraryActive }
     val libraryOnInstall: Flow<Boolean> = datastore.data.map { it.libraryOnInstall }
@@ -176,6 +177,12 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setMitmQuicPolicy(mitmQuicPolicy: MitmQuicPolicy) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setMitmQuicPolicy(mitmQuicPolicy).build()
+        }
+    }
+
+    suspend fun setMitmHttpBodyLimitKb(mitmHttpBodyLimitKb: Int) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().setMitmHttpBodyLimitKb(mitmHttpBodyLimitKb).build()
         }
     }
 
