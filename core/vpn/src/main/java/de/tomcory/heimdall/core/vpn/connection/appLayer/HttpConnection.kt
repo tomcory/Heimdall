@@ -3,19 +3,30 @@ package de.tomcory.heimdall.core.vpn.connection.appLayer
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.pcap4j.packet.Packet
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.atomic.AtomicInteger
 
+/**
+ * @param persistDispatcher Runs this connection's database writes (docs/vpn-mitm-audit.md PKT-60).
+ * Replaceable for tests.
+ */
 class HttpConnection(
     id: Long,
     encryptionLayer: EncryptionLayerConnection,
-    componentManager: ComponentManager
+    componentManager: ComponentManager,
+    persistDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : AppLayerConnection(
     id,
     encryptionLayer,
@@ -110,6 +121,49 @@ class HttpConnection(
      * the inbound-processing thread for the same connection.
      */
     private val pendingRequests = ConcurrentLinkedDeque<PendingRequest>()
+
+    private val persistScope = CoroutineScope(persistDispatcher + SupervisorJob())
+
+    /**
+     * Lets one of this connection's database writes run at a time, in the order the messages were
+     * seen: the mutex is fair, so waiting writes are let in first come, first served
+     * (docs/vpn-mitm-audit.md PKT-60). Writes used to run as independent coroutines on the shared
+     * IO dispatcher, so a burst started thousands of concurrent inserts, and the backlog delayed
+     * request rows by more than the 30 s a response used to wait for them (V-65). A dispatcher
+     * limited to one thread would not serialise them: a write that suspends inside the database
+     * lets the next one start.
+     *
+     * A response's write waits for its request's ID while holding the mutex. That cannot
+     * deadlock: the request's write was queued before it and has run by then. A write that does
+     * not finish within [WRITE_SAFETY_TIMEOUT_MS] is given up, so that one stuck write cannot
+     * hold up the rest of the connection's messages for good.
+     */
+    private val writeMutex = Mutex()
+
+    /** Messages recognised but not yet written; see [writeMutex]. */
+    private val queuedWrites = AtomicInteger(0)
+
+    /** Queues a database write behind this connection's earlier ones, keeping [queuedWrites] up to date. */
+    private fun queueWrite(write: suspend () -> Unit) {
+        val queued = queuedWrites.incrementAndGet()
+        if (queued == WRITE_BACKLOG_WARNING) {
+            Timber.w("http$id $queued messages are waiting to be written to the database")
+        }
+        // UNDISPATCHED: the coroutine takes its place in the mutex's queue now, on the calling
+        // thread, so that the queue order is the order in which the messages were seen
+        persistScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                writeMutex.withLock {
+                    val finished = withTimeoutOrNull(WRITE_SAFETY_TIMEOUT_MS) { write(); true }
+                    if (finished == null) {
+                        Timber.e("http$id A database write did not finish within ${WRITE_SAFETY_TIMEOUT_MS / 60_000} minutes, giving it up")
+                    }
+                }
+            } finally {
+                queuedWrites.decrementAndGet()
+            }
+        }
+    }
 
     /**
      * A request whose response hasn't been seen yet.
@@ -364,6 +418,8 @@ class HttpConnection(
         val bodyLength = body?.length ?: 0L
         val contentLength = bodyLength.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val contentTruncated = truncated || bodyLength > content.size
+        // when the message was seen, not when its row is written, which may be later
+        val timestamp = System.currentTimeMillis()
 
         // reset the reassembly state for the next message
         val state = if (isOutbound) outboundState else inboundState
@@ -382,11 +438,11 @@ class HttpConnection(
             val pendingId = CompletableDeferred<Long>()
             pendingRequests.addLast(PendingRequest(statusLine?.get(0) ?: "", pendingId))
 
-            CoroutineScope(Dispatchers.IO).launch {
+            queueWrite {
                 try {
                     val requestId = componentManager.databaseConnector.persistHttpRequest(
                         connectionId = id,
-                        timestamp = System.currentTimeMillis(),
+                        timestamp = timestamp,
                         headers = headers ?: emptyMap(),
                         content = content,
                         contentLength = contentLength,
@@ -419,36 +475,40 @@ class HttpConnection(
                 return
             }
 
-            CoroutineScope(Dispatchers.IO).launch {
+            queueWrite {
+                // The request's write was queued before this one and has finished by now: it
+                // completed the deferred with the row's ID, or failed it if the row could not be
+                // written (or was given up). However long the database took, the response is not
+                // dropped for being late, as it was after a 30 s wait before (PKT-60).
                 val requestId = try {
-                    withTimeoutOrNull(REQUEST_CORRELATION_TIMEOUT_MS) { pendingId.await() }
+                    pendingId.await()
                 } catch (e: Throwable) {
-                    Timber.e(e, "http$id Error awaiting matching request ID")
-                    null
-                }
-                if (requestId == null) {
-                    Timber.w("http$id No matching request ID became available in time, discarding response")
-                    return@launch
+                    Timber.e(e, "http$id The request this response answers could not be written, discarding the response")
+                    return@queueWrite
                 }
                 Timber.d("http$id persisting response to request with ID $requestId")
-                componentManager.databaseConnector.persistHttpResponse(
-                    connectionId = id,
-                    requestId = requestId,
-                    timestamp = System.currentTimeMillis(),
-                    headers = headers ?: emptyMap(),
-                    content = content,
-                    contentLength = contentLength,
-                    contentTruncated = contentTruncated,
-                    statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
-                    statusMsg = statusLine?.get(2) ?: "",
-                    remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
-                    remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
-                    remotePort = encryptionLayer.transportLayer.remotePort,
-                    localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
-                    localPort = encryptionLayer.transportLayer.localPort,
-                    initiatorId = encryptionLayer.transportLayer.appId ?: 0,
-                    initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
-                )
+                try {
+                    componentManager.databaseConnector.persistHttpResponse(
+                        connectionId = id,
+                        requestId = requestId,
+                        timestamp = timestamp,
+                        headers = headers ?: emptyMap(),
+                        content = content,
+                        contentLength = contentLength,
+                        contentTruncated = contentTruncated,
+                        statusCode = statusLine?.get(1)?.toIntOrNull() ?: 0,
+                        statusMsg = statusLine?.get(2) ?: "",
+                        remoteHost = encryptionLayer.transportLayer.remoteHost ?: "",
+                        remoteIp = encryptionLayer.transportLayer.ipPacketBuilder.remoteAddress.hostAddress ?: "",
+                        remotePort = encryptionLayer.transportLayer.remotePort,
+                        localIp = encryptionLayer.transportLayer.ipPacketBuilder.localAddress.hostAddress ?: "",
+                        localPort = encryptionLayer.transportLayer.localPort,
+                        initiatorId = encryptionLayer.transportLayer.appId ?: 0,
+                        initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
+                    )
+                } catch (e: Exception) {
+                    Timber.e(e, "http$id Error persisting HTTP response")
+                }
             }
         }
     }
@@ -552,12 +612,15 @@ class HttpConnection(
         private val EMPTY_BODY = ByteArray(0)
 
         /**
-         * Upper bound on how long a response's persist coroutine waits for its matching
-         * request's persist to complete, so a request whose own persist never completes (or
-         * whose completion is lost, e.g. an unanswered request when the connection is torn down)
-         * can't leave a response coroutine suspended forever.
+         * How long one database write may take before it is given up (docs/vpn-mitm-audit.md
+         * PKT-60). Only a safety net against a write that never returns. Time spent waiting
+         * behind earlier writes does not count, so a long backlog delays messages but no longer
+         * discards them, as the 30 s wait for a request's ID did before (V-65).
          */
-        private const val REQUEST_CORRELATION_TIMEOUT_MS = 30_000L
+        private const val WRITE_SAFETY_TIMEOUT_MS = 10 * 60_000L
+
+        /** A connection with this many messages waiting for the database says so in the log. */
+        private const val WRITE_BACKLOG_WARNING = 200
 
         /**
          * Upper bound on the bytes collected while looking for the end of a header block. Real

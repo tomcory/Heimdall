@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-59 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented.
 
 ---
 
@@ -4127,6 +4127,43 @@ remaining four changes the database version.
     hangs.
   - Device: the plain-mode full stress run logs no discarded responses, and the number of
     responses equals the number of requests that got one. Count both in the database.
+- **Implementation notes (2026-10-04):**
+  - Measured first, as planned. The plain-mode full suite on the PKT-59 build, run one test at a
+    time, passed 22/22 and discarded no response (V-65 counted 143). PKT-59's bounded rows
+    removed the write backlog that caused them. In that database, 4,838 of 4,906 requests have a
+    response. All 68 without one are requests that never got a complete response: 60
+    client-aborted downloads (`clientabort`, two runs), 2 `/rst` (server reset mid-body), 2
+    `/hang` and the 4 public-site requests that `tlsparallel` saw time out or reset.
+  - `HttpConnection` queues each database write behind the connection's earlier ones
+    (`queueWrite()`): a fair `Mutex`, so writes run one at a time in the order the messages were
+    seen. Each coroutine is started `UNDISPATCHED`, so it joins the mutex's queue on the thread
+    that saw the message. `queuedWrites` counts the backlog, and the log says when a connection
+    reaches 200.
+  - Deviation from the plan, in how writes are serialised: the packet offered a
+    `limitedParallelism(1)` view of `Dispatchers.IO`. That does not serialise suspending work:
+    a write that suspends inside Room lets the next one start, and the new ordering test caught
+    exactly that (`/1`, the slow write, finished last). A channel with one consumer per
+    connection would work, but it would leave one coroutine parked for every HTTP connection
+    ever seen, since the app layer never learns that its connection closed. A mutex leaves
+    nothing behind.
+  - Deviation, in where the safety bound sits: with writes serialised, a response's write only
+    starts after its request's write has finished, so its wait for the ID is always already
+    complete. The 30 s timeout on that wait is gone, and the response simply awaits the ID. A
+    failed request write still drops its response, with an error log. The 10-minute bound
+    applies to each write instead: a write that never returns would otherwise hold up every
+    later message of the connection. One that is given up is logged, and its request ID is
+    failed with it.
+  - Also fixed: request and response timestamps are now taken when the message is seen, not
+    when its row is written, which can be later with a queue. The response write is wrapped in
+    a `try` like the request write; an exception escaping it would have crashed the app.
+  - Tests: new `HttpPersistenceTest` (5, on virtual time): a request row that takes 45 s is
+    still followed by its response; a failed request write drops the response without hanging;
+    a write that never returns is given up after 10 minutes, and the connection's later
+    messages are still written; writes run one at a time in wire order; pipelined responses are
+    paired correctly while writes are queued. 409 `core:vpn` and 18 `app` tests pass.
+  - Emulator, new build: the plain-mode full suite, run one test at a time, passed 22/22, with
+    no discarded response and no backlog warning. Again, every request without a response is
+    one of the cases above. In MitM mode, `keepalive,parallel,churn,tls,tlsbulk` passed 29/29.
 - **Commit:** `fix(vpn): keep HTTP responses whose request is still being persisted`
 
 ### PKT-61 — Set UDP flows up off the packet thread
