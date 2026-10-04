@@ -53,6 +53,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * @throws VpnComponentLaunchException if the component initialisation failed.
  */
+/**
+ * The MTU of the VPN interface. The service sets it explicitly, and [DevicePollThread] sizes its
+ * read buffer from it, so the two cannot drift apart (docs/vpn-mitm-audit.md PKT-64).
+ */
+const val VPN_MTU = 1500
+
 class ComponentManager(
     private val outboundStream: FileInputStream,
     private val inboundStream: FileOutputStream,

@@ -5,7 +5,6 @@ import com.google.common.cache.CacheBuilder
 import timber.log.Timber
 import org.bouncycastle.operator.OperatorCreationException
 import java.io.*
-import java.lang.reflect.InvocationTargetException
 import java.security.GeneralSecurityException
 import java.security.PrivateKey
 import java.security.cert.Certificate
@@ -90,32 +89,18 @@ class SSLEngineSource (
     fun newSSLEngine(remoteHost: String, remotePort: Int): SSLEngine {
         val sslEngine = sslContext.createSSLEngine(remoteHost, remotePort)
         sslEngine.useClientMode = true
-        if (!tryHostNameVerificationJava7(sslEngine)) {
-            Timber.d("Host Name Verification is not supported, causes insecure HTTPS connection")
-        }
+        enableHostnameVerification(sslEngine)
         filterWeakCipherSuites(sslEngine)
         return sslEngine
     }
 
-    private fun tryHostNameVerificationJava7(sslEngine: SSLEngine): Boolean {
-        for (method in SSLParameters::class.java.methods) {
-            // method is available since Java 7
-            if ("setEndpointIdentificationAlgorithm" == method.name) {
-                val sslParams = SSLParameters()
-                try {
-                    method.invoke(sslParams, "HTTPS")
-                } catch (e: IllegalAccessException) {
-                    Timber.e(e, "SSLParameters#setEndpointIdentificationAlgorithm")
-                    return false
-                } catch (e: InvocationTargetException) {
-                    Timber.e(e, "SSLParameters#setEndpointIdentificationAlgorithm")
-                    return false
-                }
-                sslEngine.sslParameters = sslParams
-                return true
-            }
-        }
-        return false
+    /**
+     * Makes [sslEngine] verify that the server's certificate matches the host it connects to,
+     * keeping the engine's other parameters (docs/vpn-mitm-audit.md PKT-64). The method used to
+     * be looked up by reflection, for Java 7, and replaced all parameters with a fresh set.
+     */
+    private fun enableHostnameVerification(sslEngine: SSLEngine) {
+        sslEngine.sslParameters = sslEngine.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
     }
 
     @Throws(GeneralSecurityException::class, IOException::class)
@@ -137,10 +122,6 @@ class SSLEngineSource (
             arrayOfNulls(0)
         }
         sslContext = CertificateHelper.newClientContext(keyManagers, trustManagers)
-        val sslEngine = sslContext.createSSLEngine()
-        if (!tryHostNameVerificationJava7(sslEngine)) {
-            Timber.w("Host Name Verification is not supported, causes insecure HTTPS connection to upstream servers.")
-        }
     }
 
     /**

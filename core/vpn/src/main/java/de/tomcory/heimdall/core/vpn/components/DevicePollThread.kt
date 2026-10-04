@@ -27,9 +27,9 @@ class DevicePollThread internal constructor(
     override fun run() {
         Timber.d("Thread started")
 
-        // allocate the buffer for a single packet and reuse it for all packets (yay, performance!)
-        //TODO: actually implement a reusable buffer
-        val packet = ByteArray(1500)
+        // one buffer for every read: a read returns one packet of at most the interface's MTU
+        // (docs/vpn-mitm-audit.md PKT-64)
+        val packet = ByteArray(VPN_MTU)
 
         // prepare to poll the inputStream
         val deviceFd = StructPollfd()

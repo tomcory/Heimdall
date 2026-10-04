@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented; PKT-61 was measured and closed without a code change. The re-checked low-severity appendix (A-1 to A-19) is addressed by PKT-62 to PKT-64; PKT-62 and PKT-63 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented; PKT-61 was measured and closed without a code change. The re-checked low-severity appendix (A-1 to A-19) is addressed by PKT-62 to PKT-64, all implemented.
 
 ---
 
@@ -4411,6 +4411,86 @@ database schema (destructively, as before); doing them in this order means two v
     - Install a build with a bumped schema version (on a scratch branch, not committed) and
       check that the first `run-stress.sh download` after it no longer has timed-out first
       connections.
+- **Implementation notes (2026-10-04):**
+  - A-6: a new CA's `KeyUsage` is critical, with `keyCertSign`, `cRLSign` and
+    `digitalSignature`. Its `ExtendedKeyUsage` keeps `serverAuth` and `clientAuth` and drops
+    `anyExtendedKeyUsage` (the plan's "at least" option). Dropping the extension entirely
+    would make the CA valid for every purpose again, which is what removing
+    `anyExtendedKeyUsage` is meant to avoid. **Deviation:** the planned test "a leaf
+    certificate still has `serverAuth`" was not written, because leaves never had an
+    `ExtendedKeyUsage`. Giving them one is V-09's subject, which stays deferred. Existing CAs
+    are not regenerated.
+  - A-7: `generateKeyPair()` initialises the generator with `SecureRandom()`;
+    `SECURE_RANDOM_ALGORITHM` is gone.
+  - A-9: `TcpConnection.newInitialSequenceNumber()` draws 32 bits from a shared
+    `SecureRandom`, as an unsigned value in the `Long`.
+  - A-10: `VPN_MTU = 1500` is a top-level constant in `ComponentManager.kt`.
+    `HeimdallVpnService` passes it to `Builder.setMtu()`, and `DevicePollThread` sizes its
+    reused buffer from it. The `TODO` is gone.
+  - A-14: `TcpConnection.buildResetFor(segment)` replaces `buildStrayRst()` and
+    `buildSynRefusal()`:
+    - for a segment with ACK, the reset has sequence number = its acknowledgement number and
+      no ACK;
+    - otherwise, the reset has sequence number 0, ACK set, and acknowledges the segment's
+      sequence number plus its payload length, plus one each for SYN and FIN;
+    - the window is 0.
+    Both stray paths in `TransportLayerConnection` call it.
+  - A-16: `SSLEngineSource.enableHostnameVerification()` sets `endpointIdentificationAlgorithm`
+    on the engine's own parameters and writes them back. It is called in
+    `newSSLEngine(host, port)` before the weak-cipher filter. The throwaway engine that
+    `initialiseSSLContext()` built only to call the old reflective method is gone.
+  - A-18: `launchServiceComponents()` opens the database on the IO dispatcher after reading
+    the Private DNS mode and before `establishInterface()`.
+    - Before the change, the premise was not reproduced on a quiet host:
+      - the old build's start, from "Ready to establish VPN interface" to "Traffic handlers
+        initialised", took 0.52 s normally;
+      - it took 1.63 s after a simulated schema change on a 192 MB database, and 0.76–0.97 s on
+        a 159 MB synthetic one.
+    - With this build, on a heavily loaded host (load average ~8), a schema change on the
+      159 MB database spent **20.5 s** in Room's destructive migration between "MitM scope"
+      and "Beginning interface establishment", so the tunnel did not exist yet. The tunnel
+      was then unserved for 7.06 s, about the same as a normal start under that load. That is
+      the length of the gap seen after PKT-59, so its likely cause was a migration on a busy
+      host. It now happens before the tunnel is up.
+  - Tests:
+    - `CertificateHelperTest` +2: `KeyUsage` is critical with exactly bits 0, 5 and 6; the
+      EKU has `serverAuth` and `clientAuth` but not `anyExtendedKeyUsage`.
+    - New `CaChainValidationTest`: a new CA and a forged leaf validate under PKIX with the CA
+      as the only anchor. With `HEIMDALL_WRITE_CA_CHAIN` set, it writes both as PEM for the
+      device check below.
+    - New `InitialSequenceNumberTest`: values above `0x0FFFFFFF` occur, and all are in the
+      unsigned 32-bit range.
+    - `ConnectionTeardownTest` +2: a bare FIN for an unknown flow draws a RST with ACK,
+      sequence number 0 and the acknowledgement one past the FIN; an ACK draws a RST without
+      ACK, with its acknowledgement number as the sequence number.
+    - `InsecureTrustManagerTest` +1: an upstream engine has endpoint identification `HTTPS`,
+      keeps its ALPN offer, and still has the weak DHE suites filtered out.
+    - In total, 420 `core:vpn` and 18 `app` tests pass. Lint reports nothing new.
+  - Emulator:
+    - `ip link show tun0` shows `mtu 1500`, and ConnectivityService logs `MTU: 1500` for the
+      VPN network.
+    - The full `run-stress.sh` gives 81 passed and 1 failed. The failure is `udp-burst-500`,
+      which fails without the VPN too (emulator NAT, see the baseline above). There were no
+      crash lines.
+    - `emulator-traffic.sh run` is clean. 150 requests were decrypted over 153 TLS
+      connections using the installed (old) CA, so leaves from the changed key generation are
+      accepted.
+  - **Deviation in the CA check:** the planned check "generate a new CA through the adb
+    trigger and install it" was not run on the emulator. It would replace the CA installed
+    in its system store and break decryption for the installed apps until that CA is
+    reinstalled. Instead:
+    - `CaChainValidationTest` checks the chain with the JVM's PKIX validator;
+    - a probe run on the emulator (API 33) with `app_process` validated the same CA and leaf
+      with Conscrypt's `TrustManagerImpl`, Android's own validator: chain OK.
+    To check it with real apps, regenerate the CA through the adb trigger, install it in the
+    system store, and run `run-stress.sh tls,tlsalpn`.
+  - A start-time comparison was made under load, because the slow starts above looked like a
+    regression. This build and the previous commit were installed alternately, three rounds
+    each. They took the same time:
+    - after install: 5.9–7.9 s with this build, 6.5–8.2 s with the previous commit;
+    - restart: 4.0–4.6 s with this build, 3.7–4.3 s with the previous commit.
+    The time goes to GC and the hosts trie, whose build took 1.5–4.6 s, against 0.26–0.38 s
+    on a quiet host.
 - **Commit:** `fix(vpn): tighten CA extensions, ISN range, stray resets and MTU handling`
 
 **Order for PKT-62 to PKT-64:** independent of each other. PKT-63 first, for the logging (A-12),
@@ -4436,8 +4516,10 @@ implementing the second-audit packets. Line numbers are those of 2026-10-04.
 Packets: PKT-62 removes dead code and fixes stale comments (A-2, A-3, A-4, A-5, A-11, A-15);
 implemented 2026-10-04, so those six are resolved.
 PKT-63 keeps traffic out of the logs and fixes smaller robustness issues (A-8, A-12, A-13, A-17,
-A-19); implemented 2026-10-04, so those five are resolved. PKT-64 makes the small protocol and certificate fixes (A-6, A-7, A-9, A-10, A-14, A-16,
-A-18).
+A-19); implemented 2026-10-04, so those five are resolved.
+PKT-64 makes the small protocol and certificate fixes (A-6, A-7, A-9, A-10, A-14, A-16, A-18);
+implemented 2026-10-04, so those seven are resolved. A-18's cause turned out to be a destructive
+migration on a heavily loaded host (see PKT-64's notes).
 
 ### Resolved
 

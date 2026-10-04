@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.mitm
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.fail
 import org.junit.Before
@@ -144,5 +145,21 @@ class InsecureTrustManagerTest {
                 fail("handshake stalled: client=${client.handshakeStatus}, server=${server.handshakeStatus}")
             }
         }
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-64 (A-16) ----
+
+    @Test
+    fun `an upstream engine verifies the hostname and keeps its other parameters`() {
+        val manager = CertificateSniffingMitmManager(Authority.getDefaultInstance(mitmKeyStoreDir), trustAllServers = false)
+        val engine = manager.createServerSSLEngine("example.com", 443, listOf("http/1.1"))!!
+
+        val params = engine.sslParameters
+        assertEquals("HTTPS", params.endpointIdentificationAlgorithm)
+        // set after it, and kept
+        assertEquals(listOf("http/1.1"), params.applicationProtocols.toList())
+        // the weak suites removed after it stay removed
+        assertFalse(engine.enabledCipherSuites.contains("TLS_DHE_RSA_WITH_AES_128_CBC_SHA"))
+        assertFalse(engine.enabledCipherSuites.contains("TLS_DHE_RSA_WITH_AES_256_CBC_SHA"))
     }
 }

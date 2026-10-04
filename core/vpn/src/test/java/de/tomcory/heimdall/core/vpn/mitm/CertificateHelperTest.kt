@@ -183,4 +183,32 @@ class CertificateHelperTest {
             assertTrue("serial must fit in 48 bits: $serial", serial <= 0x0000FFFFFFFFFFFFL)
         }
     }
+
+    // ---- docs/vpn-mitm-audit.md PKT-64 (A-6): the CA's extensions ----
+
+    @Test
+    fun `a new CA has a critical KeyUsage with only the CA bits`() {
+        val dir = createTempDir()
+        val authority = Authority.getDefaultInstance(dir)
+        val cert = CertificateHelper.createRootCertificate(authority, "PKCS12").getCertificate(authority.alias) as X509Certificate
+
+        assertTrue("KeyUsage must be critical", cert.criticalExtensionOIDs.contains("2.5.29.15"))
+        // digitalSignature, keyCertSign and cRLSign; not keyEncipherment or dataEncipherment
+        val expected = BooleanArray(9).also { it[0] = true; it[5] = true; it[6] = true }
+        assertArrayEquals(expected, cert.keyUsage.copyOf(9))
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun `a new CA's ExtendedKeyUsage names TLS purposes but not anyExtendedKeyUsage`() {
+        val dir = createTempDir()
+        val authority = Authority.getDefaultInstance(dir)
+        val cert = CertificateHelper.createRootCertificate(authority, "PKCS12").getCertificate(authority.alias) as X509Certificate
+
+        val purposes = cert.extendedKeyUsage
+        assertTrue(purposes.contains("1.3.6.1.5.5.7.3.1")) // serverAuth
+        assertTrue(purposes.contains("1.3.6.1.5.5.7.3.2")) // clientAuth
+        assertFalse(purposes.contains("2.5.29.37.0")) // anyExtendedKeyUsage
+        dir.deleteRecursively()
+    }
 }

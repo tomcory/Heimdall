@@ -23,6 +23,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.security.SecureRandom
 import java.nio.channels.CancelledKeyException
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
@@ -68,7 +69,7 @@ class TcpConnection internal constructor(
         ?.rawData
         ?.takeIf { it.size == 4 }
         ?.let { ((it[2].toInt() and 0xFF) shl 8) or (it[3].toInt() and 0xFF) }
-    private val ourInitSeqNum = (Math.random() * 0xFFFFFFF).toLong()
+    private val ourInitSeqNum = newInitialSequenceNumber()
 
     // ourSeqNum is advanced both by the InboundTrafficHandler-driven data path (wrapInbound) and
     // by the OutboundTrafficHandler-driven close path (handleFin, on a device-initiated close) -
@@ -1528,24 +1529,43 @@ class TcpConnection internal constructor(
                 }
         }
 
+        /** Source of initial sequence numbers; see [newInitialSequenceNumber]. */
+        private val isnRandom = SecureRandom()
+
         /**
-         * Builds the reset that refuses a connection the device is opening: it acknowledges the
-         * SYN, so the device's connect() fails with "connection refused" at once (the same form
-         * as in [buildRst] before our SYN-ACK).
+         * A random initial sequence number for our side of a connection, from the full 32-bit
+         * space and unpredictable (docs/vpn-mitm-audit.md PKT-64). It used to be drawn from 28
+         * bits with Math.random(). Returned as an unsigned value in a Long, as the sequence
+         * number fields are used.
          */
-        fun buildSynRefusal(synPacket: IpPacket): TcpPacket.Builder? {
-            val syn = synPacket.payload as? TcpPacket ?: return null
-            return TcpPacket.Builder()
-                .srcAddr(synPacket.header.dstAddr)
-                .dstAddr(synPacket.header.srcAddr)
-                .srcPort(syn.header.dstPort)
-                .dstPort(syn.header.srcPort)
-                .sequenceNumber(0)
-                .acknowledgmentNumber(syn.header.sequenceNumber + 1)
+        internal fun newInitialSequenceNumber(): Long = isnRandom.nextInt().toLong() and 0xFFFFFFFFL
+
+        /**
+         * Builds the reset that answers [segment], a segment for a connection that does not exist
+         * (RFC 9293 section 3.10.7.1; docs/vpn-mitm-audit.md PKT-64):
+         *
+         * - If the segment carries ACK, the reset takes its sequence number from the
+         *   segment's acknowledgement number and carries no ACK of its own.
+         * - Otherwise (a SYN, or a bare FIN), the reset has sequence number 0 and acknowledges the
+         *   segment: its sequence number plus its length, counting SYN and FIN as one each. Only
+         *   such a reset is accepted by a device in SYN-SENT, whose connect() then fails with
+         *   "connection refused" at once (the same form as [buildRst] before our SYN-ACK).
+         *
+         * This replaces separate builders for stray segments and for refused SYNs; the one for
+         * stray segments used to leave ACK off for segments without it as well, so the device
+         * ignored those resets.
+         */
+        fun buildResetFor(segment: IpPacket): TcpPacket.Builder? {
+            val tcp = segment.payload as? TcpPacket ?: return null
+            val header = tcp.header
+            val builder = TcpPacket.Builder()
+                .srcAddr(segment.header.dstAddr)
+                .dstAddr(segment.header.srcAddr)
+                .srcPort(header.dstPort)
+                .dstPort(header.srcPort)
                 .dataOffset(5.toByte())
                 .reserved(0.toByte())
                 .urg(false)
-                .ack(true)
                 .psh(false)
                 .rst(true)
                 .syn(false)
@@ -1557,35 +1577,15 @@ class TcpConnection internal constructor(
                 .correctChecksumAtBuild(true)
                 .correctLengthAtBuild(true)
                 .paddingAtBuild(true)
-        }
-
-        fun buildStrayRst(strayPacket: IpPacket): TcpPacket.Builder? {
-            if(strayPacket.payload is TcpPacket) {
-                val tcpPacket = strayPacket.payload as TcpPacket
-                return TcpPacket.Builder()
-                    .srcAddr(strayPacket.header.dstAddr)
-                    .dstAddr(strayPacket.header.srcAddr)
-                    .srcPort(tcpPacket.header.dstPort)
-                    .dstPort(tcpPacket.header.srcPort)
-                    .sequenceNumber(tcpPacket.header.acknowledgmentNumber)
-                    .acknowledgmentNumber(tcpPacket.header.sequenceNumber)
-                    .dataOffset(5.toByte())
-                    .reserved(0.toByte())
-                    .urg(false)
+            return if (header.ack) {
+                builder.sequenceNumber(header.acknowledgmentNumber)
+                    .acknowledgmentNumber(0)
                     .ack(false)
-                    .psh(false)
-                    .rst(true)
-                    .syn(false)
-                    .fin(false)
-                    .window(tcpPacket.header.window)
-                    .urgentPointer(0.toShort())
-                    .padding(ByteArray(0))
-                    .options(ArrayList())
-                    .correctChecksumAtBuild(true)
-                    .correctLengthAtBuild(true)
-                    .paddingAtBuild(true)
             } else {
-                return null
+                val length = (tcp.payload?.length() ?: 0) + (if (header.syn) 1 else 0) + (if (header.fin) 1 else 0)
+                builder.sequenceNumber(0)
+                    .acknowledgmentNumber(header.sequenceNumber + length)
+                    .ack(true)
             }
         }
     }

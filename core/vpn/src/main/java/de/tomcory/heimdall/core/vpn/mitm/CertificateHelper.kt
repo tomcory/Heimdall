@@ -34,7 +34,6 @@ object CertificateHelper {
     }
 
     private const val KEYGEN_ALGORITHM = "RSA"
-    private const val SECURE_RANDOM_ALGORITHM = "SHA1PRNG"
 
     private const val PROVIDER_NAME = BouncyCastleProvider.PROVIDER_NAME
 
@@ -128,19 +127,18 @@ object CertificateHelper {
         // add the Basic Constraints extension to the certificate
         certificateBuilder.addExtension(Extension.basicConstraints, true, BasicConstraints(true))
 
-        // add the Key Usage extension to the certificate
+        // Key Usage: only what a CA does, and critical, as RFC 5280 section 4.2.1.3 asks of a CA
+        // (docs/vpn-mitm-audit.md PKT-64)
         val usage = KeyUsage(KeyUsage.keyCertSign
-                    or KeyUsage.digitalSignature
-                    or KeyUsage.keyEncipherment
-                    or KeyUsage.dataEncipherment
-                    or KeyUsage.cRLSign)
-        certificateBuilder.addExtension(Extension.keyUsage, false, usage)
+                    or KeyUsage.cRLSign
+                    or KeyUsage.digitalSignature)
+        certificateBuilder.addExtension(Extension.keyUsage, true, usage)
 
-        // add the Extended Key Usage extension to the certificate
+        // Extended Key Usage: what the certificates the CA signs are for. Without
+        // anyExtendedKeyUsage, which would allow every purpose and so constrain nothing.
         val purposes = ASN1EncodableVector()
         purposes.add(KeyPurposeId.id_kp_serverAuth)
         purposes.add(KeyPurposeId.id_kp_clientAuth)
-        purposes.add(KeyPurposeId.anyExtendedKeyUsage)
         certificateBuilder.addExtension(Extension.extendedKeyUsage, false, DERSequence(purposes))
 
         // generate the certificate and sign it with the private key
@@ -274,8 +272,8 @@ object CertificateHelper {
     )
     fun generateKeyPair(keySize: Int): KeyPair {
         val generator = KeyPairGenerator.getInstance(KEYGEN_ALGORITHM)
-        val secureRandom = SecureRandom.getInstance(SECURE_RANDOM_ALGORITHM)
-        generator.initialize(keySize, secureRandom)
+        // the platform's default source, not a pinned legacy algorithm (PKT-64)
+        generator.initialize(keySize, SecureRandom())
         return generator.generateKeyPair()
     }
 

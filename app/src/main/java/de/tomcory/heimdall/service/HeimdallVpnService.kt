@@ -22,6 +22,7 @@ import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
+import de.tomcory.heimdall.core.vpn.components.VPN_MTU
 import de.tomcory.heimdall.core.vpn.components.RoomDatabaseConnector
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
@@ -255,6 +256,11 @@ class HeimdallVpnService : VpnService() {
         // the network the device uses without it (docs/vpn-mitm-audit.md PKT-58)
         val strictPrivateDns = isPrivateDnsStrict()
 
+        // Open the database before the interface exists. After a schema change Room's
+        // destructive migration runs on the first access; done later, while the session row is
+        // written, the tunnel would already be up with nothing reading it (PKT-64).
+        withContext(Dispatchers.IO) { database.openHelper.writableDatabase }
+
         // establish the VPN interface
         if (!establishInterface(doMitm)) {
             return false
@@ -441,6 +447,8 @@ class HeimdallVpnService : VpnService() {
             .addDnsServer(dnsServerAddress)
             .addAddress(subnetBaseAddress, subnetPrefix)
             .addRoute(routeBaseAddress, routePrefix)
+            // explicit, and the same value the device reader sizes its buffer by (PKT-64)
+            .setMtu(VPN_MTU)
 
         // Since API 29 a VPN counts as metered unless it says otherwise, and apps then behave as
         // on mobile data even on Wi-Fi (deferred updates, syncs and prefetching), so Heimdall

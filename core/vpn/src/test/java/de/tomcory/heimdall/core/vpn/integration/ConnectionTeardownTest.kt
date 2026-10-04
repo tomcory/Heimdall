@@ -481,6 +481,46 @@ class ConnectionTeardownTest {
         assertTrue("stray reply should be an RST", tcp.header.rst)
     }
 
+    // ---- docs/vpn-mitm-audit.md PKT-64 (A-14): resets for unknown flows, per RFC 9293 ----
+
+    private fun strayReset(segment: org.pcap4j.packet.IpPacket): TcpPacket {
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        val deviceWriter = RecordingDeviceWriter()
+        assertEquals(null, TransportLayerConnection.getInstance(segment, componentManager, deviceWriter.handler))
+        val message = deviceWriter.sentMessages.single()
+        assertEquals(DeviceWriteThread.WRITE_STRAY, message.what)
+        return (message.obj as IpPacket).payload as TcpPacket
+    }
+
+    @Test
+    fun `a bare FIN for an unknown flow draws a reset that acknowledges it`() {
+        val fin = PacketFixtures.buildTcpDataPacket(
+            localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address, localPort = 41502,
+            remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address, remotePort = 443,
+            seq = 5000, ack = 0, payload = ByteArray(0), pshFlag = false, ackFlag = false, finFlag = true
+        )
+        val rst = strayReset(fin)
+
+        assertTrue(rst.header.rst)
+        assertTrue("a reset answering a segment without ACK must carry ACK, or the device ignores it", rst.header.ack)
+        assertEquals(0, rst.header.sequenceNumber)
+        assertEquals("the FIN counts as one", 5001, rst.header.acknowledgmentNumber)
+    }
+
+    @Test
+    fun `an ACK for an unknown flow draws a reset with its acknowledgement number as sequence number`() {
+        val ack = PacketFixtures.buildTcpDataPacket(
+            localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address, localPort = 41503,
+            remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address, remotePort = 443,
+            seq = 5000, ack = 7777, payload = ByteArray(0), pshFlag = false
+        )
+        val rst = strayReset(ack)
+
+        assertTrue(rst.header.rst)
+        assertFalse(rst.header.ack)
+        assertEquals(7777, rst.header.sequenceNumber)
+    }
+
     @Test
     fun `a FIN-ACK for an unknown flow is logged with both flags`() {
         // docs/vpn-mitm-audit.md PKT-63 (A-13): operator precedence used to make this log "FIN"

@@ -468,13 +468,13 @@ abstract class TransportLayerConnection protected constructor(
                             "ACK".takeIf { tcpPacket.header.ack }
                         ).joinToString("-")
                         Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
-                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
+                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildResetFor(initialPacket))))
                         null
                     } else if(refusesDnsOverTls(initialPacket, tcpPacket, componentManager)) {
                         // Private DNS in opportunistic mode: the resolver then uses plain DNS on
                         // the VPN, which fills the DNS cache (docs/vpn-mitm-audit.md PKT-58)
                         Timber.d("Refusing DNS over TLS to ${initialPacket.header.dstAddr.hostAddress}:853")
-                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildSynRefusal(initialPacket))))
+                        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildResetFor(initialPacket))))
                         null
                     } else {
                         TcpConnection(
