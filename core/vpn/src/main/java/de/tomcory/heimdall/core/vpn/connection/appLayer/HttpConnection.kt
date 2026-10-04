@@ -2,6 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.appLayer
 
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -459,6 +460,11 @@ class HttpConnection(
                     )
                     Timber.d("http$id persisting request with ID $requestId")
                     pendingId.complete(requestId)
+                } catch (e: CancellationException) {
+                    // given up by the safety bound in queueWrite(), which logs it. The response
+                    // must see a failure, not a cancellation of its own (PKT-63).
+                    pendingId.completeExceptionally(IllegalStateException("the request's write was given up", e))
+                    throw e
                 } catch (e: Throwable) {
                     Timber.e(e, "http$id Error persisting HTTP request")
                     pendingId.completeExceptionally(e)
@@ -482,6 +488,8 @@ class HttpConnection(
                 // dropped for being late, as it was after a 30 s wait before (PKT-60).
                 val requestId = try {
                     pendingId.await()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Throwable) {
                     Timber.e(e, "http$id The request this response answers could not be written, discarding the response")
                     return@queueWrite
@@ -506,6 +514,8 @@ class HttpConnection(
                         initiatorId = encryptionLayer.transportLayer.appId ?: 0,
                         initiatorPkg = encryptionLayer.transportLayer.appPackage ?: ""
                     )
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Timber.e(e, "http$id Error persisting HTTP response")
                 }
@@ -517,8 +527,7 @@ class HttpConnection(
         val endOfStatusLine = message.indexOf("\r\n")
 
         if(endOfStatusLine < 0) {
-            Timber.e("http$id Invalid status line, no newline found")
-            Timber.e("http$id $message")
+            Timber.e("http$id Invalid status line, no newline found (${describeForLog(message)})")
             return null
         }
 
@@ -555,13 +564,23 @@ class HttpConnection(
         return name
     }
 
+    /**
+     * What may be logged about a message that could not be parsed (docs/vpn-mitm-audit.md
+     * PKT-63): its length and its first token (a method, or `HTTP/1.1`), cut short. Not the
+     * rest: the request line's query string and the headers (`Cookie`, `Authorization`) carry
+     * secrets, and logcat can be read by other apps with `READ_LOGS` and ends up in bug reports.
+     */
+    private fun describeForLog(message: String): String {
+        val firstToken = message.substringBefore(' ').substringBefore("\r\n").take(16)
+        return "${message.length} chars, starting with '$firstToken'"
+    }
+
     private fun parseHeaders(message: String): Map<String, String>? {
         val rawHeadersIndex = message.indexOf("\r\n")
         val bodyIndex = message.indexOf("\r\n\r\n")
 
         if(rawHeadersIndex < 0 || bodyIndex < 0 || rawHeadersIndex + 2 >= bodyIndex) {
-            Timber.e("http$id parseHeaders: Invalid HTTP message, no headers found")
-            Timber.w("http$id $message")
+            Timber.e("http$id parseHeaders: Invalid HTTP message, no headers found (${describeForLog(message)})")
             return emptyMap()
         }
 

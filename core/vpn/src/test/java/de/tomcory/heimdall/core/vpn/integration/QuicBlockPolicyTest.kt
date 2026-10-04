@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.integration
 
+import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
@@ -196,7 +197,7 @@ class QuicBlockPolicyTest {
     @Test
     fun `a host with learned passthrough is forwarded`() {
         start()
-        componentManager.tlsPassthroughCache.put(1000, "pinned.example")
+        componentManager.tlsPassthroughCache.put(1000, "pinned.example", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         val datagrams = flight("pinned.example", listOf("h3"))
         send(datagrams)
         assertForwarded(datagrams)
@@ -231,7 +232,7 @@ class QuicBlockPolicyTest {
         start()
         // the DNS cache knows the address under another name, which ECH keeps as the hostname
         componentManager.dnsCache.put(remoteAddr.hostAddress!!, "dns-name.example")
-        componentManager.tlsPassthroughCache.put(1000, "public-name.example")
+        componentManager.tlsPassthroughCache.put(1000, "public-name.example", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
 
         val datagrams = flight("public-name.example", listOf("h3"), ech = true)
         val connection = send(datagrams)

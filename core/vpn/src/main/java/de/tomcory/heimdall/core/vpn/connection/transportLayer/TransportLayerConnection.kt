@@ -462,7 +462,11 @@ abstract class TransportLayerConnection protected constructor(
                         // another reset (docs/vpn-mitm-audit.md PKT-44).
                         null
                     } else if(tcpPacket.header.fin || tcpPacket.header.ack) {
-                        val headerString = if(tcpPacket.header.fin) "FIN" else "" + if(tcpPacket.header.ack) "ACK" else "" + if (tcpPacket.header.rst) "RST" else ""
+                        // e.g. "FIN-ACK" (docs/vpn-mitm-audit.md PKT-63; resets were handled above)
+                        val headerString = listOfNotNull(
+                            "FIN".takeIf { tcpPacket.header.fin },
+                            "ACK".takeIf { tcpPacket.header.ack }
+                        ).joinToString("-")
                         Timber.w("Resetting unknown TCP packet ($headerString) to ${initialPacket.header.dstAddr.hostAddress}:${tcpPacket.header.dstPort.valueAsInt()} ($hostname)")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildStrayRst(initialPacket))))
                         null

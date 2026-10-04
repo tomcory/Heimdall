@@ -49,7 +49,7 @@ class TlsPassthroughCache(
     }
 
     /** Marks a pair for passthrough directly, without the thresholds of [recordFailure]. */
-    fun put(initiator: Int, hostname: String, reason: PassthroughReason = PassthroughReason.CLIENT_HANDSHAKE_ERROR) {
+    fun put(initiator: Int, hostname: String, reason: PassthroughReason) {
         lock.write {
             cache[TlsPassthroughCacheEntry(initiator, hostname)] = reason
         }

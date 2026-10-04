@@ -1,5 +1,7 @@
 package de.tomcory.heimdall.core.vpn.connection.appLayer
 
+import org.junit.Assert.assertTrue
+import de.tomcory.heimdall.core.vpn.integration.support.RecordingTree
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
@@ -120,8 +122,16 @@ class HttpPersistenceTest {
         assertEquals("the stuck request write and the response behind it are waiting", 2, queuedWrites(http))
 
         // after the 10-minute bound the stuck write is given up, and its response with it
-        advanceTimeBy(2 * 60_000L)
-        runCurrent()
+        val tree = RecordingTree().plant()
+        try {
+            advanceTimeBy(2 * 60_000L)
+            runCurrent()
+            // the request write rethrows the cancellation, so the bound sees it (PKT-63)
+            assertTrue("the safety bound must say that it gave a write up", tree.anyContains("did not finish within 10 minutes"))
+            assertTrue("the response must be dropped as a failed request, not silently", tree.anyContains("could not be written, discarding the response"))
+        } finally {
+            tree.uproot()
+        }
         assertEquals(0, queuedWrites(http))
         verifyResponses(0)
 

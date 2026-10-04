@@ -6,6 +6,7 @@ import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConn
 import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
 import de.tomcory.heimdall.core.vpn.mitm.Alpn
 import de.tomcory.heimdall.core.util.ByteUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -160,6 +161,9 @@ class TlsConnection(
             try {
                 if(log) Timber.d("tls$id unwrapOutbound of ${payload.size} bytes in state $state")
                 prepareRecords(payload, true)
+            } catch (e: CancellationException) {
+                // the connection closed itself; there is nothing left to clean up (PKT-63)
+                throw e
             } catch (e: Throwable) {
                 // moving this work onto connectionScope means the calling thread
                 // (OutboundTrafficHandler) returns immediately after enqueueing it and can no
@@ -208,6 +212,8 @@ class TlsConnection(
             try {
                 if(log) Timber.d("tls$id unwrapInbound of ${payload.size} bytes in state $state")
                 prepareRecords(payload, false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id unwrapInbound failed, closing connection")
                 closeConnection()
@@ -534,6 +540,8 @@ class TlsConnection(
             try {
                 setupServerSSLEngine()
                 continueHandshake(handshakeStatus = SSLEngineResult.HandshakeStatus.NEED_WRAP, isClientFacing = false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id initiateServerHandshake failed, closing connection")
                 closeConnection()
@@ -556,6 +564,8 @@ class TlsConnection(
                 // now that the client-facing handshake has started, replay (in order) any outbound
                 // records that arrived earlier, before it was ready for them
                 replayBufferedOutboundRecords()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Timber.e(e, "tls$id initiateClientHandshake failed, closing connection")
                 closeConnection()
@@ -1181,6 +1191,11 @@ class TlsConnection(
         val direction = if(isOutbound) "outbound" else "inbound"
 
         val payload = checkForSnippets(rawPayload, isOutbound)
+        if(payload.isEmpty()) {
+            // nothing to do; the transport layer passes no empty payloads, but payload[0] below
+            // must not be able to throw (docs/vpn-mitm-audit.md PKT-63)
+            return
+        }
         val recordType = payload[0].toInt()
         var remainingBytes = if(isOutbound) remainingOutboundBytes else remainingInboundBytes
         val cache = if(isOutbound) outboundCache else inboundCache
@@ -1247,8 +1262,10 @@ class TlsConnection(
 
             // make sure that we have a valid TLS record...
             if(recordType !in 0x14..0x17) {
-                Timber.e("tls$id prepareRecords ($direction) Invalid TLS record type: ${ByteUtils.bytesToHex(recordType.toByte())}")
-                Timber.e("tls$id ${ByteUtils.bytesToHex(payload)}")
+                // the payload itself is traffic, possibly plaintext that was taken for TLS, so it
+                // is only logged when per-record logging is on (docs/vpn-mitm-audit.md PKT-63)
+                Timber.e("tls$id prepareRecords ($direction) Invalid TLS record type 0x%02x in a payload of %d bytes", recordType and 0xFF, payload.size)
+                if(log) Timber.e("tls$id ${ByteUtils.bytesToHex(payload)}")
                 return
             }
 

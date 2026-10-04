@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 
+import de.tomcory.heimdall.core.vpn.integration.support.RecordingTree
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.metadata.TlsPassthroughCache
@@ -278,6 +279,27 @@ class TlsRecordHandlingTest {
         // Type 0x13 is not in 0x14..0x17
         val invalid = byteArrayOf(0x13, 0x03, 0x03, 0x00, 0x02, 0x01, 0x02)
         tlsConnection.unwrapOutbound(invalid)
+        verify(exactly = 0) { transportLayer.wrapOutbound(any()) }
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-63 ----
+
+    @Test
+    fun `an invalid record type is logged without the payload`() {
+        val tree = RecordingTree().plant()
+        try {
+            val invalid = byteArrayOf(0x13, 0x03, 0x03, 0x00, 0x02, 0x5A, 0x7B)
+            tlsConnection.unwrapOutbound(invalid)
+            assertTrue(tree.anyContains("Invalid TLS record type 0x13 in a payload of 7 bytes"))
+            assertFalse("the payload must not be dumped while per-record logging is off", tree.anyContains("5A 7B"))
+        } finally {
+            tree.uproot()
+        }
+    }
+
+    @Test
+    fun `an empty payload is handled without an exception`() {
+        tlsConnection.prepareRecords(ByteArray(0), true)
         verify(exactly = 0) { transportLayer.wrapOutbound(any()) }
     }
 

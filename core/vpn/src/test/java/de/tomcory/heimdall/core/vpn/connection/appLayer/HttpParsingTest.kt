@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.connection.appLayer
 
+import de.tomcory.heimdall.core.vpn.integration.support.RecordingTree
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DatabaseConnector
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
@@ -115,6 +116,23 @@ class HttpParsingTest {
     fun `a connection that has a hostname keeps it`() {
         httpConnection.unwrapOutbound("GET / HTTP/1.1\r\nHost: other.example\r\n\r\n".toByteArray())
         verify(exactly = 0) { transportLayer.fillMissingRemoteHost(any()) }
+    }
+
+    // ---- docs/vpn-mitm-audit.md PKT-63: what an unparseable message leaves in the log ----
+
+    @Test
+    fun `a message that cannot be parsed is logged without its content`() {
+        val tree = RecordingTree().plant()
+        try {
+            // no header block: the request line alone, with a secret in its query string
+            httpConnection.unwrapOutbound("GET /login?token=s3cr3t HTTP/1.1\r\n\r\n".toByteArray())
+            Thread.sleep(300)
+            assertTrue(tree.anyContains("no headers found"))
+            assertTrue(tree.anyContains("starting with 'GET'"))
+            assertFalse("the request line's query string must not be logged", tree.anyContains("s3cr3t"))
+        } finally {
+            tree.uproot()
+        }
     }
 
     @Test

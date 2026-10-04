@@ -1,5 +1,6 @@
 package de.tomcory.heimdall.core.vpn.integration
 
+import de.tomcory.heimdall.core.vpn.integration.support.RecordingTree
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import java.util.concurrent.atomic.AtomicInteger
 import org.pcap4j.packet.Packet
@@ -478,6 +479,24 @@ class ConnectionTeardownTest {
         assertEquals(DeviceWriteThread.WRITE_STRAY, message.what)
         val tcp = (message.obj as IpPacket).payload as TcpPacket
         assertTrue("stray reply should be an RST", tcp.header.rst)
+    }
+
+    @Test
+    fun `a FIN-ACK for an unknown flow is logged with both flags`() {
+        // docs/vpn-mitm-audit.md PKT-63 (A-13): operator precedence used to make this log "FIN"
+        val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
+        val tree = RecordingTree().plant()
+        try {
+            val finAck = PacketFixtures.buildTcpDataPacket(
+                localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address, localPort = 41501,
+                remoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address, remotePort = 443,
+                seq = 1, ack = 1, payload = ByteArray(0), pshFlag = false, finFlag = true
+            )
+            TransportLayerConnection.getInstance(finAck, componentManager, RecordingDeviceWriter().handler)
+            assertTrue(tree.lines.toString(), tree.anyContains("Resetting unknown TCP packet (FIN-ACK)"))
+        } finally {
+            tree.uproot()
+        }
     }
 
     // ---- docs/vpn-mitm-audit.md PKT-44: telling the device about failures of the outward-facing connection ----

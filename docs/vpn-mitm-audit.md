@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented; PKT-61 was measured and closed without a code change. The re-checked low-severity appendix (A-1 to A-19) is addressed by PKT-62 to PKT-64; PKT-63 is implemented.
 
 ---
 
@@ -135,7 +135,7 @@ dead code, misleading comments — see the Appendix, not given a full write-up h
 | V-64 | M | HTTP bodies are stored as UTF-8-decoded text: binary and compressed bodies are irreversibly corrupted and take twice their size, which fills the database |
 | V-65 | M | Under load, request rows are written more than 30 s late, and responses that wait longer than that for their request are discarded |
 | V-66 | M | The VPN network is reported as metered, so apps and the system treat an unmetered Wi-Fi as metered while Heimdall runs |
-| V-67 | M | A new UDP flow, including every plain DNS query, is still set up with blocking binder calls on the thread that handles every packet from the device |
+| V-67 | L | A new UDP flow, including every plain DNS query, is still set up with blocking binder calls on the thread that handles every packet from the device (lowered from M on 2026-10-04: measured at a few milliseconds per flow, see PKT-61) |
 | V-68 | H | About one DNS query in 256 is taken for TLS and swallowed, so the lookup fails until the resolver retries (found while implementing PKT-58, fixed by it) |
 
 ---
@@ -1635,6 +1635,10 @@ app starting) is the UDP equivalent.
 **Recommendation:** set UDP flows up asynchronously like TCP: queue the datagrams that arrive
 until the channel is connected. Short-cut DNS flows, which need no app lookup before the query
 can be forwarded (PKT-61).
+
+**Measured 2026-10-04 (PKT-61):** the setup costs 1.5–3.9 ms per flow at the median and at
+most 12 ms. PKT-41 had already moved the database insert, the expensive part, off the thread.
+Lowered to Low; PKT-61 was closed without a code change.
 
 ### V-68 — One DNS query in 256 is taken for TLS (High)
 
@@ -4198,7 +4202,28 @@ remaining four changes the database version.
   - `QuicBlockPolicyTest` still passes, including a block decided before setup finished.
   - Device: the measurement above again, then the full stress suite (`udp` tests) and the
     `quic` and `dns` groups of `emulator-traffic.sh`.
-- **Commit:** `perf(vpn): set up UDP flows off the thread that handles the device's packets`
+- **Implementation notes (2026-10-04): measured, then closed without a code change.**
+  - Measurement, as planned, with temporary timing around each step of `UdpConnection`'s
+    constructor (removed again). The emulator ran `emulator-traffic.sh run dns quic apps`, which
+    starts the Play Store and YouTube, and `run-stress.sh udp`. Times are per flow, on the thread
+    that handles the device's packets:
+
+    | | Flows | App lookup p50 / p90 / max | Socket open, protect, connect p50 / p90 / max | Registration p50 / p90 / max | Total p50 / p90 / max |
+    |---|---|---|---|---|---|
+    | Traffic script, DNS flows | 23 | 0.4 / 1.7 / 10.2 ms | 0.6 / 1.3 / 1.7 ms | 0.2 / 0.4 / 1.3 ms | 1.4 / 2.4 / 10.7 ms |
+    | Traffic script, other flows (QUIC, NTP, app starts) | 13 | 0.4 / 0.6 / 0.6 ms | 0.7 / 1.9 / 5.0 ms | 0.2 / 0.3 / 0.7 ms | 1.5 / 3.7 / 5.6 ms |
+    | `run-stress.sh udp` | 108 | 0.9 / 1.5 / 4.7 ms | 1.9 / 3.6 / 8.1 ms | 0.5 / 1.2 / 9.4 ms | 3.9 / 7.0 / 12.0 ms |
+
+    The package lookup took under 0.4 ms in every case, and the database insert has been
+    asynchronous since PKT-41. For comparison, TCP setup on the thread before PKT-41 took
+    12.9 ms at the median, 384 ms at p99 and up to 2,466 ms. A burst of 20 DNS lookups now
+    holds the packet thread for roughly 30–80 ms in total.
+  - Decision (2026-10-04): not worth the change. The asynchronous version would queue datagrams
+    until setup completes and make QUIC's scope decision wait for it. That adds new failure
+    modes to the UDP and QUIC paths to remove a few milliseconds per flow. V-67 is lowered to
+    Low and stays open in the register. If profiling a real device ever shows these calls
+    adding up, this packet is still the plan.
+- **Commit:** none (no code change).
 
 **Order for PKT-53 to PKT-61:** PKT-53 and PKT-54 first (High). PKT-55 next: it is small,
 and it makes what apps send under Heimdall closer to what they send without it, which every
@@ -4206,6 +4231,165 @@ later measurement benefits from. PKT-56 before PKT-57, which relies on PKT-56's 
 HTTP/2-only servers and on its `passthroughReason` column. PKT-58 is independent. PKT-59 before
 PKT-60, which starts by measuring again after PKT-59. PKT-61 last. PKT-56 and PKT-59 change the
 database schema (destructively, as before); doing them in this order means two version bumps.
+
+### PKT-62 — Remove dead code and stale comments in the MitM package
+
+- **Priority:** Low · **Depends on:** none
+- **Resolves:** A-2, A-3, A-4, A-5, A-11, A-15
+- **Approach:**
+  - Delete the dead files: `mitm/nio/NioSslServer.java`, `mitm/nio/NioSslClient.java` and
+    `mitm/nio/NioSslPeer.kt` (only those two use it), and in `app/src/test`, the fully
+    commented-out `DirectHttpTest.kt` and `TimberExtension.kt` (A-2).
+  - Delete `CertificateSniffingMitmManager.createSingleton()` / `getSingleton()` and their
+    companion object, together with their only caller, `Authority.generateCertificate()` and
+    any helper only it uses (`getStringFromFile()`, if nothing else calls it). That also
+    removes the swallowed `""` failure of A-11 (A-3).
+  - Delete `KeyStoreHelper.initializeServerCertificates()`, which writes a leaf certificate's
+    private key unencrypted and has no callers (A-4).
+  - Delete `CertificateSniffingMitmManager.createServerSSLSocket()` (both overloads) and
+    `SSLEngineSource.newSSLSocket()` (both), which only reference each other (A-15).
+  - Replace `e.printStackTrace()` in `Authority.aliasFile()` with `Timber.e(e, ...)` (A-11).
+  - Fix the stale comments: `SSLEngineSource.kt:155` (the key size is
+    `CertificateHelper.FAKE_KEY_SIZE`, 2048; drop the SHA1PRNG remark, or fix it with PKT-64),
+    and `CertificateSniffingMitmManager.kt:60-63` (say why the upstream CN and SANs are copied:
+    the forged certificate must match what the client asked for) (A-5).
+  - Before deleting, check once more with a repository-wide search that nothing, including
+    `app` and the tests, references what goes.
+- **Files:** `core/vpn/.../mitm/nio/*` (deleted), `mitm/CertificateSniffingMitmManager.kt`,
+  `mitm/Authority.kt`, `mitm/KeyStoreHelper.kt`, `mitm/SSLEngineSource.kt`;
+  `app/src/test/.../DirectHttpTest.kt` and `TimberExtension.kt` (deleted).
+- **Tests:** nothing new; the change removes code. All `core:vpn` and `app` tests pass, and
+  `./gradlew build` (with lint) succeeds. Device: `emulator-traffic.sh run` and
+  `run-stress.sh tls,tlsbulk` are clean, and the CA (generated through the adb trigger, see
+  `docs/ca-adb-trigger-plan.md`) is unaffected: an existing install keeps its CA and
+  intercepts as before.
+- **Commit:** `refactor(vpn): remove dead MitM code and fix stale comments`
+
+### PKT-63 — Keep traffic out of the logs, and smaller robustness fixes
+
+- **Priority:** Low (A-12 is a privacy matter and the most worth doing) · **Depends on:** none
+- **Resolves:** A-8, A-12, A-13, A-17, A-19
+- **Approach:**
+  - A-12: log no traffic outside the `log` flag. In `TlsConnection.kt:1250-1251` (invalid
+    record type), log the direction, the record type byte and the payload length; the full hex
+    dump only `if(log)`. In `HttpConnection.kt:521` and `:564` (unparseable status line or
+    headers), log the length and at most the first line, cut short (e.g. 80 characters), and
+    never the header block, which can hold `Cookie` and `Authorization`. Check the rest of
+    `core:vpn` for the same pattern (`Timber.*\$message`, `bytesToHex` outside `if(log)`) and
+    treat what turns up the same way.
+  - A-13: build `headerString` in `TransportLayerConnection.getInstance()` from the flags with
+    `listOfNotNull(...).joinToString("-")`, so that a FIN-ACK logs as `FIN-ACK`.
+  - A-8: return early from `TlsConnection.prepareRecords()` for an empty payload, before
+    `payload[0]`.
+  - A-17: where a coroutine catches `Throwable`, catch `CancellationException` first. In
+    `HttpConnection`'s request write, fail the deferred (so its response is dropped, as now)
+    and rethrow, so that PKT-60's safety bound sees the cancellation and logs that the write
+    was given up. In `TlsConnection` (`:163, :211, :537, :559`), rethrow it after the cleanup
+    that already happens there.
+  - A-19: make the reason of `TlsPassthroughCache.put()` a required parameter, and pass it in
+    the tests that call it.
+- **Files:** `connection/encryptionLayer/TlsConnection.kt`, `connection/appLayer/HttpConnection.kt`,
+  `connection/transportLayer/TransportLayerConnection.kt`, `metadata/TlsPassthroughCache.kt`, and
+  the tests that call `put()`.
+- **Tests:**
+  - `HttpParsingTest`: a request with an unparseable header block and a `Cookie` header leaves
+    no log line containing the cookie. Plant a Timber tree that records the lines.
+  - `TlsRecordHandlingTest`: an invalid record type logs no hex unless `log` is on, and an
+    empty payload is handled without an exception.
+  - `HttpPersistenceTest`: with a request write that never returns, the "did not finish" error
+    is logged when the safety bound gives the write up (recording tree), as well as dropping the
+    response.
+  - Device: `run-stress.sh tls,tlsbulk,keepalive` and `emulator-traffic.sh run`, then search
+    logcat for request header values the tests send (e.g. `User-Agent: heimdall-stress`) and
+    for long hex runs; none may appear.
+- **Implementation notes (2026-10-04):**
+  - A-12: `TlsConnection` logs an invalid record type as type and payload length; the hex dump
+    only `if(log)`. `HttpConnection`'s two parse-failure logs go through a new
+    `describeForLog()`: the message length and its first token, at most 16 characters (the method,
+    or `HTTP/1.1`). That is stricter than the plan's "first line, cut short": a request line
+    carries the path, and query strings carry tokens. A search of `core:vpn` for traffic in
+    logs outside `if(log)` (`bytesToHex`, `$message`, payloads, header blocks) found no other
+    case. QUIC's one line per flow with SNI and ALPN is connection metadata, at the same level
+    as the existing "connection to host" lines, and was left.
+  - A-13: `headerString` is built with `listOfNotNull(...).joinToString("-")`.
+  - A-8: `prepareRecords()` returns early for an empty payload.
+  - A-17: `CancellationException` is caught before `Throwable` and rethrown in
+    `HttpConnection`'s request write, response wait and response write, and in `TlsConnection`'s
+    four coroutines. The request write fails its deferred with an `IllegalStateException`
+    wrapping the cancellation, so the response treats it as a failed request (logged and
+    dropped) rather than as a cancellation of its own. Checked against the old code: the
+    safety bound's log already appeared there, because the swallowed cancellation still ended
+    `withTimeoutOrNull`. So this is defensive. The `TlsConnection` coroutines do not suspend
+    today, so they cannot be cancelled mid-way either.
+  - A-19: `TlsPassthroughCache.put()` requires its reason; 14 test calls pass it.
+  - Tests: new `RecordingTree` (test support). `TlsRecordHandlingTest` +2 (no hex for an
+    invalid record type; an empty payload). `HttpParsingTest` +1 (a request line with
+    `?token=s3cr3t` and no headers is logged without the token). `ConnectionTeardownTest` +1
+    (a FIN-ACK for an unknown flow logs as `FIN-ACK`). `HttpPersistenceTest`'s stuck-write
+    test now also checks both log lines. Against the old main sources, the first four fail and
+    the last passes, as explained under A-17. 413 `core:vpn` and 18 `app` tests pass.
+  - Emulator: `run-stress.sh tls,tlsbulk,keepalive,tlsalpn` 28/28 and `emulator-traffic.sh run`
+    clean. In both logcats, Heimdall's lines contain no request header values (`User-Agent`,
+    `heimdall-stress`, `Cookie`, `Authorization`) and no hex run of 24 bytes or more. These logs
+    only ever appeared on parse failures, so a clean run is the expected outcome, not a
+    before/after comparison; the unit tests cover the failure paths.
+- **Commit:** `fix(vpn): keep traffic out of error logs and rethrow cancellation`
+
+### PKT-64 — Small protocol and certificate fixes
+
+- **Priority:** Low · **Depends on:** none; best after PKT-62 (touches the same MitM files)
+- **Resolves:** A-6, A-7, A-9, A-10, A-14, A-16, A-18
+- **Approach:**
+  - A-6: for newly generated CAs, mark `KeyUsage` critical and limit it to what a CA needs
+    (`keyCertSign`, `cRLSign`, `digitalSignature`), and drop `ExtendedKeyUsage` from the CA, or
+    at least `anyExtendedKeyUsage` (`CertificateHelper.kt:132-144`). Leaf certificates keep
+    `serverAuth`. An existing CA is not regenerated: V-04/V-05 keep it stable on purpose. A user
+    who wants the new extensions regenerates the CA (and installs it again).
+  - A-7: generate keys with `SecureRandom()` instead of `SecureRandom.getInstance("SHA1PRNG")`
+    (`CertificateHelper.kt:37, 277`), and remove the constant.
+  - A-9: draw the initial sequence number from the full 32-bit range with a shared
+    `SecureRandom` (`TcpConnection.kt:71`), as an unsigned value in the `Long`.
+  - A-10: set the VPN interface's MTU explicitly (`Builder.setMtu`, 1500, as a constant in
+    `core:vpn`), and size `DevicePollThread`'s read buffer from the same constant, removing the
+    `TODO`. Keep the buffer reused across reads as now.
+  - A-14: build stray resets per RFC 9293 §3.10.7.1. For a segment with ACK, as now: sequence
+    number = its acknowledgement number, no ACK. For one without ACK: sequence number 0, ACK set,
+    acknowledgement number = its sequence number plus its length (plus one each for SYN and
+    FIN). Merge `buildStrayRst()` and PKT-58's `buildSynRefusal()` into this one function.
+  - A-16: replace `SSLEngineSource.tryHostNameVerificationJava7()` with a direct call:
+    `engine.sslParameters = engine.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }`.
+    That keeps the engine's other parameters (the method is available on every supported API
+    level).
+  - A-18: open the database before establishing the VPN interface: in
+    `HeimdallVpnService.launchServiceComponents()`, before `establishInterface()`, touch it on
+    the IO dispatcher (e.g. `database.openHelper.writableDatabase`). A destructive migration
+    then runs while the device's traffic still bypasses the VPN, rather than while the tunnel
+    is up and nobody reads it.
+- **Files:** `mitm/CertificateHelper.kt`, `mitm/SSLEngineSource.kt`,
+  `connection/transportLayer/TcpConnection.kt`, `components/DevicePollThread.kt`,
+  `components/ComponentManager.kt` (if the MTU constant lives there),
+  `app/.../service/HeimdallVpnService.kt`.
+- **Tests:**
+  - `CertificateHelperTest`: a new CA has a critical `KeyUsage` with exactly the CA bits, and no
+    `anyExtendedKeyUsage`; a leaf certificate still has `serverAuth`.
+  - `TcpConnectionSetupTest` (or a small unit test): initial sequence numbers spread over the
+    full 32-bit range (a sample of them includes values above `0x0FFFFFFF`).
+  - `ConnectionTeardownTest`: a bare FIN for an unknown flow draws a reset with ACK set and the
+    acknowledgement number one past the FIN; an ACK for an unknown flow draws one as before.
+  - `InsecureTrustManagerTest` / a new test: an upstream engine from `SSLEngineSource` has
+    endpoint identification `HTTPS` and keeps the cipher suites set before it.
+  - Device:
+    - `ip link show tun0` shows the explicit MTU, and the full stress suite passes.
+    - Generate a new CA through the adb trigger and install it; `run-stress.sh tls,tlsalpn` and
+      `emulator-traffic.sh run` pass with it, so Android accepts the stricter extensions.
+    - Install a build with a bumped schema version (on a scratch branch, not committed) and
+      check that the first `run-stress.sh download` after it no longer has timed-out first
+      connections.
+- **Commit:** `fix(vpn): tighten CA extensions, ISN range, stray resets and MTU handling`
+
+**Order for PKT-62 to PKT-64:** independent of each other. PKT-63 first, for the logging (A-12),
+which is the only item with a privacy impact. PKT-62 before PKT-64, which edits the same MitM
+files and is easier to review once the dead code around them is gone.
 
 **Deferred / lower priority (V-07, V-08, V-09, V-17, V-26, V-27, V-28):** each is real but either
 narrow-trigger (V-07 needs a CN shared across differing-SAN certs within a 5-minute window; V-17
@@ -4219,58 +4403,110 @@ after PKT-01 through PKT-25 land.
 
 ## Appendix — low-severity / code smell (not given full packets)
 
-- **Debug scaffolding in production `TlsConnection`:** `System.err.println(...)` calls plus a
-  12-frame `Thread.currentThread().stackTrace` dump on *every* `closeConnection()`
-  (`TlsConnection.kt:437-438`), and two more `System.err.println` sites (`:411`, `:416`, `:710`),
-  alongside a hardcoded `private val log = true` (`:67`) that unconditionally enables very
-  verbose per-record `Timber.d` logging (including full hex dumps). Strip the `System.err`
-  lines and make `log` a build-variant/remote-config flag rather than a hardcoded `true`.
-- **Dead commented-out files:** `mitm/nio/NioSslServer.java` (242 lines, entirely a commented-out
-  class body past line 30) and `mitm/nio/NioSslClient.java` (182 lines, same shape). Delete or
-  restore — as-is they're pure dead weight.
-- **Unused/unsynchronized singleton:** `CertificateSniffingMitmManager.createSingleton`/
-  `getSingleton` (`:96-110`) has no locking around the write and isn't used in production —
-  `ComponentManager.kt:77` constructs `CertificateSniffingMitmManager(authority)` directly. The
-  only other reference repo-wide is `app/src/test/java/de/tomcory/heimdall/DirectHttpTest.kt`,
-  which imports `de.tomcory.heimdall.vpn.mitm.Authority` — a package path that doesn't exist
-  (the real package is `de.tomcory.heimdall.core.vpn.mitm.Authority`) — this test is stale/dead
-  and won't compile if it's ever included in a build.
-- **Latent plaintext private-key export:** `KeyStoreHelper.initializeServerCertificates`
-  (`:71-93`) writes a per-host leaf certificate's private key to an unencrypted PEM file
-  (`exportPem(authority.aliasFile("-$commonName-key.pem"), key)`, `:91`) with the hostname in the
-  filename. No callers found anywhere in the repo today — dead code, but a latent
-  plaintext-key-leak if it's ever wired up.
-- **Stale comments:** `SSLEngineSource.kt:159-166`'s doc claims "Generates an 1024 bit RSA key
-  pair using SHA1PRNG"; the actual key size (`CertificateHelper.FAKE_KEY_SIZE`) is 2048.
-  `CertificateSniffingMitmManager.kt:51-54`'s comment argues using the upstream CN/SAN "is not
-  necessary" directly above code that does exactly that.
-- **CA cert extension hygiene:** `KeyUsage` is added non-critical (`false` at
-  `CertificateHelper.kt:135`) where RFC 5280 §4.2.1.3 recommends critical for a CA; the CA's
-  `ExtendedKeyUsage` includes `KeyPurposeId.anyExtendedKeyUsage` (`:141`) alongside specific
-  purposes, which is atypical for a CA cert and weakens the constraint EKU is meant to assert.
-- **Legacy explicit `SecureRandom` algorithm:** `CertificateHelper.kt:37,275` pins
-  `SecureRandom.getInstance("SHA1PRNG")` instead of the platform-default `SecureRandom()`.
-- **Dead-but-latent-unsafe code in `prepareRecords`:** `TlsConnection.kt:829` computes
-  `val recordType = payload[0].toInt()` unconditionally before branching on
-  `remainingBytes > 0`; in that branch, `payload` is a raw continuation chunk of a record's
-  *body*, so `recordType` is never actually used there — dead, and if `payload` were ever empty
-  at this point, `payload[0]` would throw uncaught (mitigated in practice by callers never
-  passing empty payloads, but worth a defensive `payload.isNotEmpty()` guard given V-10).
-- **Weak initial sequence number range:** `TcpConnection.kt:51`,
-  `(Math.random() * 0xFFFFFFF).toLong()` — `0xFFFFFFF` is 28 bits (~268M), not the full 32-bit ISN
-  space (`0xFFFFFFFF`, ~4.29B) a real ISN should draw from.
-- **Hardcoded 1500-byte device-read buffer:** `DevicePollThread.kt:32`,
-  `val packet = ByteArray(1500) //TODO: actually implement a reusable buffer`, vs.
-  `maxPacketSize = 16413` used everywhere else (`ComponentManager.kt:50`). `parsePacket`'s
-  stated-length check (`DevicePollThread.kt:127-135`) fails safe (drops the packet) if the TUN
-  device ever delivers something larger than 1500 bytes, but the data is silently lost rather
-  than handled — worth revisiting alongside confirming `HeimdallVpnService`'s `Builder` sets an
-  explicit MTU.
-- **`printStackTrace()` instead of `Timber`; CA-generation failure swallowed to `""`:**
-  `Authority.kt:33-38` uses `e.printStackTrace()` (not captured by production log pipelines)
-  where the rest of the file uses `Timber`; `Authority.generateCertificate` (`:81-88`) catches
-  any exception during CA creation and returns `""`, giving callers no way to distinguish
-  "legitimately empty" from "generation failed."
+Reviewed again on 2026-10-04, after PKT-53 to PKT-61, against the code at that point. Each item
+says whether it still applies. A-12 to A-19 were added then, from things noticed while
+implementing the second-audit packets. Line numbers are those of 2026-10-04.
+
+Packets: PKT-62 removes dead code and fixes stale comments (A-2, A-3, A-4, A-5, A-11, A-15).
+PKT-63 keeps traffic out of the logs and fixes smaller robustness issues (A-8, A-12, A-13, A-17,
+A-19); implemented 2026-10-04, so those five are resolved. PKT-64 makes the small protocol and certificate fixes (A-6, A-7, A-9, A-10, A-14, A-16,
+A-18).
+
+### Resolved
+
+- **A-1 — Debug scaffolding in production `TlsConnection`.** *Resolved* (commit `48af91e`,
+  2026-09-29): no `System.err.println` and no stack-trace dump are left, and `log` is
+  `private val log = false`. Two traffic dumps outside the `log` flag remained; see A-12.
+
+### Still open
+
+- **A-2 — Dead files.** `mitm/nio/NioSslServer.java` and `mitm/nio/NioSslClient.java` are still
+  commented out past their package line. Also dead: `mitm/nio/NioSslPeer.kt`, live code
+  referenced only by those two files, and in `app/src/test`, `DirectHttpTest.kt` and
+  `TimberExtension.kt`, both commented out entirely (`DirectHttpTest` still imports a package
+  that no longer exists and uses JUnit 5, which is not a dependency). Delete all five.
+- **A-3 — Unused, unsynchronised singleton.** `CertificateSniffingMitmManager.createSingleton()`
+  / `getSingleton()` (`:105-120`) are still there. The original note was imprecise: the
+  singleton does have a caller, `Authority.generateCertificate()` (`Authority.kt:100-125`), but
+  that function has none, apart from the commented-out `DirectHttpTest`. Delete both;
+  `ComponentManager` builds its own manager.
+- **A-4 — Latent plaintext private-key export.**
+  `KeyStoreHelper.initializeServerCertificates()` (`:139-160`) still writes a leaf key to
+  `-<commonName>-key.pem` unencrypted and still has no callers. Delete it.
+- **A-5 — Stale comments.** `SSLEngineSource.kt:155` still says "1024 bit RSA key pair using
+  SHA1PRNG" (the size is 2048). `CertificateSniffingMitmManager.kt:60-63` still says that using
+  the upstream CN and SANs "is not necessary", right above code that uses them.
+- **A-6 — CA certificate extensions.** Unchanged: `KeyUsage` is non-critical
+  (`CertificateHelper.kt:137`), and the CA's `ExtendedKeyUsage` includes `anyExtendedKeyUsage`
+  (`:143`). Only newly generated CAs would change, and existing installs keep their CA (V-04/V-05
+  keep it stable on purpose), so this can be done at any time without disturbing anyone.
+- **A-7 — `SHA1PRNG`.** Still pinned for key generation (`CertificateHelper.kt:37, 277`). Other
+  places in the same file and in `Authority` already use `SecureRandom()`. Use it here too.
+- **A-8 — `payload[0]` in `prepareRecords`.** Still read unconditionally
+  (`TlsConnection.kt:1184`). `checkForSnippets()` returns the raw payload unchanged when no
+  snippet is pending, and the transport layer never passes an empty payload, so it cannot
+  throw today. A guard costs nothing and V-10 makes the case for it.
+- **A-9 — 28-bit initial sequence number.** Still `(Math.random() * 0xFFFFFFF)`
+  (`TcpConnection.kt:71`). Harmless for the client-facing side (the device is the only peer
+  that sees it, and the reorder buffer and window checks are wrap-safe), but it is also
+  needlessly predictable. Draw 32 bits from `SecureRandom`.
+- **A-10 — 1500-byte device read buffer.** Still `ByteArray(1500)` with its `TODO`
+  (`DevicePollThread.kt:32`). The builder sets no MTU, and the interface came up with
+  `mtu 1500` on the emulator, so reads fit today. Set the MTU explicitly
+  (`Builder.setMtu`) and size the buffer from the same constant, so the two cannot drift. Since
+  PKT-46, fragments are reassembled after the read, so nothing else depends on 1500.
+- **A-11 — `printStackTrace()` and the swallowed CA-generation failure in `Authority`.**
+  `aliasFile()` (`:36-37`) and `generateCertificate()` (`:121-123`) still use
+  `printStackTrace()`. `generateCertificate()` still returns `""` on failure, but it is dead
+  (A-3); deleting it settles that part.
+
+### Added on 2026-10-04
+
+- **A-12 — Traffic in error logs.** Three logs write traffic to logcat whatever `log` says:
+  - `TlsConnection.kt:1250-1251`: the whole payload as hex when a record type is invalid. That
+    is how the DNS query of V-68 ended up in the log; for misclassified plaintext it is the
+    plaintext.
+  - `HttpConnection.kt:521` and `:564`: the whole header block when a status line or header
+    block cannot be parsed, including `Cookie` and `Authorization` headers.
+
+  PKT-56 already put the upstream-handshake hex dump behind `log`; do the same here. Log
+  lengths and the first bytes' types instead. (Logcat can be read by anything with `READ_LOGS`,
+  and it ends up in bug reports.)
+- **A-13 — Misbuilt log line.** `TransportLayerConnection.kt:465` builds `headerString` as
+  `if (fin) "FIN" else "" + if (ack) "ACK" else ...`. Operator precedence makes a FIN-ACK log as
+  just `FIN`, and the `rst` part can never show, because reset segments are handled before.
+  Cosmetic.
+- **A-14 — Stray reset for a segment without ACK.** `TcpConnection.buildStrayRst()` (`:1575`)
+  always clears ACK and uses the segment's acknowledgement number as its sequence number. That
+  is right for a segment that carries ACK (RFC 9293 §3.10.7.1). For one without ACK (a bare
+  FIN), the reset should carry ACK, sequence number 0 and acknowledge the segment. The device
+  otherwise ignores the reset. PKT-58's `buildSynRefusal()` does it right for SYNs and could
+  be generalised. Rare in practice.
+- **A-15 — Unused socket API.** `CertificateSniffingMitmManager.createServerSSLSocket()` (both
+  overloads) and `SSLEngineSource.newSSLSocket()` (both) are only referenced by each other.
+  Delete them.
+- **A-16 — Java 7 reflection for hostname verification.**
+  `SSLEngineSource.tryHostNameVerificationJava7()` looks up
+  `SSLParameters.setEndpointIdentificationAlgorithm` by reflection (available on every
+  supported API level), and it replaces the engine's parameters with a fresh `SSLParameters`
+  object, which would wipe anything set on them before. PKT-57's `Alpn.offer()` sets its
+  protocols afterwards, so nothing is lost today. Call the method directly on
+  `engine.sslParameters` and write them back.
+- **A-17 — Cancellation swallowed in persistence code.** `HttpConnection`'s request write
+  (`:462`) catches `Throwable`, which includes the `CancellationException` of PKT-60's safety
+  bound. The request ID is still failed and the response dropped, as intended, but the bound's
+  own "did not finish" log may not appear. Catch `CancellationException` separately, complete
+  the deferred, and rethrow it. The same pattern appears in `TlsConnection`'s coroutines
+  (`:163, :211, :537, :559`), where swallowing is less harmful but still masks cancellation.
+- **A-18 — First start after a schema change leaves the tunnel unserved.** Seen after PKT-59's
+  install: `tun0` was up for about 20 s before the traffic threads started, so every packet sent
+  in that time went unanswered. The likely cause is Room's destructive migration running on
+  the first database access while `launchServiceComponents()` creates the session. It only
+  happens once per schema change (destructive migration stays by design, see `CLAUDE.md`).
+  Opening the database before establishing the interface would avoid it.
+- **A-19 — Test-only defaults in production code.** `TlsPassthroughCache.put()` defaults its
+  reason to `CLIENT_HANDSHAKE_ERROR` only to spare the tests an argument (PKT-56). Make the
+  reason a required parameter, or move the helper to the tests.
 
 ---
 

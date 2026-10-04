@@ -22,27 +22,27 @@ class TlsPassthroughCacheTest {
 
     @Test
     fun `get returns true after put`() {
-        cache.put(1000, "example.com")
+        cache.put(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         assertTrue(cache.get(1000, "example.com"))
     }
 
     @Test
     fun `different initiator same hostname returns false`() {
-        cache.put(1000, "example.com")
+        cache.put(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         assertFalse(cache.get(2000, "example.com"))
     }
 
     @Test
     fun `same initiator different hostname returns false`() {
-        cache.put(1000, "example.com")
+        cache.put(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         assertFalse(cache.get(1000, "other.com"))
     }
 
     @Test
     fun `multiple entries coexist independently`() {
-        cache.put(1000, "example.com")
-        cache.put(1000, "google.com")
-        cache.put(2000, "example.com")
+        cache.put(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        cache.put(1000, "google.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        cache.put(2000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
 
         assertTrue(cache.get(1000, "example.com"))
         assertTrue(cache.get(1000, "google.com"))
@@ -54,10 +54,10 @@ class TlsPassthroughCacheTest {
     fun `inserting more than maxSize evicts the oldest entries`() {
         val bounded = TlsPassthroughCache(maxSize = 3)
 
-        bounded.put(1, "a.com")
-        bounded.put(2, "b.com")
-        bounded.put(3, "c.com")
-        bounded.put(4, "d.com")
+        bounded.put(1, "a.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        bounded.put(2, "b.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        bounded.put(3, "c.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+        bounded.put(4, "d.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
 
         assertFalse("oldest entry should have been evicted", bounded.get(1, "a.com"))
         assertTrue(bounded.get(2, "b.com"))
@@ -70,7 +70,7 @@ class TlsPassthroughCacheTest {
         val bounded = TlsPassthroughCache(maxSize = 5)
 
         for (i in 0 until 1000) {
-            bounded.put(i, "host$i.com")
+            bounded.put(i, "host$i.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         }
 
         val field = TlsPassthroughCache::class.java.getDeclaredField("cache")
@@ -124,7 +124,7 @@ class TlsPassthroughCacheTest {
 
     @Test
     fun `recordFailure returns false for a pair that is already marked`() {
-        cache.put(1000, "example.com")
+        cache.put(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR)
         assertFalse(cache.recordFailure(1000, "example.com", PassthroughReason.CLIENT_HANDSHAKE_ERROR))
         assertTrue(cache.get(1000, "example.com"))
     }
