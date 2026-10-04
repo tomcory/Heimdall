@@ -1,9 +1,8 @@
 package de.tomcory.heimdall.core.vpn.mitm
 
 import timber.log.Timber
-import java.io.*
-import java.lang.Exception
-import java.lang.StringBuilder
+import java.io.File
+import java.io.IOException
 import java.security.SecureRandom
 
 /**
@@ -34,7 +33,7 @@ class Authority (
                 try {
                     if (!outFile.createNewFile()) Timber.e("File to create failure!")
                 } catch (e: IOException) {
-                    e.printStackTrace()
+                    Timber.e(e, "Error creating ${outFile.path}")
                 }
             }
             outFile
@@ -93,57 +92,6 @@ class Authority (
             }
 
             return generated.toCharArray()
-        }
-
-        //TODO: proper Android file management
-        @JvmStatic
-        fun generateCertificate(file: File): String {
-            Timber.d(file.absolutePath)
-            if (file.exists()) {
-                file.delete()
-            }
-            file.mkdirs()
-            Timber.d("generateCertificate")
-            val authority = Authority(
-                file,
-                "heimdall-proxy",
-                loadOrCreatePassword(file, "heimdall-proxy"),
-                "Heimdall",
-                "HeimdallOrga",
-                "HeimdallOrgaUnit",
-                "Heimdall",
-                "HeimdallCert",
-                "HeimdallCertUnit"
-            )
-            return try {
-                CertificateSniffingMitmManager.createSingleton(authority)
-                getStringFromFile(File(file, "heimdall-proxy.pem").path)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                ""
-            }
-        }
-
-        @Throws(Exception::class)
-        private fun getStringFromFile(filePath: String): String {
-            Timber.d("getStringFromFile")
-            val fl = File(filePath)
-            return FileInputStream(fl).use { fin ->
-                convertStreamToString(fin)
-            }
-        }
-
-        @Throws(Exception::class)
-        private fun convertStreamToString(`is`: InputStream): String {
-            Timber.d("convertStreamToString")
-            return BufferedReader(InputStreamReader(`is`)).use { reader ->
-                val sb = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    sb.append(line).append("\n")
-                }
-                sb.toString()
-            }
         }
     }
 }

@@ -56,7 +56,7 @@ re-reviewed and live-tested at `39bd517` on the rooted emulator. This covered th
 suite with MitM on and in plain mode, the suite under injected loss, duplication and
 reordering, both QUIC policies with real apps, a TLS edge-case probe and a TCP half-close
 probe. Findings V-59–V-67 are in "Second-audit findings" (V-68 was added while implementing PKT-58), with a summary of the runs and of
-the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented; PKT-61 was measured and closed without a code change. The re-checked low-severity appendix (A-1 to A-19) is addressed by PKT-62 to PKT-64; PKT-63 is implemented.
+the items still open from earlier work. Packets PKT-53–PKT-61 address them; PKT-53 to PKT-60 are implemented; PKT-61 was measured and closed without a code change. The re-checked low-severity appendix (A-1 to A-19) is addressed by PKT-62 to PKT-64; PKT-62 and PKT-63 are implemented.
 
 ---
 
@@ -4263,6 +4263,32 @@ database schema (destructively, as before); doing them in this order means two v
   `run-stress.sh tls,tlsbulk` are clean, and the CA (generated through the adb trigger, see
   `docs/ca-adb-trigger-plan.md`) is unaffected: an existing install keeps its CA and
   intercepts as before.
+- **Implementation notes (2026-10-04):**
+  - Deleted, after a repository-wide search found no references outside the deleted code
+    (`KeyStoreHelperTest`'s `generateCertificate` calls are `CertificateFactory`'s):
+    - `mitm/nio/NioSslServer.java`, `NioSslClient.java` and `NioSslPeer.kt`, so the `nio`
+      package is gone;
+    - `app/src/test/.../DirectHttpTest.kt` and `TimberExtension.kt`;
+    - `CertificateSniffingMitmManager`'s companion object (`createSingleton()` /
+      `getSingleton()`) and both `createServerSSLSocket()` overloads;
+    - `SSLEngineSource.newSSLSocket()` (both);
+    - `Authority.generateCertificate()` with `getStringFromFile()` and
+      `convertStreamToString()`, which only it used. `loadOrCreatePassword()` stays, since
+      `getDefaultInstance()` uses it;
+    - `KeyStoreHelper.initializeServerCertificates()`.
+  - `Authority.aliasFile()` logs through Timber instead of `printStackTrace()`. The wildcard
+    `java.io.*` and the `java.lang` imports were replaced with what is used. An unused
+    `PrivateKey` import in `KeyStoreHelper` went with the deleted function.
+  - Comments: `SSLEngineSource.createCertForHost()` now says what it returns (a server-mode
+    engine with a forged certificate, a 2048-bit RSA key, the context cached per common name),
+    and `CertificateSniffingMitmManager` says why the upstream CN and SANs are copied. The
+    remark about `SHA1PRNG` went with the old comment; PKT-64 replaces the algorithm itself.
+  - Tests: no new ones. 413 `core:vpn` and 18 `app` tests pass, and lint reports nothing in the
+    changed files.
+  - Emulator: the CA's PEM had the same SHA-256 before and after installing this build and
+    starting the VPN, and no new keystore files appeared, so an existing install keeps its CA.
+    `run-stress.sh tls,tlsbulk,tlsupstream,tlsalpn` 30/30 with issuer Heimdall where
+    intercepted, and `emulator-traffic.sh run` is clean.
 - **Commit:** `refactor(vpn): remove dead MitM code and fix stale comments`
 
 ### PKT-63 — Keep traffic out of the logs, and smaller robustness fixes
@@ -4407,7 +4433,8 @@ Reviewed again on 2026-10-04, after PKT-53 to PKT-61, against the code at that p
 says whether it still applies. A-12 to A-19 were added then, from things noticed while
 implementing the second-audit packets. Line numbers are those of 2026-10-04.
 
-Packets: PKT-62 removes dead code and fixes stale comments (A-2, A-3, A-4, A-5, A-11, A-15).
+Packets: PKT-62 removes dead code and fixes stale comments (A-2, A-3, A-4, A-5, A-11, A-15);
+implemented 2026-10-04, so those six are resolved.
 PKT-63 keeps traffic out of the logs and fixes smaller robustness issues (A-8, A-12, A-13, A-17,
 A-19); implemented 2026-10-04, so those five are resolved. PKT-64 makes the small protocol and certificate fixes (A-6, A-7, A-9, A-10, A-14, A-16,
 A-18).

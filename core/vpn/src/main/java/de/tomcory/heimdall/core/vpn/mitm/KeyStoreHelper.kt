@@ -11,7 +11,6 @@ import java.net.URL
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.PrivateKey
 import java.security.cert.Certificate
 import java.security.cert.CertificateExpiredException
 import java.security.cert.CertificateNotYetValidException
@@ -129,34 +128,6 @@ object KeyStoreHelper {
             Timber.w(e, "Root CA certificate for alias ${authority.alias} is not valid until ${cert.notBefore} - regenerating.")
             null
         }
-    }
-
-    /**
-     * Initialises and exports fake server certificates for a given server's common and alternative names.
-     * The fake server certificate(s) can be used to impersonate the server in a client-facing SSL session.
-     */
-    @Throws(GeneralSecurityException::class, OperatorCreationException::class, IOException::class)
-    fun initializeServerCertificates(
-        authority: Authority,
-        caCertificate: Certificate,
-        caPrivateKey: PrivateKey,
-        commonName: String,
-        subjectAlternativeNames: SubjectAlternativeNameHolder?
-    ) {
-
-        val keyStore = CertificateHelper.createServerCertificate(
-            commonName,
-            subjectAlternativeNames!!,
-            authority,
-            caCertificate,
-            caPrivateKey
-        )
-
-        val key = keyStore.getKey(authority.alias, authority.password) as PrivateKey
-        val certs: Array<Certificate> = keyStore.getCertificateChain(authority.alias)
-
-        exportPem(authority.aliasFile("-$commonName-key.pem"), key)
-        exportPem(authority.aliasFile("-$commonName-cert.pem"), *certs)
     }
 
     /**

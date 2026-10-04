@@ -4,7 +4,6 @@ import java.security.cert.X509Certificate
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSession
-import javax.net.ssl.SSLSocket
 
 /**
  * MitmManager that uses the common name and subject alternative names
@@ -37,14 +36,6 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
         return sslEngineSource?.newSSLEngine(true)
     }
 
-    fun createServerSSLSocket(peerHost: String?, peerPort: Int): SSLSocket? {
-        return if(peerHost != null) sslEngineSource?.newSSLSocket(peerHost, peerPort) else createServerSSLSocket()
-    }
-
-    fun createServerSSLSocket(): SSLSocket? {
-        return sslEngineSource?.newSSLSocket()
-    }
-
     /**
      * Call with serverSslEngine.getSession(). Creates an SSLEngine for the client side that
      * impersonates the remote server with a fake certificate.
@@ -57,10 +48,9 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
             val upstreamCert = getCertificateFromSession(serverSSLSession)
             //TODO: store the upstream cert by commonName to review it later
 
-            // A reasons to not use the common name and the alternative names
-            // from upstream certificate from serverSslSession to create the
-            // dynamic certificate:
-            // It's not necessary. The host name is accepted by the browser.
+            // The forged certificate copies the upstream certificate's common name and subject
+            // alternative names, so that it is valid for every name the client may have asked
+            // for, not only for the one in its SNI.
             val commonName = getCommonName(upstreamCert)
             val san = SubjectAlternativeNameHolder()
             san.addAll(upstreamCert.subjectAlternativeNames)
@@ -99,23 +89,6 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
             c.subjectDN.name.substring(cnIndex + 3).trim()
         } else {
             c.subjectDN.name.substring(cnIndex + 3, cnEndIndex).trim()
-        }
-    }
-
-    //TODO: singleton isn't ideal here; it would be better to attach it to the VpnService lifecycle
-    companion object {
-        @Volatile
-        private var singleton: CertificateSniffingMitmManager? = null
-
-        @JvmStatic
-        fun createSingleton(authority: Authority): CertificateSniffingMitmManager? {
-            singleton = CertificateSniffingMitmManager(authority)
-            return singleton
-        }
-
-        @JvmStatic
-        fun getSingleton(): CertificateSniffingMitmManager? {
-            return singleton
         }
     }
 }

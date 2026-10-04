@@ -87,14 +87,6 @@ class SSLEngineSource (
         return sslEngine
     }
 
-    fun newSSLSocket(): SSLSocket {
-        return sslContext.socketFactory.createSocket() as SSLSocket
-    }
-
-    fun newSSLSocket(remoteHost: String, remotePort: Int): SSLSocket {
-        return sslContext.socketFactory.createSocket(remoteHost, remotePort) as SSLSocket
-    }
-
     fun newSSLEngine(remoteHost: String, remotePort: Int): SSLEngine {
         val sslEngine = sslContext.createSSLEngine(remoteHost, remotePort)
         sslEngine.useClientMode = true
@@ -152,9 +144,10 @@ class SSLEngineSource (
     }
 
     /**
-     * Generates an 1024 bit RSA key pair using SHA1PRNG. Thoughts: 2048 takes
-     * much longer time on older CPUs. And for almost every client, 1024 is
-     * sufficient.
+     * Returns a server-mode engine that presents a certificate for [commonName] and
+     * [subjectAlternativeNames], forged and signed with the CA. The certificate's key is an RSA key
+     * of [CertificateHelper]'s fake key size (2048 bits). The engine's context is cached per
+     * common name.
      *
      * Derived from Zed Attack Proxy (ZAP). ZAP is an HTTP/HTTPS proxy for
      * assessing web application security. Copyright 2011 mawoki@ymail.com
