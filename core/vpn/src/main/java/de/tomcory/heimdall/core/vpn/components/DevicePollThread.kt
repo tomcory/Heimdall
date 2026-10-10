@@ -20,11 +20,13 @@ class DevicePollThread internal constructor(
 ) : Thread(name) {
 
     init {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
         Timber.d("Thread created")
     }
 
     override fun run() {
+        // Set here, not in the constructor: Process.setThreadPriority(int) applies to the thread
+        // that calls it, and the constructor runs on the thread that creates this one.
+        Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
         Timber.d("Thread started")
 
         // one buffer for every read: a read returns one packet of at most the interface's MTU

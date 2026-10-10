@@ -58,7 +58,8 @@ class HeimdallVpnService : VpnService() {
     private var notificationUpdateHandler: Handler? = null
     private var notificationUpdateRunnable: Runnable? = null
 
-    private var componentsActive = false
+    /** Serialises start and stop requests against the background work they trigger. */
+    private val lifecycle = VpnServiceLifecycle()
 
     /**
      * This function is called when the service is first created. It is responsible for initialising
@@ -80,8 +81,8 @@ class HeimdallVpnService : VpnService() {
      * @param startId A unique integer representing this specific request to start.
      * @return The return value indicates what semantics the system should use for the service's
      * current started state. Is either [android.app.Service.START_STICKY] if the VPN is being started
-     * or [android.app.Service.START_NOT_STICKY] if it is not: the intent's extra is invalid, the VPN is
-     * being stopped, or the user has not consented to it.
+     * or is already up, or [android.app.Service.START_NOT_STICKY] if it is not: the intent's extra is
+     * invalid, the VPN is being stopped, or the user has not consented to it.
      * @see [START_SERVICE]
      * @see [STOP_SERVICE]
      */
@@ -95,10 +96,23 @@ class HeimdallVpnService : VpnService() {
         return when(intent?.getIntExtra(VPN_ACTION, START_SERVICE) ?: START_SERVICE) {
 
             START_SERVICE -> {
-                startTime = System.currentTimeMillis()
+                val launch = lifecycle.requestStart()
+                if (launch) {
+                    startTime = System.currentTimeMillis()
+                }
 
-                // promote this service to the foreground to prevent it from being put to sleep
+                // Promote this service to the foreground to prevent it from being put to sleep.
+                // Also for a start that is otherwise ignored: every start through
+                // startForegroundService() has to be answered with this.
                 startForeground(ONGOING_NOTIFICATION_ID, createForegroundNotification())
+
+                if (!launch) {
+                    // A second START must not disturb a VPN that is starting or running. One that
+                    // arrives during a shutdown is dropped: the service is about to stop itself.
+                    val state = lifecycle.state
+                    Timber.i("Ignoring START_SERVICE, the VPN is $state")
+                    return if (state == VpnServiceLifecycle.State.STOPPING) START_NOT_STICKY else START_STICKY
+                }
 
                 // Make Heimdall the prepared VPN app. The system forgets which app that is on
                 // every reboot, and without it establishing the interface fails. This only
@@ -113,6 +127,7 @@ class HeimdallVpnService : VpnService() {
                 if (consentIntent != null) {
                     Timber.w("The user has not consented to the VPN, it has to be started from the UI")
                     CoroutineScope(Dispatchers.IO).launch {
+                        lifecycle.launchFinished(success = false)
                         abortStart()
                     }
                     return START_NOT_STICKY
@@ -123,13 +138,21 @@ class HeimdallVpnService : VpnService() {
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     Timber.d("Launching service components...")
-                    if (launchServiceComponents(existingSessionId, quicPolicyOverride)) {
-                        Timber.d("VpnService started")
-                        preferences.setVpnActive(true)
-                        preferences.setVpnLastUpdated(System.currentTimeMillis())
-                    } else {
-                        Timber.e("VpnService could not be started")
-                        abortStart()
+                    val launched = launchServiceComponents(existingSessionId, quicPolicyOverride)
+                    when (lifecycle.launchFinished(launched)) {
+                        VpnServiceLifecycle.LaunchOutcome.RUNNING -> {
+                            Timber.d("VpnService started")
+                            preferences.setVpnActive(true)
+                            preferences.setVpnLastUpdated(System.currentTimeMillis())
+                        }
+                        VpnServiceLifecycle.LaunchOutcome.SHUT_DOWN -> {
+                            Timber.i("STOP_SERVICE was received while the VPN was starting, shutting it down")
+                            shutDown()
+                        }
+                        VpnServiceLifecycle.LaunchOutcome.ABORT -> {
+                            Timber.e("VpnService could not be started")
+                            abortStart()
+                        }
                     }
                 }
 
@@ -139,9 +162,23 @@ class HeimdallVpnService : VpnService() {
             STOP_SERVICE -> {
                 Timber.d("Received STOP_SERVICE")
 
-                // shut down the VPN components on a background thread
-                CoroutineScope(Dispatchers.IO).launch {
-                    shutDown()
+                when (lifecycle.requestStop()) {
+                    VpnServiceLifecycle.StopAction.SHUT_DOWN -> {
+                        // shut down the VPN components on a background thread
+                        CoroutineScope(Dispatchers.IO).launch {
+                            shutDown()
+                        }
+                    }
+                    VpnServiceLifecycle.StopAction.DEFERRED -> {
+                        Timber.i("The VPN is still starting, it is shut down as soon as it is up")
+                    }
+                    VpnServiceLifecycle.StopAction.STOP_IDLE_SERVICE -> {
+                        // the VPN is not running: this intent only brought the service up
+                        stopSelf()
+                    }
+                    VpnServiceLifecycle.StopAction.IGNORE -> {
+                        Timber.d("The VPN is already being shut down")
+                    }
                 }
 
                 START_NOT_STICKY
@@ -300,20 +337,21 @@ class HeimdallVpnService : VpnService() {
         }
 
         // getting to this point means that everything was established and launched successfully
-        componentsActive = true
         return true
     }
 
     /**
      * Stops the service after a start that did not bring the VPN up, and records that the VPN
-     * is not active.
+     * is not active. Whatever the start had already set up is released.
      */
     private suspend fun abortStart() {
+        stopVpnComponents()
         stopNotificationUpdates()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         preferences.setVpnActive(false)
         preferences.setVpnLastUpdated(System.currentTimeMillis())
+        lifecycle.stopped()
     }
 
     /**
@@ -546,31 +584,33 @@ class HeimdallVpnService : VpnService() {
     }
 
     /**
-     * Shuts down the VPN components and stops the service.
+     * Shuts down the VPN components and stops the service. Only called once [lifecycle] has
+     * moved to [VpnServiceLifecycle.State.STOPPING], which it does for one caller at a time.
      * @see [stopVpnComponents]
      * @see [stopSelf]
      */
     private suspend fun shutDown() {
-        if(componentsActive) {
-            Timber.d("Shutting down VpnService")
-            stopVpnComponents()
-            stopNotificationUpdates()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            preferences.setVpnActive(false)
-            preferences.setVpnLastUpdated(System.currentTimeMillis())
-            Timber.d("VpnService stopped")
-        }
+        Timber.d("Shutting down VpnService")
+        stopVpnComponents()
+        stopNotificationUpdates()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        preferences.setVpnActive(false)
+        preferences.setVpnLastUpdated(System.currentTimeMillis())
+        lifecycle.stopped()
+        Timber.d("VpnService stopped")
     }
 
     /**
-     * Stops the VPN components.
+     * Stops the VPN components and closes the interface, as far as they exist. Both are let go
+     * of afterwards, so that calling this again does nothing.
      * @see [componentManager]
      */
     private suspend fun stopVpnComponents() {
         withContext(Dispatchers.IO) {
             Timber.d("Stopping VPN service components")
             componentManager?.stopComponents()
+            componentManager = null
 
             // close the VPN interface
             try {
@@ -578,22 +618,24 @@ class HeimdallVpnService : VpnService() {
             } catch (e: IOException) {
                 Timber.e(e, "Error closing FileDescriptor")
             }
-
-            // set the flag to signal that the VPN components are no longer active
-            componentsActive = false
+            vpnInterface = null
         }
     }
 
     /**
-     * Handles the destruction of the service by gracefully shutting down the VPN components via [shutDown].
+     * Handles the destruction of the service by gracefully shutting down the VPN components via
+     * [shutDown], unless that has happened or is under way already. If the VPN is still
+     * starting, it is shut down as soon as it is up.
      */
     override fun onDestroy() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopNotificationUpdates()
         Timber.d("VpnService onDestroy called")
-        coroutineScope.launch {
-            shutDown()
-            Timber.d("VpnService destroyed")
+        if (lifecycle.requestStop() == VpnServiceLifecycle.StopAction.SHUT_DOWN) {
+            coroutineScope.launch {
+                shutDown()
+                Timber.d("VpnService destroyed")
+            }
         }
         super.onDestroy()
     }
