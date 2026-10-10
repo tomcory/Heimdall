@@ -30,7 +30,7 @@ Heimdall is an on-device Android privacy-analysis toolkit. It lets researchers a
 | **Permission analysis** | Scans installed apps for declared permissions; classifies each as dangerous, signature, or normal |
 | **Tracker/library detection** | Scans APK DEX bytecode for known tracking SDK class signatures (Exodus Privacy database) |
 | **Network traffic capture** | Runs a local VPN that intercepts all device traffic; logs connections, bytes, remote hosts |
-| **HTTPS decryption (MitM)** | On rooted devices with the bundled CA trusted, decrypts TLS to log HTTP requests/responses |
+| **HTTPS decryption (MitM)** | With Heimdall's generated CA trusted (in practice: in the system store of a rooted device), decrypts TLS to log HTTP/1.1 requests/responses |
 | **Privacy scoring** | Computes a per-app score (0–1) from permissions, trackers, and privacy-policy analysis |
 | **Data export** | CSV and LaTeX export logic exists at the data layer (`core/export`); not yet wired into the UI |
 
@@ -99,57 +99,81 @@ No longer a custom Compose splash screen — `MainActivity` uses the AndroidX `S
 
 ```
 Device apps
-    │ (TUN interface)
+    │ (TUN interface, MTU 1500)
     ▼
-DevicePollThread          reads raw IP packets from the VPN fd
+DevicePollThread          reads raw IP packets from the VPN fd, reassembles IPv4 fragments
     │
     ▼
-OutboundTrafficHandler    routes packets by protocol (TCP=6, UDP=17)
-    │                     manages per-connection state
-    ├─ TCP connection ─────────────────────────────────────────────┐
-    │     │                                                        │
-    │  [MitM enabled?]                                             │
-    │     │ Yes                                                    │
-    │     ▼                                                        │
-    │  CertificateSniffingMitmManager                              │
-    │     • detects TLS ClientHello, extracts SNI                  │
-    │     • generates per-host cert signed by bundled CA           │
-    │     • proxies plaintext between app ↔ real server            │
-    │     • passes HTTP requests/responses to RoomDatabaseConnector│
-    │                                                              │
-    └─ UDP connection ─────────────────────────────────────────────┘
+OutboundTrafficHandler    finds or creates the connection a packet belongs to
     │
     ▼
-InboundTrafficHandler     processes responses from internet
+┌─ per connection ──────────────────────────────────────────────────────────┐
+│ Transport layer     TcpConnection (transparent TCP proxy) / UdpConnection │
+│ Encryption layer    TlsConnection / QuicConnection / PlaintextConnection  │
+│ Application layer   HttpConnection / DnsConnection / DnsStreamConnection  │
+│                     / RawConnection                                       │
+└───────────────────────────────────────────────────────────────────────────┘
+    │ protected sockets                         │ RoomDatabaseConnector
+    ▼                                           ▼
+Remote hosts                               Session, Connection, Request, Response
     │
     ▼
-DeviceWriteThread         writes response packets back to TUN fd
+InboundTrafficHandler     NIO selector loop over the outward-facing sockets
+    │                     (data travels up and down the same connection stack)
+    ▼
+DeviceWriteThread         writes rebuilt IP packets back to the TUN fd
     │
     ▼
 Device apps
 ```
 
+Heimdall terminates every TCP connection locally and opens its own socket to the real server, so
+it is a proxy rather than a packet forwarder. What happens above the transport layer depends on
+the first payload of a flow:
+
+- **TLS over TCP.** The ClientHello is parsed for SNI, ALPN and ECH, which are stored on the
+  connection. With MitM on, the connection is decrypted unless it is outside the MitM monitoring
+  scope, the client's ALPN excludes `http/1.1`, or a passthrough has been learned for the app and
+  host. Decryption uses two TLS sessions: Heimdall first completes its own handshake with the
+  server, then answers the app with a leaf certificate forged from the real certificate's names and
+  signed by Heimdall's CA. HTTP/1.1 messages between the two are recorded.
+- **Passthrough learning.** If an app rejects the forged certificate (handshake error, close during
+  the handshake, or repeated closes without data right after it), or Heimdall's own handshake with
+  the server fails, later connections of that app to that host are forwarded undecrypted for the
+  rest of the VPN session. `Connection.passthroughReason` records why.
+- **QUIC over UDP.** Never decrypted. The client's Initial packets are decrypted passively to
+  record SNI and ALPN. With the QUIC policy set to *Block* (and MitM on), HTTP/3 flows that the TLS
+  MitM would intercept are dropped and answered with ICMP port unreachable, so the app falls back
+  to TLS over TCP. The default is *Passthrough*.
+- **DNS.** Answers over UDP, TCP and decrypted DNS over TLS fill an IP → hostname cache that names
+  later connections. DNS over TLS to the VPN's own DNS server is refused unless Private DNS is in
+  strict mode, so the resolver falls back to plain DNS.
+- **Everything else** is forwarded unchanged and recorded as connection metadata.
+
 **Key classes:**
 
 | Class | Location | Role |
 |---|---|---|
-| `HeimdallVpnService` | `app/service/` | Android `VpnService`; configures TUN, starts/stops pipeline |
-| `ComponentManager` | `core:vpn/components/` | Orchestrates all threads, builds DNS/TLS caches and tracker Trie |
-| `DevicePollThread` | `core:vpn/components/` | Polls VPN fd with `Os.poll()` |
-| `OutboundTrafficHandler` | `core:vpn/components/` | `HandlerThread` dispatching packets to connections |
-| `InboundTrafficHandler` | `core:vpn/components/` | Reconstructs inbound packets |
-| `DeviceWriteThread` | `core:vpn/components/` | Writes back to TUN fd |
-| `CertificateSniffingMitmManager` | `core:vpn/mitm/` | TLS interception; cert generation via BouncyCastle |
-| `RoomDatabaseConnector` | `core:vpn/` | Persists sessions, connections, requests, responses |
-| `DnsCache` / `TlsPassthroughCache` | `core:vpn/` | In-memory caches for DNS and pass-through TLS state |
+| `HeimdallVpnService` | `app/service/` | Android `VpnService`; resolves preferences, establishes the TUN interface, starts/stops the pipeline. `VpnServiceLifecycle` serialises its start and stop requests |
+| `ComponentManager` | `core:vpn/components/` | Owns the four threads, the selector, the caches, the tracker trie and the MitM manager for one VPN session |
+| `DevicePollThread` / `DeviceWriteThread` | `core:vpn/components/` | Read from and write to the TUN fd |
+| `OutboundTrafficHandler` / `InboundTrafficHandler` | `core:vpn/components/` | Handle packets from the device / run the NIO selector for the sockets |
+| `TcpConnection` / `UdpConnection` | `core:vpn/connection/transportLayer/` | TCP proxy with ordering, flow control and half-close handling; datagram relay |
+| `TlsConnection` | `core:vpn/connection/encryptionLayer/` | TLS record reassembly, dual-`SSLEngine` MitM, passthrough learning |
+| `QuicConnection` + `core:vpn/quic/` | `core:vpn/connection/encryptionLayer/` | Passive Initial inspection, QUIC block policy |
+| `HttpConnection` | `core:vpn/connection/appLayer/` | HTTP/1.1 parsing; pairs and persists requests and responses |
+| `CertificateSniffingMitmManager`, `SSLEngineSource`, `CertificateHelper`, `KeyStoreHelper` | `core:vpn/mitm/` | CA keystore and per-host forged certificates (BouncyCastle) |
+| `MitmScope`, `QuicPolicy` | `core:vpn/mitm/`, `core:vpn/quic/` | Preference values resolved by the app (`MitmScopeResolver`, `QuicPolicyResolver`) |
+| `RoomDatabaseConnector` | `core:vpn/components/` | Persists sessions, connections, requests, responses |
+| `DnsCache` / `TlsPassthroughCache` | `core:vpn/metadata/` | Per-session caches for DNS names and learned passthrough |
 
 **Packet library**: Pcap4j parses/constructs IP/TCP/UDP headers.
 **Tracker detection**: Hostnames matched against a Trie built from Steven Black's unified hosts file.
-**Monitoring scope**: Configurable — all apps, non-system only, whitelist, or blacklist.
+**Monitoring scope**: Two independent scopes. The *VPN* scope decides which apps are routed into the tunnel (all, non-system, whitelist, blacklist). The *MitM* scope decides which apps and hosts are decrypted.
 
-Earlier versions also offered an alternative interception path via a LittleProxy-mitm-derived HTTP proxy (`core/proxy`). That module has been removed; the VPN/TUN-based MitM engine above is now the sole interception mechanism, selectable via the `VpnMode` enum (`BASE`, `MITM_VPN`) in `TrafficScannerViewModel`.
+Earlier versions also offered an alternative interception path via a LittleProxy-mitm-derived HTTP proxy (`core/proxy`). That module has been removed; the VPN/TUN-based engine above is the sole interception mechanism. `TrafficScannerViewModel.VpnMode` is `OFF`, `PLAIN_VPN` or `MITM_VPN`.
 
-For the full component-by-component breakdown of this pipeline (threading model, TLS MitM deep dive, configuration), see [`core/vpn/README.md`](../core/vpn/README.md).
+For the full component-by-component reference (threading model, TLS MitM deep dive, configuration, limitations), see [`core/vpn/README.md`](../core/vpn/README.md). Diagrams of the component (architecture, sequence, BPMN) are in [`docs/diagrams/`](diagrams/README.md). The findings and fix packets behind the current implementation are in [`vpn-mitm-audit.md`](vpn-mitm-audit.md); the QUIC analysis is in [`quic_mitm.md`](quic_mitm.md).
 
 ### Generating the CA via adb
 
@@ -207,17 +231,21 @@ Each module also provides a Compose `UICard` used on the Score detail screen.
 
 ## 8. Database Schema
 
-Room database, version 6, 11 entities.
+Room database, version 10, 14 entities. There is no migration path yet: every schema change bumps the version and wipes local data (`fallbackToDestructiveMigration`). See [`database-schema-audit.md`](database-schema-audit.md).
 
 ```
-App ──────────────── AppXPermission ──── Permission
+App ──────── AppXPermission ── Permission
  │
- └──────────────── AppXTracker ──────── Tracker
+ ├────────── AppXTracker ───── Tracker ── TrackerXCategory ── Category
  │
- └──────────────── Report ─────────────  SubReport
+ └────────── Report ────────── SubReport
 
-Session ─────────── Connection ──────── Request ──── Response
+Session ──── Connection ──── Request ──── Response
+
+SessionSummary (standalone: rolled-up summary of a pruned Session)
 ```
+
+Foreign keys with `CASCADE` delete are declared on every edge shown.
 
 ### Entity summary
 
@@ -225,17 +253,19 @@ Session ─────────── Connection ──────── Re
 |---|---|---|
 | `App` | `packageName` | `label`, `versionName`, `isInstalled`, `isSystem` |
 | `Permission` | `permissionName` | `dangerous: Boolean` |
-| `AppXPermission` | `appPackageName` | FK → App, FK → Permission |
-| `Tracker` | `id` (auto) | `codeSignature`, `networkSignature`, `categories`, `web` |
-| `AppXTracker` | `appPackageName` | FK → App, FK → Tracker |
+| `AppXPermission` | (`packageName`, `permissionName`) | FK → App, FK → Permission |
+| `Tracker` | `id` (assigned by the Exodus API) | `name`, `codeSignature`, `networkSignature`, `web` |
+| `Category` / `TrackerXCategory` | `name` / (`trackerId`, `categoryName`) | Tracker categories |
+| `AppXTracker` | (`packageName`, `trackerId`) | FK → App, FK → Tracker |
 | `Session` | `id` (auto) | `startTime`, `endTime` |
-| `Connection` | `id` (auto) | `sessionId`, `protocol`, `initiatorPkg`, `remoteHost`, `isTracker`, `bytesOut/In` |
-| `Request` | `id` (auto) | `connectionId`, `method`, `remotePath`, `headers`, `content`, `isTracker` |
-| `Response` | `id` (auto) | `requestId`, `statusCode`, `headers`, `content` |
+| `SessionSummary` | `id` (auto) | `sessionStartTime`, `sessionEndTime`, connection, host and tracker counts, `bytesOut/In` |
+| `Connection` | `id` (assigned by `RoomDatabaseConnector`) | `sessionId`, `protocol` (`TCP`/`UDP`), `ipVersion`, `initiatorId`, `initiatorPkg`, `remoteHost`, `remoteIp`, `remotePort`, `isTracker`, `bytesOut/In`, `securityProtocol` (`PLAIN`/`TLS`/`QUIC`), `sni`, `alpn`, `echOffered`, `blocked`, `passthroughReason` |
+| `Request` | `id` (auto) | `connectionId`, `method`, `remoteHost`, `remotePath`, `headers`, `content` (bytes), `contentLength`, `contentTruncated` |
+| `Response` | `id` (auto) | `requestId`, `statusCode`, `statusMsg`, `headers`, `content` (bytes), `contentLength`, `contentTruncated` |
 | `Report` | `reportId` (auto) | `appPackageName`, `mainScore`, `timestamp` |
-| `SubReport` | `id` (auto) | `reportId`, `module`, `score`, `additionalDetails` (JSON) |
+| `SubReport` | (`reportId`, `module`) | `score`, `additionalDetails` (JSON) |
 
-All DAO methods are `suspend` functions; relationships are expressed with Room `@Relation` and `@Embedded` composite types (`ReportWithSubReports`, `AppWithReports`).
+All DAO methods are `suspend` functions or return `Flow`; relationships are expressed with Room `@Relation` and `@Embedded` composite types (`ReportWithSubReports`, `AppWithReports`, `TrackerWithCategories`).
 
 ---
 

@@ -50,16 +50,38 @@ Each `core:*` module is a pure Android library. Only `app` depends on all of the
 
 ```
 Device apps (TUN)
-  → DevicePollThread          reads raw IP packets from VPN fd
-  → OutboundTrafficHandler    routes by protocol (TCP/UDP); manages per-connection state
-      ├─ TCP + MitM enabled → CertificateSniffingMitmManager (SNI detection, per-host cert via BouncyCastle, HTTP log)
-      └─ UDP → DnsCache / TlsPassthroughCache
+  → DevicePollThread          reads raw IP packets from the VPN fd; reassembles IPv4 fragments
+  → OutboundTrafficHandler    finds or creates the packet's connection (ConnectionCache)
+      → TcpConnection / UdpConnection           transparent proxy over protected sockets
+          → TlsConnection / QuicConnection / PlaintextConnection     (encryption layer)
+              → HttpConnection / DnsConnection / DnsStreamConnection / RawConnection   (app layer)
   → RoomDatabaseConnector     persists sessions, connections, requests, responses
-  → InboundTrafficHandler     reconstructs inbound packets
-  → DeviceWriteThread         writes back to TUN fd
+  → InboundTrafficHandler     NIO selector loop over the outward-facing sockets
+  → DeviceWriteThread         writes rebuilt IP packets back to the TUN fd
 ```
 
-Key classes: `HeimdallVpnService` (app/service), `ComponentManager` (core:vpn/components), `CertificateSniffingMitmManager` (core:vpn/mitm), `RoomDatabaseConnector` (core:vpn).
+Every connection is a stack of transport, encryption and application layer objects; payloads go
+up through `unwrapOutbound`/`unwrapInbound` and back down through `wrapOutbound`/`wrapInbound`.
+
+- **TLS MitM** (`TlsConnection`): two JSSE `SSLEngine`s per connection, server-facing handshake
+  first, then a client-facing one with a leaf certificate forged from the real certificate's CN and
+  SANs (`CertificateSniffingMitmManager`, BouncyCastle). Only HTTP/1.1 is recorded; ALPN is
+  negotiated down to `http/1.1`.
+- **Passthrough**: a TLS connection is forwarded undecrypted if it is outside the `MitmScope`
+  preferences, if the client's ALPN excludes `http/1.1`, or if `TlsPassthroughCache` has learned
+  (per VPN session, per app and host) that the app rejects the forged certificate or that the
+  upstream handshake fails. The reason is stored in `Connection.passthroughReason`.
+- **QUIC** (`QuicConnection`, `core:vpn/quic`): never decrypted. The client Initial is decrypted
+  passively for SNI/ALPN. With `QuicPolicy.BLOCK` (MitM on), HTTP/3 flows that the TLS MitM would
+  intercept are dropped and answered with ICMP port unreachable, so the app falls back to TLS.
+- **DNS**: answers over UDP, TCP and decrypted DoT fill `DnsCache` (IP → hostname). DoT to the VPN's
+  DNS server is refused unless Private DNS is in strict mode.
+
+Key classes: `HeimdallVpnService` (app/service), `ComponentManager` (core:vpn/components),
+`TcpConnection` (core:vpn/connection/transportLayer), `TlsConnection`
+(core:vpn/connection/encryptionLayer), `HttpConnection` (core:vpn/connection/appLayer),
+`RoomDatabaseConnector` (core:vpn/components). Full reference: `core/vpn/README.md`; diagrams:
+`docs/diagrams/`.
 
 Hostname-based tracker detection uses a `Trie` built from Steven Black's bundled hosts file — no network call needed.
 

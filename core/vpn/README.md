@@ -1,6 +1,8 @@
 # core:vpn
 
-A local VPN-based network traffic interception engine for Android. It creates a TUN interface, intercepts all TCP and UDP packets from the device, optionally performs TLS man-in-the-middle (MitM) inspection, and persists decoded sessions, connections, HTTP requests, and responses to the Room database.
+A local VPN-based traffic interception engine for Android. It reads every IP packet the device routes into a TUN interface, proxies TCP connections and UDP datagrams to their real destinations over protected sockets, optionally decrypts TLS with a man-in-the-middle (MitM), and persists sessions, connections, HTTP requests and responses to the Room database.
+
+Diagrams of this module live in [`docs/diagrams/`](../../docs/diagrams/README.md): a component architecture, sequence diagrams of an intercepted HTTPS connection, the classification of a new flow, and two BPMN processes. The most important ones are also inlined below.
 
 ---
 
@@ -9,31 +11,39 @@ A local VPN-based network traffic interception engine for Android. It creates a 
 - [Overview](#overview)
 - [Package Structure](#package-structure)
 - [Architecture](#architecture)
+- [VPN Session Lifecycle](#vpn-session-lifecycle)
 - [Packet Lifecycle](#packet-lifecycle)
-  - [Outbound (device → internet)](#outbound-device--internet)
-  - [Inbound (internet → device)](#inbound-internet--device)
 - [Component Reference](#component-reference)
   - [ComponentManager](#componentmanager)
   - [Thread Layer](#thread-layer)
   - [Transport Layer](#transport-layer)
   - [Encryption Layer](#encryption-layer)
   - [Application Layer](#application-layer)
-  - [Inet Layer — IP Packet Builders](#inet-layer--ip-packet-builders)
+  - [Inet Layer](#inet-layer)
   - [Caches](#caches)
   - [MitM Infrastructure](#mitm-infrastructure)
   - [Database Connector](#database-connector)
+- [How a New Flow Is Handled](#how-a-new-flow-is-handled)
 - [TLS MitM Deep Dive](#tls-mitm-deep-dive)
+- [QUIC](#quic)
 - [Threading Model](#threading-model)
 - [Configuration](#configuration)
+- [Limitations](#limitations)
+- [Tests](#tests)
 - [Key Dependencies](#key-dependencies)
 
 ---
 
 ## Overview
 
-When the Heimdall VPN service is active, all IP traffic from the device is routed into a TUN file descriptor. This module reads those raw packets, proxies TCP connections and UDP datagrams to their real destinations over regular Android sockets, and (when MitM is enabled) intercepts TLS sessions to expose plaintext HTTP traffic for logging.
+`HeimdallVpnService` (in `app`) establishes the TUN interface and hands its file descriptor to a `ComponentManager`, which owns everything in this module. From then on:
 
-The module is structured as a layered protocol stack. Each layer has a clean interface to the layer above and below it, making it straightforward to add new protocol handlers.
+- Every TCP connection an app opens is terminated locally. Heimdall answers the app's TCP handshake itself and opens its own socket to the real server, so it is a transparent TCP proxy rather than a packet forwarder.
+- Every UDP datagram is relayed through a `DatagramChannel`.
+- On top of each transport connection sits an **encryption layer** (TLS, QUIC or plaintext) and an **application layer** (HTTP/1.1, DNS or raw). These see every payload in both directions, record what they can, and pass the bytes on.
+- With MitM enabled, a TLS connection is split into two TLS sessions, one with the app and one with the server, and the HTTP/1.1 traffic between them is recorded in plaintext.
+
+Without MitM the module still records every connection with its app, hostname, tracker label, byte counts, SNI and ALPN.
 
 ---
 
@@ -42,91 +52,145 @@ The module is structured as a layered protocol stack. Each layer has a clean int
 ```
 core/vpn/src/main/java/de/tomcory/heimdall/core/vpn/
 │
-├── components/                     Threads, handlers, and the central orchestrator
-│   ├── ComponentManager.kt         Creates and wires all threads/caches/MitM state
+├── components/
+│   ├── ComponentManager.kt         Creates and wires threads, caches, MitM state; VPN_MTU
 │   ├── DevicePollThread.kt         Reads raw IP packets from the TUN interface
-│   ├── DeviceWriteThread.kt        Writes response packets back to the TUN interface
-│   ├── OutboundTrafficHandler.kt   Dispatches outbound packets to transport-layer connections
-│   ├── InboundTrafficHandler.kt    Polls remote sockets via NIO Selector for inbound data
-│   ├── DatabaseConnector.kt        Interface for all database persistence operations
-│   └── RoomDatabaseConnector.kt    Room implementation of DatabaseConnector
+│   ├── IpV4Reassembler.kt          Reassembles fragmented IPv4 datagrams from the device
+│   ├── OutboundTrafficHandler.kt   Dispatches device packets to transport-layer connections
+│   ├── InboundTrafficHandler.kt    NIO selector loop for the outward-facing sockets
+│   ├── DeviceWriteThread.kt        Writes packets back to the TUN interface
+│   ├── DatabaseConnector.kt        Interface for all persistence operations
+│   └── RoomDatabaseConnector.kt    Room implementation
 │
 ├── cache/
-│   └── ConnectionCache.kt          5-tuple keyed map of active transport-layer connections
+│   └── ConnectionCache.kt          Active connections by (remote address, protocol, ports)
 │
 ├── metadata/
-│   ├── DnsCache.kt                 TTL-aware IP→hostname map populated from DNS responses
-│   └── TlsPassthroughCache.kt      Per-(appId, hostname) set of connections to skip MitM
+│   ├── DnsCache.kt                 TTL-aware IP → hostname map filled from DNS answers
+│   └── TlsPassthroughCache.kt      Per-session (app, host) pairs that must not be MitM'd
 │
 ├── connection/
 │   ├── transportLayer/
-│   │   ├── TransportLayerConnection.kt   Abstract base; factory; connection state machine
-│   │   ├── TcpConnection.kt              Full TCP sequence-number tracking + handshake
-│   │   └── UdpConnection.kt              Stateless UDP proxy; DNS ephemeral-close handling
-│   │
+│   │   ├── TransportLayerConnection.kt   Base class, factory, state enum, byte counters
+│   │   ├── TcpConnection.kt              TCP proxy: handshake, ordering, flow control, close
+│   │   └── UdpConnection.kt              Datagram relay with idle reaping
 │   ├── encryptionLayer/
-│   │   ├── EncryptionLayerConnection.kt  Protocol detection (TLS / QUIC / plaintext); factory
-│   │   ├── TlsConnection.kt              Dual SSLEngine MitM with TLS record reassembly
+│   │   ├── EncryptionLayerConnection.kt  Protocol detection, MitM decision helpers
+│   │   ├── TlsConnection.kt              Dual-SSLEngine MitM, record reassembly, passthrough
+│   │   ├── QuicConnection.kt             Passive Initial inspection, optional HTTP/3 block
 │   │   ├── PlaintextConnection.kt        Passthrough for unencrypted traffic
-│   │   └── QuicConnection.kt             QUIC detection placeholder (passthrough; no MitM)
-│   │
+│   │   └── ClientHelloParser.kt          SNI / ALPN / ECH parser shared by TLS and QUIC
 │   ├── appLayer/
-│   │   ├── AppLayerConnection.kt         Protocol detection (HTTP / DNS / raw); factory
-│   │   ├── HttpConnection.kt             HTTP request/response parsing and persistence
-│   │   ├── DnsConnection.kt              Populates DnsCache from DNS response packets
-│   │   └── RawConnection.kt              Passthrough for unrecognised application protocols
-│   │
+│   │   ├── AppLayerConnection.kt         Protocol detection and factory
+│   │   ├── HttpConnection.kt             HTTP/1.1 message reassembly and persistence
+│   │   ├── ChunkedBodyTracker.kt         Finds the end of chunked bodies, decodes them
+│   │   ├── DnsConnection.kt              DNS over UDP: fills the DNS cache
+│   │   ├── DnsStreamConnection.kt        DNS over TCP and decrypted DNS over TLS
+│   │   └── RawConnection.kt              Passthrough for everything else
 │   └── inetLayer/
-│       ├── IpPacketBuilder.kt            Abstract factory for constructing IP response packets
-│       ├── IpV4PacketBuilder.kt          IPv4 packet construction (Pcap4j)
-│       └── IpV6PacketBuilder.kt          IPv6 packet construction (Pcap4j)
+│       ├── IpPacketBuilder.kt            Builds the IP packets sent back to the device
+│       ├── IpV4PacketBuilder.kt / IpV6PacketBuilder.kt
+│       └── IcmpUnreachableBuilder.kt     ICMP port unreachable for blocked QUIC flows
 │
-└── mitm/
-    ├── Authority.kt                      CA metadata and file-path conventions
-    ├── CertificateHelper.kt              BouncyCastle RSA/X.509 certificate generation
-    ├── KeyStoreHelper.kt                 PKCS12 keystore lifecycle; PEM/Magisk export
-    ├── SSLEngineSource.kt                SSLEngine factory; per-host certificate caching
-    ├── CertificateSniffingMitmManager.kt Top-level MitM coordinator; reads upstream certs
-    ├── SubjectAlternativeNameHolder.kt   SAN list builder for generated certificates
-    ├── MergeTrustManager.kt              Accepts certs from both Heimdall CA and system CAs
-    └── nio/
-        └── NioSslPeer.kt                 NIO TLS handshake state machine (utility base)
+├── mitm/
+│   ├── Authority.kt                      CA identity, keystore location and password
+│   ├── CertificateHelper.kt              BouncyCastle root and leaf certificate generation
+│   ├── KeyStoreHelper.kt                 PKCS12 keystore lifecycle, PEM / Magisk export
+│   ├── SSLEngineSource.kt                SSLEngine factory, per-host SSLContext cache
+│   ├── CertificateSniffingMitmManager.kt Creates the two engines of a MitM'd connection
+│   ├── SubjectAlternativeNameHolder.kt   Copies SANs from the upstream certificate
+│   ├── MergeTrustManager.kt              Trusts the Heimdall CA and the system CAs
+│   ├── InsecureTrustManager.kt           Accepts any upstream certificate (opt-in)
+│   ├── Alpn.kt                           ALPN on SSLEngine via reflection (API 29+)
+│   ├── MitmScope.kt                      Which apps and hosts may be intercepted
+│   └── Exceptions.kt
+│
+└── quic/
+    ├── QuicInitialInspector.kt           Collects the ClientHello from Initial packets
+    ├── QuicInitialPacket.kt              Header parsing and Initial packet decryption
+    ├── QuicInitialKeys.kt                Initial secrets for QUIC v1 and v2
+    ├── QuicVarInt.kt                     Variable-length integers
+    └── QuicPolicy.kt                     PASSTHROUGH or BLOCK
 ```
 
 ---
 
 ## Architecture
 
-The module is a layered protocol stack. Each connection object owns the layer below it and calls up through a delegate when data is ready.
+```mermaid
+flowchart LR
+    apps([Device apps<br/>TUN interface])
+    remote([Remote hosts])
+    service[HeimdallVpnService<br/>app module]
 
-```
-┌─────────────────────────────────────────────┐
-│              ComponentManager               │  (orchestrator + global state)
-├─────────────────────────────────────────────┤
-│           Thread / Handler Layer            │
-│  DevicePollThread   DeviceWriteThread       │
-│  OutboundTrafficHandler  InboundTrafficHandler│
-├─────────────────────────────────────────────┤
-│           Transport Layer                   │
-│  TcpConnection       UdpConnection          │
-├─────────────────────────────────────────────┤
-│           Encryption Layer                  │
-│  TlsConnection   PlaintextConnection        │
-│  QuicConnection  (passthrough)              │
-├─────────────────────────────────────────────┤
-│           Application Layer                 │
-│  HttpConnection  DnsConnection  RawConnection│
-└─────────────────────────────────────────────┘
+    subgraph vpn["core:vpn, wired by ComponentManager"]
+        poll[DevicePollThread<br/>Os.poll, IPv4 reassembly]
+        out[OutboundTrafficHandler<br/>HandlerThread]
+        inbound[InboundTrafficHandler<br/>NIO selector thread]
+        write[DeviceWriteThread<br/>HandlerThread]
+        transport[Transport layer<br/>TcpConnection, UdpConnection]
+        enc[Encryption layer<br/>TLS, QUIC, plaintext]
+        app[Application layer<br/>HTTP/1.1, DNS, raw]
+        mitm[MitM certificate engine]
+    end
+    db[(Room database)]
+
+    service -. TUN fd, settings .-> poll
+    apps -- IP packets --> poll -- message --> out -- unwrapOutbound --> transport
+    transport -- protected sockets --> remote
+    remote -- socket ready --> inbound -- unwrapInbound --> transport
+    transport -- built IP packets --> write -- write to TUN --> apps
+    transport <-- payloads --> enc <-- plaintext --> app
+    enc -. SSLEngines .-> mitm
+    app -- HTTP messages --> db
+    transport -. connections, byte counters .-> db
+    enc -. SNI, ALPN, passthrough reason .-> db
 ```
 
-Each layer exposes two symmetric methods:
+Interactive version: [`docs/diagrams/vpn-architecture.html`](../../docs/diagrams/vpn-architecture.html).
+
+Each connection is a stack of three objects. Every layer has the same four entry points:
 
 | Method | Direction | Meaning |
 |---|---|---|
-| `unwrapOutbound(payload)` | device → internet | Strip lower-layer framing, pass payload up |
-| `unwrapInbound()` | internet → device | Read from socket, pass payload up |
-| `wrapOutbound(payload)` | app-layer → internet | Add lower-layer framing, send to server |
-| `wrapInbound(payload)` | app-layer → device | Add lower-layer framing, write to TUN |
+| `unwrapOutbound(payload)` | device → internet, upwards | Strip this layer's framing, pass the payload to the layer above |
+| `wrapOutbound(payload)` | device → internet, downwards | Add this layer's framing, pass down towards the socket |
+| `unwrapInbound(...)` | internet → device, upwards | Same, for data read from the socket |
+| `wrapInbound(payload)` | internet → device, downwards | Add framing, pass down towards the TUN interface |
+
+A payload always travels up to the application layer and back down, even when no layer changes it. The application layer never alters the stream; it only records.
+
+---
+
+## VPN Session Lifecycle
+
+![VPN session lifecycle (BPMN)](../../docs/diagrams/vpn-session-lifecycle.svg)
+
+Source: [`docs/diagrams/vpn-session-lifecycle.bpmn`](../../docs/diagrams/vpn-session-lifecycle.bpmn).
+
+Start and stop requests are serialised by `VpnServiceLifecycle` (`app/service`), a small state machine with the states `IDLE`, `STARTING`, `RUNNING` and `STOPPING`:
+
+- A START while the VPN is starting or running is a no-op. One that arrives during a shutdown is dropped, since the service is about to stop itself.
+- A STOP while the VPN is still starting is remembered and carried out as soon as the start has finished. A STOP without a running VPN only stops the service again.
+- A failed start releases whatever it had set up and returns to `IDLE`.
+
+Start, in `HeimdallVpnService.onStartCommand` and `launchServiceComponents`:
+
+1. The service becomes a foreground service and calls `VpnService.prepare()`. If the user has not consented, the start is aborted; consent has to be given from the UI.
+2. Preferences are resolved into plain values for this module: `doMitm`, `MitmScope`, `QuicPolicy`, the HTTP body limit, "learn passthrough" and "trust all upstream certificates".
+3. The database is opened before the interface exists, so that a destructive migration does not run while the tunnel is already up.
+4. The TUN interface is established with the configured address, route and DNS server and an MTU of `VPN_MTU` (1500). Heimdall itself is always excluded; with MitM on, Chrome is excluded as well.
+5. `ComponentManager` is constructed. Its constructor loads or generates the CA (`CertificateSniffingMitmManager`), opens the selector and the interrupter pipe, warms up pcap4j, builds the tracker trie, persists the `Session` row (or reuses the id passed by the UI), and starts the threads in order: `DeviceWriteThread`, then `InboundTrafficHandler` and `OutboundTrafficHandler`, then `DevicePollThread`.
+6. Two periodic jobs start: the idle sweep every 30 s and the byte-counter flush every second.
+
+Stop, in `ComponentManager.stopComponents` (runs at most once):
+
+1. Cancel the periodic jobs.
+2. Close the write end of the interrupter pipe, which makes `DevicePollThread`'s `poll()` report a hang-up, and join the thread.
+3. Quit the two handler threads, interrupt the selector thread, and join all three (2 s timeout each).
+4. Close the pipe's read end and the TUN streams.
+5. Flush the remaining byte counters, close every cached connection, then close the selector, which is what releases the sockets' descriptors.
+6. Write the session's end time.
 
 ---
 
@@ -135,88 +199,50 @@ Each layer exposes two symmetric methods:
 ### Outbound (device → internet)
 
 ```
-TUN fd (FileInputStream)
+TUN fd
   │
   ▼
-DevicePollThread.poll()
-  │  Os.poll() on TUN fd + interrupter pipe
-  │  Pcap4j: parse raw bytes → IpV4Packet / IpV6Packet
-  │  Drops broadcasts (255.255.255.255), non-TCP/UDP
-  │
-  ▼ Handler message (what=6 TCP, what=17 UDP)
+DevicePollThread
+  │  Os.poll() on the TUN fd and the interrupter pipe
+  │  Drops anything that is not TCP or UDP, broadcasts, length mismatches
+  │  IPv4 fragments are held in IpV4Reassembler until the datagram is complete
+  ▼  Handler message (what = 6 TCP / 17 UDP)
 OutboundTrafficHandler
-  │  Looks up or creates TransportLayerConnection in ConnectionCache
-  │  Calls connection.unwrapOutbound(transportPayload)
-  │
+  │  TransportLayerConnection.getInstance(): ConnectionCache lookup or new connection
   ▼
-TcpConnection / UdpConnection
-  │  TCP: tracks sequence numbers, drives connect/SYN-ACK handshake
-  │  UDP: immediately connected; DNS gets ephemeral close after first reply
-  │  Calls passOutboundToEncryptionLayer(payload)
-  │
+TcpConnection / UdpConnection .unwrapOutbound()
+  │  TCP: ACK bookkeeping, ordering, window check, then the payload goes up
   ▼
-EncryptionLayerConnection.getInstance()   [created on first payload]
-  │  Detects TLS (byte 0 = 0x16), QUIC (long-header version check), or plaintext
-  │  Calls encryptionLayer.unwrapOutbound(payload)
-  │
+EncryptionLayerConnection          [created on the first payload]
+  │  TlsConnection / QuicConnection / PlaintextConnection
   ▼
-TlsConnection / PlaintextConnection / QuicConnection
-  │  TLS: reassembles fragmented records; extracts SNI; drives dual SSLEngine MitM
-  │  Plaintext / QUIC: direct passthrough
-  │  Calls passOutboundToAppLayer(plaintext)
-  │
-  ▼
-AppLayerConnection.getInstance()          [created on first payload]
-  │  Port 53 → DnsConnection
-  │  Payload starts with HTTP verb → HttpConnection
-  │  Otherwise → RawConnection
-  │  Calls appLayer.unwrapOutbound(payload)
-  │
-  ▼
-HttpConnection / DnsConnection / RawConnection
-  │  HttpConnection: reassembles headers + body; persists to DB; forwards
-  │  DnsConnection: forwards query unchanged
-  │  RawConnection: forwards unchanged
-  │  Calls encryptionLayer.wrapOutbound(payload)
-  │
-  ▼  (back down through encryption → transport)
-SocketChannel.write() / DatagramChannel.send()   →   Remote server
+AppLayerConnection                 [created on the first decoded payload]
+  │  HttpConnection / DnsConnection / DnsStreamConnection / RawConnection
+  │  records, then calls encryptionLayer.wrapOutbound(payload)
+  ▼  back down through encryption → transport
+SocketChannel.write() / DatagramChannel.write()   →   remote host
 ```
 
 ### Inbound (internet → device)
 
 ```
-Remote server   →   SocketChannel / DatagramChannel
+remote host   →   SocketChannel / DatagramChannel
   │
   ▼
-InboundTrafficHandler (NIO Selector loop)
-  │  selector.select() blocks until any registered channel has data
-  │  Retrieves TransportLayerConnection from SelectionKey attachment
-  │  Calls connection.unwrapInbound()
-  │
+InboundTrafficHandler (selector.select())
+  │  the SelectionKey's attachment is the TransportLayerConnection
   ▼
-TcpConnection / UdpConnection
-  │  TCP: OP_CONNECT completes handshake; OP_READ reads bytes from channel
-  │  UDP: reads single datagram; DNS closes channel after first response
-  │  Calls passInboundToEncryptionLayer(payload)
-  │
-  ▼ … (mirrors outbound path upward, then back down) …
-  │
+TcpConnection / UdpConnection .unwrapInbound()
+  │  TCP: OP_CONNECT → finishConnect, SYN-ACK to the device
+  │       OP_WRITE   → drain the queue of data for the remote host
+  │       OP_READ    → read, unless too much is still waiting for the device
   ▼
-encryptionLayer.wrapInbound(payload)
-  │
+encryption layer → application layer → encryption layer .wrapInbound()
   ▼
-transportLayer.wrapInbound(payload)
-  │  TcpConnection: builds TCP PSH+ACK segments; may split large payloads
-  │  UdpConnection: wraps in UDP datagram
-  │  Calls deviceWriter.sendMessage(ipPacket)
-  │
-  ▼
-DeviceWriteThread
-  │  Writes ipPacket.rawData to FileOutputStream (TUN fd)
-  │
-  ▼
-TUN fd → Device app
+TcpConnection.wrapInbound()   queued, sent as far as the device's receive window allows
+UdpConnection.wrapInbound()   one datagram per payload
+  ▼  Handler message
+DeviceWriteThread   →   TUN fd   →   app
 ```
 
 ---
@@ -227,404 +253,360 @@ TUN fd → Device app
 
 **`components/ComponentManager.kt`**
 
-The single point of wiring for the entire module. It is instantiated once by `HeimdallVpnService` and passed to every thread and connection object that needs shared state.
+Instantiated once per VPN session by `HeimdallVpnService` and passed to every thread and connection.
 
-**Responsibilities:**
-- Creates and starts all four threads in the correct order (write → inbound+outbound → poll)
-- Initialises the NIO `Selector` used by `InboundTrafficHandler`
-- Initialises `CertificateSniffingMitmManager` (the MitM root CA and certificate factory)
-- Holds the `DnsCache`, `TlsPassthroughCache`, and `ConnectionCache` singletons
-- Builds the tracker-hostname `Trie` from the bundled Steven Black hosts file
-- Persists the VPN session record on start; updates its end time on stop
+| Property | Purpose |
+|---|---|
+| `sessionId: Long` | Room id of the current `Session` |
+| `doMitm` | Master switch for TLS interception |
+| `mitmScope: MitmScope` | Apps and hosts that may be intercepted |
+| `learnPassthrough` | Whether MitM failures are learned per (app, host) |
+| `pinningCloseWindowMs` | How soon after the handshake a data-less close counts as pinning (default 3 s) |
+| `quicPolicy: QuicPolicy` | `PASSTHROUGH` or `BLOCK`; always `PASSTHROUGH` without MitM |
+| `refuseDnsOverTlsTo` | The VPN's DNS server if TCP port 853 to it is to be refused, else null |
+| `maxHttpBodySize` | Bytes of each HTTP body that are kept |
+| `trustAllUpstreamCertificates` | Skip validation of the real server's certificate |
+| `selector` / `selectorMonitor` | The shared NIO selector and the monitor that guards registration |
+| `dnsCache`, `tlsPassthroughCache` | Per-session caches |
+| `mitmManager` | `CertificateSniffingMitmManager`; always created, also without MitM |
+| `appFinder` | Resolves a socket's owner to an app id and package |
+| `databaseConnector` | All persistence |
+| `maxPacketSize` | Size of per-connection I/O buffers and the largest TCP segment sent to the device (16 413) |
 
-**Key properties:**
-
-| Property | Type | Purpose |
-|---|---|---|
-| `doMitm` | `Boolean` | Master switch for TLS interception |
-| `sessionId` | `Int` | Room ID of the current VPN session |
-| `selector` | `Selector` | NIO selector shared by inbound handler and transport connections |
-| `selectorMonitor` | `Any` | Lock protecting concurrent selector modifications |
-| `dnsCache` | `DnsCache` | IP→hostname map, populated by DnsConnection |
-| `tlsPassthroughCache` | `TlsPassthroughCache` | (appId, hostname) pairs that skip MitM |
-| `mitmManager` | `CertificateSniffingMitmManager?` | null when `doMitm = false` |
-| `trackerTrie` | `Trie<String>` | Trie of ad/tracker domains for `isTracker` labelling |
-| `appFinder` | `AppFinder` | Resolves socket UID → package name |
-| `databaseConnector` | `DatabaseConnector` | Abstracts all Room persistence |
-| `maxPacketSize` | `Int` | VPN interface MTU (default 16 413 bytes) |
-
----
+`labelConnection(host)` looks a hostname up in the tracker trie built from the bundled hosts list (`res/raw/adhosts.txt`).
 
 ### Thread Layer
 
-#### DevicePollThread
+**`DevicePollThread`** reads one packet per `read()` into a `VPN_MTU`-sized buffer, validates it, parses it with pcap4j and posts it to `OutboundTrafficHandler`. An exception while parsing drops the packet, not the thread.
 
-**`components/DevicePollThread.kt`**
+**`OutboundTrafficHandler`** (`HandlerThread`) handles every packet from the device on one thread. Exceptions are caught per packet: a failure in a connection closes that connection only. Nothing on this thread may block, which is why connection setup, database writes and writes to slow sockets are all moved off it.
 
-Runs at `THREAD_PRIORITY_FOREGROUND`. Calls `Os.poll()` on two file descriptors: the TUN `inputStream` and a one-shot interrupter pipe used for graceful shutdown. On each readable event, reads up to `maxPacketSize` bytes into a reused buffer, calls Pcap4j to parse the raw bytes into an `IpPacket`, and sends a `Handler` message to `OutboundTrafficHandler`.
+**`InboundTrafficHandler`** (plain thread) runs `selector.select()` and calls `unwrapInbound()` on the connection attached to each ready key, again with per-connection exception isolation. It passes through `selectorMonitor` before each `select()` so that a thread registering a channel is not locked out, but processes the keys outside the monitor.
 
-Silently drops:
-- IPv6 extension headers and anything that isn't TCP (6) or UDP (17)
-- IPv4 broadcast packets to `255.255.255.255`
-- Packets whose stated length does not match the read length
-
-#### DeviceWriteThread
-
-**`components/DeviceWriteThread.kt`**
-
-A `HandlerThread`. Receives `IpPacket` objects via its `Handler`. Writes `packet.rawData` directly to the TUN `FileOutputStream`. Fires a callback (`handlerReadyListener`) once its `Looper` is prepared so `ComponentManager` knows the write path is ready before starting the inbound/outbound handlers.
-
-#### OutboundTrafficHandler
-
-**`components/OutboundTrafficHandler.kt`**
-
-A `HandlerThread`. Receives messages from `DevicePollThread` (`msg.what` = protocol number, `msg.obj` = `IpPacket`). Calls `TransportLayerConnection.getInstance()` to find or create a connection, then calls `unwrapOutbound()` on it.
-
-#### InboundTrafficHandler
-
-**`components/InboundTrafficHandler.kt`**
-
-A plain `Thread` running a continuous `selector.select()` loop. For each ready `SelectionKey`, retrieves the `TransportLayerConnection` stored as the key's attachment and calls `unwrapInbound()`. Acquires `ComponentManager.selectorMonitor` while iterating to prevent races with connections registering new keys.
-
----
+**`DeviceWriteThread`** (`HandlerThread`) is the only writer to the TUN fd. It accepts pcap4j `IpPacket`s and raw `ByteArray`s (ICMP errors). The message codes `WRITE_TCP`, `WRITE_UDP`, `WRITE_STRAY` and `WRITE_ICMP` are informational.
 
 ### Transport Layer
 
-#### TransportLayerConnection (abstract)
-
-**`connection/transportLayer/TransportLayerConnection.kt`**
-
-Base class for all per-connection state. Tracks:
+#### TransportLayerConnection
 
 ```kotlin
-enum class TransportLayerState { CONNECTING, CONNECTED, CLOSING, CLOSED, ABORTED }
+enum class TransportLayerState { CONNECTING, CONNECTED, HALF_CLOSED, CLOSING, CLOSED, ABORTED }
 ```
 
-**Factory (`getInstance`):** Checks `ConnectionCache` first. On a miss, resolves the hostname from `DnsCache`, chooses `TcpConnection` or `UdpConnection`, registers it with the NIO `Selector`, adds it to the cache, and persists a `Connection` entity to the database (skipped for DNS port 53).
+`getInstance()` returns the cached connection for a packet or creates one. The hostname comes from `DnsCache` (reverse lookup of the destination address). For TCP segments of unknown flows:
 
-TCP packets carrying FIN/ACK/RST flags for connections that have no cache entry trigger a synthesised RST sent back to the device.
+- an RST is ignored,
+- a FIN or ACK is answered with an RST built by `TcpConnection.buildResetFor()` (RFC 9293 rules),
+- a SYN to port 853 of the VPN's DNS server is refused if `refuseDnsOverTlsTo` is set, so that Private DNS in opportunistic mode falls back to plain DNS that Heimdall can read,
+- anything else creates a `TcpConnection`.
+
+The base class also holds:
+
+- `remoteHost`, which the encryption layer can correct through `refineRemoteHost(sni, echOffered)` (the tracker label is re-evaluated and both are persisted) and the HTTP layer through `fillMissingRemoteHost(hostHeader)`;
+- the byte counters, which are only added up in memory and written by `flushByteCounters()` in batches;
+- `inboundProcessingDeferred/Finished` and the outbound counterparts, with which an encryption layer that works asynchronously tells the transport layer how many bytes it is still holding. TCP flow control counts these.
+
+`closeHard()` closes the channel, aborts the client side (TCP RST) unless told otherwise, and removes the connection from the cache. `closeSoft()` does the same without removing it.
 
 #### TcpConnection
 
-**`connection/transportLayer/TcpConnection.kt`**
+A TCP endpoint towards the device and a `SocketChannel` towards the remote host.
 
-Implements the minimal TCP state machine needed to act as a transparent proxy:
+- **Setup** runs off the packet thread on a dispatcher limited to 8 threads: resolve the app (`AppFinder`), create the database row, `protect()` and connect the socket, register `OP_CONNECT`. The SYN-ACK is sent when the socket has connected. It carries the MSS the device announced. If connecting fails, the device gets an RST that its `connect()` reports as "connection refused".
+- **Receiving from the device.** Segments are accepted in sequence order. Retransmissions are dropped and re-acknowledged, partial overlaps are trimmed, and segments ahead of a gap wait in a reorder buffer bounded by the advertised window.
+- **Sending to the remote host.** What the channel does not take immediately is queued and written on `OP_WRITE`. The window advertised to the device shrinks as this backlog approaches `OUT_BACKLOG_LIMIT` (256 KB), so a slow server slows the app instead of stalling the VPN.
+- **Sending to the device.** Data is queued and sent only as far as the device's receive window allows (`sendLock` keeps segments in sequence order across threads). Reading from the socket pauses when more than `SEND_BACKLOG_HIGH` is waiting and resumes below `SEND_BACKLOG_LOW`. No window scaling is negotiated and nothing is retransmitted: a TUN interface does not lose packets.
+- **Closing.** A FIN from the device half-closes the connection (`HALF_CLOSED`: the socket's output is shut down, the reply is still relayed) if the encryption layer supports it; a MitM'd TLS connection does not, and is closed fully. When the remote host closes first, only reading stops, the device can keep sending, and the encryption layer decides when the FIN is delivered so that it never overtakes data. The connection is `CLOSED` once the device's FIN has been received and our FIN acknowledged. Read errors and resets from the remote host become an RST to the device, not a FIN.
+- **Sweep.** `sweepStaleConnections()` (every 30 s) aborts connections that sit in `HALF_CLOSED` or `CLOSING` for more than two minutes without progress and probes the device's window when data has waited 10 s.
 
-- **SYN received:** Opens a non-blocking `SocketChannel` to the remote host, registers `OP_CONNECT`.
-- **OP_CONNECT fires (via InboundTrafficHandler):** Calls `finishConnect()`, sends SYN-ACK to device, re-registers for `OP_READ`, transitions to `CONNECTED`.
-- **ACK + data received:** Sends an empty ACK back to device immediately, forwards data to the encryption layer.
-- **FIN / FIN-ACK received:** Runs a four-way close sequence, transitions to `CLOSED`.
-
-Sequence numbers are tracked per connection. Large inbound payloads are automatically split into multiple TCP segments to respect the client's window size.
+Initial sequence numbers are drawn from `SecureRandom` over the full 32-bit space.
 
 #### UdpConnection
 
-**`connection/transportLayer/UdpConnection.kt`**
-
-A `DatagramChannel` connected to the remote host. Because UDP is stateless, the connection is considered `CONNECTED` immediately after construction. DNS connections (port 53) are ephemeral: the channel is closed and the cache entry removed after the first inbound datagram.
-
----
+A connected `DatagramChannel` with a 1 MB receive buffer. Each datagram is written once; one the channel does not take is dropped. Connections to port 53 close after the first answer. All others are reaped by `sweepIdleConnections()` after five minutes without traffic, since UDP has no close of its own.
 
 ### Encryption Layer
 
-#### EncryptionLayerConnection (abstract)
+`EncryptionLayerConnection.getInstance()` decides on the first outbound payload:
 
-**`connection/encryptionLayer/EncryptionLayerConnection.kt`**
-
-**Protocol detection (first outbound payload only):**
-
-| Protocol | Detection rule |
+| Result | Rule |
 |---|---|
-| TLS | Byte 0 = `0x16` (Handshake record type), byte 5 = `0x01` (ClientHello) |
-| QUIC | Long-header form (`byte[0] & 0xC0 == 0xC0`), version bytes 1–4 = `0x00000001` or `0x00000000` |
-| Plaintext | Anything else |
+| `PlaintextConnection` | Remote port 53 (DNS is never taken for TLS), or nothing else matches, or the first data seen is inbound |
+| `TlsConnection` | TCP, byte 0 is `0x16` and byte 5 is `0x01` (a ClientHello) |
+| `QuicConnection` | UDP, at least 1200 bytes, long header with fixed bit, non-zero version, packet type Initial (v1 and v2 numbering) |
 
-Lazily creates an `AppLayerConnection` on the first decoded payload.
+The base class provides `interceptionHost()` (SNI, else DNS-derived name, else IP address), `interceptionSkipReason()` / `wouldIntercept()` (the one place the scope and passthrough decision is made, used by both TLS and the QUIC block rule), and `persistSecurity()`, which writes `securityProtocol`, `sni`, `alpn` and `echOffered` to the connection row in call order.
 
-#### TlsConnection
-
-**`connection/encryptionLayer/TlsConnection.kt`**
-
-The most complex class in the module. Manages two independent `SSLEngine` instances—one facing the remote server (client mode) and one facing the device (server mode)—to perform a transparent MitM intercept.
-
-See [TLS MitM Deep Dive](#tls-mitm-deep-dive) below.
-
-#### PlaintextConnection
-
-**`connection/encryptionLayer/PlaintextConnection.kt`**
-
-Zero-overhead passthrough. Forwards payloads directly to/from the application layer.
-
-#### QuicConnection
-
-**`connection/encryptionLayer/QuicConnection.kt`**
-
-Detects QUIC packets and sets `doMitm = false`. Forwards without decryption. Full QUIC interception is not implemented.
-
----
+`TlsConnection` and `QuicConnection` are described in their own sections below.
 
 ### Application Layer
 
-#### AppLayerConnection (abstract)
+`AppLayerConnection.getInstance()` decides on the first payload that reaches it:
 
-**`connection/appLayer/AppLayerConnection.kt`**
-
-**Protocol detection (first decoded payload):**
-
-| Protocol | Detection rule |
+| Result | Rule |
 |---|---|
-| DNS | `remotePort == 53` |
-| HTTP | First 11 bytes contain a HTTP method keyword (`GET`, `POST`, `HTTP`, etc.) |
-| Raw | Anything else |
+| `DnsConnection` | UDP to port 53 |
+| `DnsStreamConnection` | TCP to port 53, or TCP to port 853 that is being decrypted |
+| `HttpConnection` | The first 11 bytes contain an HTTP method or `HTTP` |
+| `RawConnection` | Anything else, including every connection first seen from the inbound side |
 
-Inbound-only connections (created as fallback before the outbound side is known) always use `RawConnection`.
+**HttpConnection** parses HTTP/1.x in both directions with independent reassembly state:
 
-#### HttpConnection
+- Bodies are delimited by `Content-Length`, by chunked encoding (`ChunkedBodyTracker` follows the declared chunk sizes and hands over the decoded data), or, for responses with neither, by connection close.
+- Interim `1xx` responses are skipped. `101` and a successful `CONNECT` switch the connection to opaque forwarding. `204`, `304` and responses to `HEAD` have no body.
+- Only the first `maxHttpBodySize` bytes of a body are kept (default 256 KB, at most 1 MB); the real length and a `contentTruncated` flag are stored with it. Bodies are stored as bytes.
+- A header block that does not end within 64 KB turns that direction opaque.
+- Requests and responses are paired in wire order through a queue of `CompletableDeferred` request ids, so pipelining and slow database writes cannot mismatch them. Each connection's writes run one at a time under a fair mutex.
+- A connection without a hostname takes it from the first request's `Host` header.
 
-**`connection/appLayer/HttpConnection.kt`**
+**DnsConnection / DnsStreamConnection** forward everything unchanged and put the A and AAAA answers into `DnsCache` under the name the query asked for, with the record's TTL. The stream variant handles the two-byte length prefix and messages split across segments.
 
-Reassembles HTTP/1.x messages from a stream of payloads:
-1. Accumulates data until `\r\n\r\n` (end of headers) is seen.
-2. Parses `Content-Length` or `Transfer-Encoding: chunked` to determine body boundaries.
-3. Once a complete message is assembled (up to 1 MB), persists it to the database and forwards the raw bytes to the layer below.
+### Inet Layer
 
-Bodies larger than 1 MB are logged as `<too large: N bytes>`.
-
-Chunked transfer encoding is decoded with `dechunkHttpMessage()` before database persistence.
-
-Requests and responses are correlated by passing the database `requestId` through a `Channel<Int>` between the outbound and inbound coroutines.
-
-#### DnsConnection
-
-**`connection/appLayer/DnsConnection.kt`**
-
-On inbound responses, parses the DNS packet (Pcap4j `DnsPacket`) and inserts each answer record (`A`/`AAAA`) into `ComponentManager.dnsCache` with its TTL. This lets the transport layer resolve IP addresses to hostnames for later connections to the same host.
-
-#### RawConnection
-
-**`connection/appLayer/RawConnection.kt`**
-
-Passthrough for unrecognised protocols. Logs a warning if MitM is enabled (indicating a protocol that escapes inspection).
-
----
-
-### Inet Layer — IP Packet Builders
-
-**`connection/inetLayer/`**
-
-`IpPacketBuilder` is an abstract factory selected by `TransportLayerConnection` based on the IP version of the initial packet. Subclasses (`IpV4PacketBuilder`, `IpV6PacketBuilder`) hold the local and remote addresses, swap source and destination when building response packets, and copy protocol-specific fields (TOS, flow label, etc.) from the initial packet. The `identification` counter in `IpV4PacketBuilder` is incremented for each constructed packet.
-
----
+`IpPacketBuilder` (IPv4 / IPv6) holds a connection's addresses and builds the packets sent to the device, with source and destination swapped. `buildStray()` builds a reply to a packet that belongs to no connection. `IcmpUnreachableBuilder` builds an ICMP port unreachable error byte by byte, quoting the datagram it answers.
 
 ### Caches
 
-#### ConnectionCache
-
-**`cache/ConnectionCache.kt`**
-
-A `HashMap` keyed by a 32-bit XOR hash of `(remoteAddress, protocol, localPort, remotePort)`. Provides `findConnection`, `addConnection`, `removeConnection`, and `closeAllAndClear` (calls `closeSoft()` on every entry before clearing). Used as a module-level singleton via its companion object.
-
-#### DnsCache
-
-**`metadata/DnsCache.kt`**
-
-A size-bounded `LinkedHashMap` with TTL-based expiry. Maximum 1 000 entries; default TTL 60 seconds. Expired entries are evicted lazily on `get()`. Oldest entries are dropped when the map is full.
-
-#### TlsPassthroughCache
-
-**`metadata/TlsPassthroughCache.kt`**
-
-A `HashSet<TlsPassthroughCacheEntry>` guarded by a `ReentrantReadWriteLock`. Each entry is a `(appId: Int, hostname: String)` pair. When a TLS ClientHello is received and the (appId, SNI hostname) pair is present, the `TlsConnection` forwards all data without decryption.
-
----
+| Cache | Key | Notes |
+|---|---|---|
+| `ConnectionCache` | `(remoteAddress, protocol, localPort, remotePort)` | Process-wide `ConcurrentHashMap`. Removing a connection flushes its byte counters |
+| `DnsCache` | IP address | LRU, 1000 entries, per-record TTL (default 60 s). An expired record is removed on lookup and not returned |
+| `TlsPassthroughCache` | `(appId, hostname)` | Four bounded LRU maps: passthrough reason, suspect counts, pairs that have carried decrypted data, pairs whose HTTP/3 was blocked. Lives for one VPN session |
 
 ### MitM Infrastructure
 
-#### Authority
+**Authority** names the CA (`heimdallmitm`, issuer `CN=Heimdall, O=TU Berlin, OU=SNET`) and its files under `filesDir/keystore`. The keystore password is random per install and stored next to the keystore in `heimdallmitm.pwd`.
 
-**`mitm/Authority.kt`**
+**KeyStoreHelper** loads `heimdallmitm.p12` or creates it. A keystore that cannot be read, has no certificate, or whose CA certificate is not currently valid is regenerated; a missing `.pem` export alone is simply re-exported. It also exports the CA for installation: `exportCaFiles()` (PEM plus `<subject_hash_old>.0`), `exportRootCertificate()` (a `.crt` for the user store) and `createMagiskModuleWithCertificate()`.
 
-A plain data class that defines the root CA's identity and file locations:
+**CertificateHelper** generates certificates with BouncyCastle:
 
-| Field | Default value |
-|---|---|
-| `alias` | `"heimdallmitm"` |
-| `password` | `"changeit"` |
-| `issuerCN / O / OU` | `"Heimdall"` / `"TU Berlin"` / `"SNET"` |
-| `subjectCN / O / OU` | `"Heimdall"` / `"HeimdallCert"` / `"HeimdallCertUnit"` |
+| | Root CA | Forged leaf |
+|---|---|---|
+| Key | RSA 2048 | RSA 2048 |
+| Validity | now − 1 year to now + 100 years | now − 1 year to now + 1 day |
+| Extensions | `BasicConstraints CA:true` (critical), `KeyUsage keyCertSign, cRLSign, digitalSignature` (critical), `ExtendedKeyUsage serverAuth, clientAuth` | `BasicConstraints CA:false`, the upstream certificate's SANs |
+| Signature | `SHA512WithRSAEncryption` (`SHA256` on 32-bit) | same, signed by the CA key |
 
-`Authority.generateCertificate(file)` is the entry point that triggers root CA creation.
+**SSLEngineSource** builds the client-side `SSLContext` (`TLSv1.3`, falling back to `TLSv1`) with `MergeTrustManager` (Heimdall CA plus system CAs) or, if the user opted in, `InsecureTrustManager`. Server-facing engines verify the hostname (`endpointIdentificationAlgorithm = "HTTPS"`). Forged server contexts are cached per common name in a Guava cache that expires five minutes after last access.
 
-#### CertificateHelper
+**CertificateSniffingMitmManager** creates the two engines of a connection: `createServerSSLEngine(sni, port, alpn)` for the real server, and `createClientSSLEngineFor(serverSession, alpn)`, which reads the common name and SANs from the server's certificate and returns a server-mode engine presenting a forged certificate for the same names.
 
-**`mitm/CertificateHelper.kt`**
+**MitmScope** decides whether an app and host may be intercepted: an optional app whitelist, an app blacklist, and a host whitelist or blacklist matched by domain suffix. The app module builds it from the preferences (`MitmScopeResolver`).
 
-All cryptographic operations via BouncyCastle:
-
-- **`createRootCertificate(authority)`** — Generates a 2 048-bit RSA key pair, builds an X.509v3 self-signed CA certificate (key usage: `keyCertSign`, `digitalSignature`, `keyEncipherment`; `BasicConstraints: CA:true`), and returns a PKCS12 `KeyStore`.
-- **`createServerCertificate(commonName, sans, authority, caCert, caPrivateKey)`** — Generates a 2 048-bit RSA key pair for the impersonated host, issues an X.509v3 certificate signed by the root CA, adds the provided SANs (DNS names and IP addresses), and returns a `KeyStore` containing the leaf cert and the CA cert in the chain.
-
-Certificate validity window: one year back to one year forward for the root CA; one day for leaf certificates.
-
-Signature algorithm: `SHA512WithRSAEncryption` on 64-bit JVMs, `SHA256WithRSAEncryption` on 32-bit.
-
-#### KeyStoreHelper
-
-**`mitm/KeyStoreHelper.kt`**
-
-Manages keystore persistence:
-
-- **`initialiseOrLoadKeyStore(authority)`** — On first run generates the root CA via `CertificateHelper` and saves it as a `.p12` file plus a `.pem` export. On subsequent runs loads from the `.p12` file.
-- **`initializeServerCertificates(...)`** — Writes per-host key and certificate chain to individual PEM files.
-- **`exportRootCertificate(context, keyStore, authority)`** — Exports the root CA to a `.crt` file in the app's cache directory for manual device installation.
-- **`createMagiskModuleWithCertificate(context, keyStore, authority)`** — Packages the root CA into a Magisk module ZIP so it can be installed as a system certificate, avoiding the need for manual user installation on rooted devices.
-
-#### SSLEngineSource
-
-**`mitm/SSLEngineSource.kt`**
-
-Factory for `SSLEngine` instances. Server-specific `SSLContext` objects (one per impersonated hostname) are cached using Guava's `CacheBuilder` with a 5-minute expiry and 16 concurrency segments.
-
-- **`newSSLEngine(remoteHost, remotePort)`** — Client-mode engine for the upstream server connection. Sets SNI via `SSLParameters.serverNames` and enables endpoint algorithm `"HTTPS"` for hostname verification.
-- **`createCertForHost(commonName, sans)`** — Checks the Guava cache. On a miss calls `CertificateHelper.createServerCertificate()`, builds a new `SSLContext`, caches it, and returns a server-mode engine for the device-facing half of the MitM.
-
-When `trustAllServers = true`, `InsecureTrustManager` (an `X509ExtendedTrustManager` that accepts every chain and skips hostname checks) is used for the upstream connection (useful for debugging apps that use certificate pinning through alternate means).
-
-#### CertificateSniffingMitmManager
-
-**`mitm/CertificateSniffingMitmManager.kt`**
-
-Top-level coordinator, used as a singleton. Bridges the transport-layer TLS handshake with the certificate infrastructure:
-
-- **`createServerSSLEngine(peerHost, peerPort)`** — Returns a client-mode engine for the upstream TLS handshake.
-- **`createClientSSLEngineFor(serverSSLSession)`** — Extracts the upstream server's `X509Certificate`, reads its CN and SANs, and delegates to `SSLEngineSource.createCertForHost()` to obtain a server-mode engine presenting a dynamically generated impersonating certificate.
-
-#### SubjectAlternativeNameHolder
-
-**`mitm/SubjectAlternativeNameHolder.kt`**
-
-Parses the `subjectAlternativeNames` collection from an upstream `X509Certificate` (a `Collection<List<*>>` where each inner list is `[tag: Int, value: String]`) and converts it to a BouncyCastle `GeneralNames` extension that is copied into the generated leaf certificate.
-
-#### MergeTrustManager
-
-**`mitm/MergeTrustManager.kt`**
-
-An `X509TrustManager` that chains Heimdall's own `KeyStore`-based trust manager with the device's default system trust manager. This allows `SSLEngineSource` to accept certificates signed by both the Heimdall CA and standard public CAs when evaluating the upstream server connection.
-
----
+**Alpn** sets and reads ALPN on an `SSLEngine` by reflection. It is available from API 29; below that, engines negotiate no ALPN.
 
 ### Database Connector
 
-**`components/DatabaseConnector.kt` / `components/RoomDatabaseConnector.kt`**
+`RoomDatabaseConnector` implements `DatabaseConnector`.
 
-`DatabaseConnector` is an interface with `suspend` methods for every persistence operation:
-
-| Method | Persists |
+| Method | Writes |
 |---|---|
-| `persistSession` / `updateSession` | VPN session start/end timestamps |
-| `persistTransportLayerConnection` | TCP/UDP connection with app attribution, tracker flag |
-| `deleteTransportLayerConnection` | Removes a connection (e.g., DNS) that was created speculatively |
-| `persistHttpRequest` | Full HTTP request with headers, body, method, path |
-| `persistHttpResponse` | Full HTTP response correlated with a request ID |
+| `persistSession` / `updateSession` | `Session` start and end |
+| `persistTransportLayerConnection` | A `Connection` row. Not `suspend`: the id is assigned in memory and returned at once, the insert runs in the background, and every later call for that id waits for it |
+| `deleteTransportLayerConnection` | Removes a connection that never came up |
+| `updateConnectionBytesOut` / `In` | Adds a delta to the byte counters |
+| `updateConnectionSecurity` | `securityProtocol`, `sni`, `alpn`, `echOffered` |
+| `updateConnectionHost` | A corrected hostname and tracker label |
+| `markConnectionBlocked` | `blocked = true` (QUIC block policy) |
+| `updateConnectionPassthroughReason` | Why a TLS connection was not decrypted |
+| `persistHttpRequest` / `persistHttpResponse` | `Request` and `Response` rows |
 
-`RoomDatabaseConnector` implements this interface using the Room DAOs from `core:database`. All methods run on `Dispatchers.IO`. Failures are logged via Timber and return `-1`.
+DNS connections (remote port 53) get id 0 and no row.
+
+---
+
+## How a New Flow Is Handled
+
+![Handling of a new flow (BPMN)](../../docs/diagrams/flow-interception.svg)
+
+Source: [`docs/diagrams/flow-interception.bpmn`](../../docs/diagrams/flow-interception.bpmn). A condensed interactive version of the decision is [`docs/diagrams/interception-decision.html`](../../docs/diagrams/interception-decision.html).
+
+A TLS connection is decrypted only if all of the following hold when its ClientHello arrives:
+
+1. MitM is enabled for the session.
+2. The app and the host are inside the user's MitM scope. Otherwise the reason is `OUT_OF_SCOPE`.
+3. No passthrough has been learned for this app and host in this session. Otherwise the reason is the learned `PassthroughReason`.
+4. The client offers no ALPN, or offers `http/1.1` among its protocols. Otherwise the reason is `ALPN_UNSUPPORTED` (gRPC and other clients that require HTTP/2).
+
+A connection that fails a check is forwarded record by record, and the reason is stored in `Connection.passthroughReason`.
 
 ---
 
 ## TLS MitM Deep Dive
 
-`TlsConnection` uses two independent `SSLEngine` instances to perform a transparent intercept:
+```mermaid
+sequenceDiagram
+    participant App as Device app
+    participant Tcp as TcpConnection
+    participant Tls as TlsConnection
+    participant Mitm as MitM manager
+    participant Http as HttpConnection
+    participant Srv as Remote server
+
+    App->>Tcp: SYN
+    Tcp->>Srv: connect() on a protected socket
+    Tcp-->>App: SYN-ACK with MSS
+    App->>Tcp: ClientHello
+    Tcp->>Tls: first payload
+    Note over Tls: parse SNI, ALPN, ECH and store them,<br/>check scope, passthrough cache and ALPN
+    Tls->>Mitm: createServerSSLEngine(SNI, port, ALPN)
+    Tls->>Srv: own ClientHello (ALPN http/1.1 if the app offered ALPN)
+    Srv-->>Tls: ServerHello, certificate, Finished
+    Tls->>Mitm: createClientSSLEngineFor(server session)
+    Mitm-->>Tls: engine with a forged leaf (same CN and SANs)
+    Tls->>App: ServerHello, forged certificate (replays the app's ClientHello)
+    App->>Tls: Finished, encrypted request
+    Tls->>Http: plaintext request
+    Http-->>Tls: same bytes (Request row queued)
+    Tls->>Srv: re-encrypted request
+    Srv-->>Tls: encrypted response
+    Tls->>Http: plaintext response
+    Http-->>Tls: same bytes (Response row queued)
+    Tls->>App: re-encrypted response
+```
+
+Interactive versions: [`tls-mitm-handshake.html`](../../docs/diagrams/tls-mitm-handshake.html) and [`tls-mitm-exchange.html`](../../docs/diagrams/tls-mitm-exchange.html).
+
+`TlsConnection` holds two `SSLEngine`s. The names follow the role Heimdall plays towards each peer's counterpart:
 
 ```
-Device ──── clientSSLEngine ──── TlsConnection ──── serverSSLEngine ──── Remote server
-           (server mode)                            (client mode)
-           fake cert for SNI                        real server cert
+Device app ── clientSSLEngine (server mode) ── TlsConnection ── serverSSLEngine (client mode) ── server
+              forged certificate                                validates the real certificate
 ```
 
-**State machine:**
+**State machine**
 
-```
-NEW
- │
- │  ClientHello received from device
- ▼
-SERVER_HANDSHAKE   ← serverSSLEngine.beginHandshake() → sends ClientHello to remote server
- │
- │  ServerHello / Certificate / … received from remote server
- ▼
-SERVER_ESTABLISHED ← upstream TLS session complete; upstream cert extracted
- │
- │  initiateClientHandshake(): creates fake cert for upstream CN+SANs
- ▼
-CLIENT_HANDSHAKE   ← clientSSLEngine.beginHandshake() → sends ServerHello/Cert to device
- │
- │  Device completes handshake
- ▼
-CLIENT_ESTABLISHED ← both sessions live; app data can now flow in plaintext
+```mermaid
+stateDiagram-v2
+    [*] --> NEW
+    NEW --> SERVER_HANDSHAKE: ClientHello, MitM decided
+    SERVER_HANDSHAKE --> SERVER_ESTABLISHED: server handshake finished
+    SERVER_ESTABLISHED --> CLIENT_HANDSHAKE: forged engine created,<br/>original ClientHello replayed
+    CLIENT_HANDSHAKE --> CLIENT_ESTABLISHED: client handshake finished
+    CLIENT_ESTABLISHED --> CLOSED: close_notify, error or TCP close
+    SERVER_HANDSHAKE --> CLOSED: upstream failure (learned)
+    CLIENT_HANDSHAKE --> CLOSED: app rejects certificate (learned)
+    CLOSED --> [*]
 ```
 
-**TLS record reassembly:**
+A connection that is passed through never leaves `NEW`: with `doMitm = false` every record goes straight to the application layer and back.
 
-TCP is a stream protocol; TLS records can be fragmented across multiple TCP segments and multiple records can be packed into one segment. `TlsConnection` maintains `remainingBytes` and `cache` lists for both directions and reassembles complete records before processing them.
+**Confinement.** All state is mutated on `connectionScope`, a dispatcher limited to one task at a time (`Dispatchers.IO.limitedParallelism(1)`). `unwrapOutbound` and `unwrapInbound` only enqueue work, so the two handler threads never touch the engines or buffers. The transport layer is told how many bytes are queued, which keeps TCP flow control honest across the asynchronous hop.
 
-**SNI extraction:**
+**Record reassembly.** `prepareRecords()` turns the TCP stream into whole TLS records: it reassembles records split across segments, splits segments that carry several records, and stashes fragments shorter than the five-byte header.
 
-`findSni(clientHello)` manually parses the TLS ClientHello message to extract the `server_name` extension (type `0x0000`) before any `SSLEngine` state is created. The SNI is used both as the Common Name for the generated leaf certificate and as the key for `TlsPassthroughCache` lookups.
+**Handshake ordering.** The server-facing handshake runs first, because the forged certificate is modelled on the real one. Records the app sends in the meantime (a ClientHello spread over several records, 0-RTT data) are buffered, at most 16, and replayed once the client-facing handshake starts. Delegated tasks of the engines run inline so that no record of a multi-record flight is refused.
 
-**Buffer management:**
+**ALPN.** If the app offered ALPN, the server is offered `http/1.1` only, and the app is answered with what the server selected. A server that insists on HTTP/2 fails the handshake, which is learned as `UPSTREAM_HANDSHAKE_FAILED`.
 
-Each `TlsConnection` holds 8 `ByteBuffer` instances—application and network buffers for each direction of each engine. Buffers are grown dynamically when `SSLEngineResult.Status.BUFFER_OVERFLOW` is returned.
+**Passthrough learning** (`TlsPassthroughCache`, switchable through `learnPassthrough`). The current connection cannot be saved, since its ClientHello has been consumed, but later connections of the same app to the same host are passed through:
+
+| `PassthroughReason` | Trigger | Effect |
+|---|---|---|
+| `CLIENT_HANDSHAKE_ERROR` | The client-facing engine throws on data from the app during the handshake, typically a certificate alert | Immediate |
+| `CLIENT_CLOSED_DURING_HANDSHAKE` | The app closes or resets TCP during the client-facing handshake | Immediate |
+| `UPSTREAM_HANDSHAKE_FAILED` | Heimdall's handshake with the server fails, e.g. its certificate does not verify | Immediate, and stored on the connection |
+| `CLOSED_WITHOUT_DATA` | The app completes the handshake and closes without sending data within `pinningCloseWindowMs`, or at any time if the connection is a TLS fallback forced by the QUIC block | After two hits; ignored once the pair has carried decrypted data |
+
+**Closing.** A `close_notify` from the server ends the client-facing session with Heimdall's own `close_notify` and leaves the TCP close to the transport layer, queued behind any data still being processed. A `close_notify` or TCP close from the app closes both sessions. An alert the app sends before the client-facing engine exists is plaintext and simply ends the TLS side without a reset.
+
+---
+
+## QUIC
+
+QUIC is never decrypted beyond its first packets. `QuicConnection` does two things:
+
+1. **Passive inspection.** `QuicInitialInspector` derives the Initial keys from the client's Destination Connection ID (QUIC v1 and v2), decrypts the client's Initial packets, collects CRYPTO frames across up to four datagrams, and parses the ClientHello. SNI, ALPN and the ECH flag are stored on the connection and the hostname is refined, also when MitM is off. Datagrams are forwarded first, so inspection never delays traffic.
+2. **Block policy** (only with MitM on and `QuicPolicy.BLOCK`). The first datagrams are held back until the inspector has a verdict. If the flow offers HTTP/3 (`h3` or `h3-*`) and the TLS MitM would intercept the same app and host, the flow is blocked: the socket is released, the connection is marked `blocked`, every datagram is dropped, and the first three are answered with an ICMP port unreachable error so that the app falls back to TLS over TCP at once. Flows whose ClientHello cannot be read are forwarded.
+
+The default policy is `PASSTHROUGH`. See [`docs/quic_mitm.md`](../../docs/quic_mitm.md) for the analysis behind this design and what full QUIC termination would take.
 
 ---
 
 ## Threading Model
 
-| Thread | Type | Blocking primitive |
+| Thread | Type | Blocks on |
 |---|---|---|
-| `DevicePollThread` | Plain `Thread` | `Os.poll()` (native) |
-| `DeviceWriteThread` | `HandlerThread` | `MessageQueue.next()` |
-| `OutboundTrafficHandler` | `HandlerThread` | `MessageQueue.next()` |
-| `InboundTrafficHandler` | Plain `Thread` | `Selector.select()` |
+| `DevicePollThread` | `Thread` | `Os.poll()` |
+| `OutboundTrafficHandler` | `HandlerThread` | Message queue |
+| `InboundTrafficHandler` | `Thread` | `Selector.select()` |
+| `DeviceWriteThread` | `HandlerThread` | Message queue |
 
-**Synchronisation:**
+All four run at `THREAD_PRIORITY_FOREGROUND`. The two plain threads set it at the top of `run()`, because `Process.setThreadPriority(int)` applies to the calling thread.
 
-- `ComponentManager.selectorMonitor`: coarse lock protecting `Selector.select()` / `wakeup()` / key-registration races between `InboundTrafficHandler` and `TransportLayerConnection` constructors.
-- `TlsPassthroughCache`: `ReentrantReadWriteLock` for concurrent reads with occasional writes.
-- Everything else: the `Handler` message queues provide natural serialisation per connection.
+Coroutines:
 
-**Coroutines:**
+| Scope | Dispatcher | Work |
+|---|---|---|
+| `ComponentManager.componentScope` | `Dispatchers.IO` | Idle sweep (30 s), byte-counter flush (1 s) |
+| `TcpConnection.setupScope` | `IO.limitedParallelism(8)` | App lookup, `protect()`, connect, selector registration |
+| `TlsConnection.connectionScope` | `IO.limitedParallelism(1)` per connection | All TLS record processing and handshakes |
+| `HttpConnection.persistScope` | `Dispatchers.IO`, one write at a time per connection | Request and response rows |
+| `RoomDatabaseConnector.insertScope` | `Dispatchers.IO` | Connection inserts |
 
-`TlsConnection` launches `Dispatchers.IO` coroutines for the blocking parts of TLS handshakes. `HttpConnection` launches coroutines for database persistence to avoid blocking the handler threads. `ComponentManager` uses `runBlocking` for session persistence during startup/shutdown.
+Locks:
+
+- `ComponentManager.selectorMonitor` guards channel registration against a `select()` in progress.
+- `TcpConnection`: `sendLock` (everything sent to the device and its sequence numbers), `writeLock` (the queue for the remote host), `closeLock` (the closing handshake, which both handler threads drive), `interestLock` (the selection key's interest set).
+- `DnsCache` and `TlsPassthroughCache` use a `ReentrantReadWriteLock`.
 
 ---
 
 ## Configuration
 
-All configuration is passed into `ComponentManager` at construction time by `HeimdallVpnService`. There are no runtime-settable properties.
+Everything is passed to `ComponentManager` at construction; nothing changes while the VPN runs.
 
-| Parameter | Default | Effect |
+| Parameter | Default | Preference (resolved in `app`) |
 |---|---|---|
-| `doMitm` | `false` | Enable TLS interception |
-| `maxPacketSize` | `16 413` | Read buffer size for TUN interface |
-| `keyStoreDir` | app files dir | Where `.p12` / `.pem` / key files are stored |
-| `protectSocket` | no-op | Called on each new `Socket` to exclude it from VPN routing |
-| `protectDatagramSocket` | no-op | Same for `DatagramSocket` |
+| `doMitm` | `false` | `mitmEnable` |
+| `mitmScope` | `MitmScope.ALL` | MitM monitoring scope for apps and hosts (`MitmScopeResolver`) |
+| `learnPassthrough` | `true` | `mitmAppLayerPassthrough` |
+| `trustAllUpstreamCertificates` | `false` | `mitmTrustAllUpstreamCerts` |
+| `quicPolicy` | `PASSTHROUGH` | `mitmQuicPolicy`, or the `QUIC_POLICY_EXTRA` intent extra for one session (`QuicPolicyResolver`) |
+| `maxHttpBodySize` | 256 KB (max 1 MB) | `mitmHttpBodyLimitKb` (`HttpBodyLimitResolver`) |
+| `refuseDnsOverTlsTo` | `null` | The VPN's DNS server unless Private DNS is in strict mode |
+| `pinningCloseWindowMs` | 3000 | none |
+| `existingSessionId` | `-1` (create one) | `SESSION_ID_EXTRA` intent extra |
+| `keyStoreDir` | required | `filesDir/keystore` |
+| `maxPacketSize` | 16 413 | none |
 
-**TLS / certificate constants** (in `CertificateHelper`):
+Constants worth knowing:
 
 | Constant | Value |
 |---|---|
-| Key size (root CA + leaf) | 2 048 bits RSA |
-| Root CA validity | −1 year to +1 year |
-| Leaf certificate validity | −1 day to +1 day |
-| TLS context protocol | `TLSv1.3` (fallback `TLSv1`) |
-| Signature algorithm | `SHA512WithRSAEncryption` (64-bit), `SHA256WithRSAEncryption` (32-bit) |
+| `VPN_MTU` | 1500 |
+| `TcpConnection.OUT_BACKLOG_LIMIT` | 256 KB |
+| `TcpConnection.SEND_BACKLOG_HIGH` / `LOW` | 131 070 / 32 768 bytes |
+| `TcpConnection.MAX_WINDOW` | 65 535 (no window scaling) |
+| Half-closed and closing timeouts | 2 min each |
+| `UdpConnection.DEFAULT_IDLE_TIMEOUT_MS` | 5 min |
+| `IpV4Reassembler` | 5 s timeout, 64 pending datagrams |
+| `QuicInitialInspector` | 4 datagrams, 16 KB of handshake data |
+| `TlsPassthroughCache` | 1000 entries per map, 2 hits for `CLOSED_WITHOUT_DATA` |
 
-**DNS cache:** max 1 000 entries, default TTL 60 s.
+---
 
-**Per-host SSL context cache:** max size unbounded; 5-minute write-expiry; 16 concurrency segments.
+## Limitations
 
-**HTTP body cap:** 1 048 576 bytes (1 MB). Larger bodies are replaced with `<too large: N bytes>` in the database.
+- Only HTTP/1.1 is parsed. HTTP/2 is avoided by ALPN negotiation or passed through; HTTP/3 is passed through or blocked.
+- QUIC payloads are never decrypted.
+- Only TCP and UDP are carried. Other protocols, including ICMP from apps, are dropped at the TUN interface.
+- IPv6 packets are parsed and built, but the service only routes IPv4 into the tunnel by default, and IPv6 fragments are not reassembled.
+- Apps that pin certificates are detected and passed through from their second connection on; the first one fails.
+- Passthrough knowledge is per VPN session and is not persisted.
+
+---
+
+## Tests
+
+JVM unit tests live in `core/vpn/src/test`. `integration/` drives whole connection stacks with the fixtures in `integration/support` (a fake TLS server and client, a recording `DatabaseConnector`, a selector pump) and covers TCP setup, half-close, receive window, backpressure, the TLS MitM flow, passthrough learning, the QUIC policies and DNS. The other packages hold tests per class. Run them with:
+
+```bash
+./gradlew :core:vpn:test
+```
+
+For tests against a rooted emulator with real traffic, see `scripts/emulator-traffic.sh` and `scripts/stress/`.
 
 ---
 
@@ -632,11 +614,11 @@ All configuration is passed into `ComponentManager` at construction time by `Hei
 
 | Library | Version | Used for |
 |---|---|---|
-| **Pcap4j** (`pcap4j-core`, `pcap4j-packetfactory-static`) | 1.7.6 | Parsing raw IP/TCP/UDP/DNS packets; constructing response packets |
-| **BouncyCastle** (`bcpkix-jdk15on`) | 1.69 | X.509 certificate generation; PEM serialisation |
-| **Guava** | — | `CacheBuilder` for per-host `SSLContext` caching |
-| **Room KTX** | 2.7.1 | Database persistence via `RoomDatabaseConnector` |
-| **Lifecycle Runtime KTX** | — | Coroutine scopes in connection classes |
-| **Timber** | 4.7.1 | Logging throughout |
-| **`core:database`** | internal | Room DAOs and entity types |
-| **`core:util`** | internal | `AppFinder` (UID→package), `Trie` (tracker hostname lookup) |
+| pcap4j (`pcap4j-core`, `pcap4j-packetfactory-static`) | 1.7.6 | Parsing and building IP, TCP, UDP and DNS packets |
+| BouncyCastle (`bcpkix-jdk15on`) | 1.69 | X.509 certificate generation, PEM export |
+| Guava | 28.2-android | Cache of forged `SSLContext`s |
+| Room KTX | 2.7.1 | Persistence |
+| Timber | 4.7.1 | Logging |
+| `core:database`, `core:util` | internal | Entities and DAOs; `AppFinder`, `Trie` |
+
+TLS itself is the platform's JSSE `SSLEngine` (Conscrypt on Android).

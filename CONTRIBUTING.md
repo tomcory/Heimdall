@@ -22,7 +22,7 @@ No API keys, extra signing configs, or submodules are required to build.
 
 ## Codebase orientation
 
-Heimdall is a multi-module Android project — `app/` plus several `core/*` library modules (database, scanner, vpn, proxy, util, export, datastore, datastore-proto). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of modules, the MVVM/Hilt architecture, the VPN/MitM packet pipeline, and the database schema. The VPN/MitM engine specifically has its own deep-dive at [`core/vpn/README.md`](core/vpn/README.md).
+Heimdall is a multi-module Android project — `app/` plus several `core/*` library modules (database, scanner, vpn, util, export, datastore, datastore-proto). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of modules, the MVVM/Hilt architecture, the VPN/MitM packet pipeline, and the database schema. The VPN/MitM engine specifically has its own deep-dive at [`core/vpn/README.md`](core/vpn/README.md).
 
 ## Adding a new privacy-score module
 
