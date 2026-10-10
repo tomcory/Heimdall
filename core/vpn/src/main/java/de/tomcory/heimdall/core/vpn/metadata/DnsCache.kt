@@ -31,11 +31,17 @@ class DnsCache(
         }
     }
 
+    /**
+     * @return the hostname recorded for [ip], or null if there is none or its TTL has run out.
+     * An expired record is removed and not returned: the address may belong to another host by
+     * now, and a wrong hostname mislabels the connection.
+     */
     fun get(ip: String): String? {
         return lock.write {
             cache[ip]?.let {
                 if (it.expiry < System.currentTimeMillis()) {
-                    cache.remove(ip)?.hostname
+                    cache.remove(ip)
+                    null
                 } else {
                     it.hostname
                 }

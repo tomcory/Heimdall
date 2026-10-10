@@ -34,12 +34,10 @@ class DnsCacheTest {
     }
 
     @Test
-    fun `entry is evicted from cache after TTL elapses`() {
+    fun `an expired entry is not returned, not even once`() {
         cache.put("1.2.3.4", "example.com", 1)
         Thread.sleep(1500)
-        // First get after expiry triggers removal from cache (implementation removes-on-read)
-        cache.get("1.2.3.4")
-        // Subsequent get returns null since the entry was removed
+        assertNull(cache.get("1.2.3.4"))
         assertNull(cache.get("1.2.3.4"))
     }
 
