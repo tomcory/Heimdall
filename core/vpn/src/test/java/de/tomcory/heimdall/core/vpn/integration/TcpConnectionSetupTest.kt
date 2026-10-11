@@ -26,7 +26,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-41 (V-51): the blocking parts of setting up a TCP
+ * Tests for docs/records/vpn-mitm-audit.md PKT-41 (V-51): the blocking parts of setting up a TCP
  * connection (finding the owning app, protecting and connecting the socket) must not run on the
  * thread that creates the connection, which is the one that handles every packet from the device.
  */
@@ -123,7 +123,7 @@ class TcpConnectionSetupTest {
 
     @Test
     fun `the SYN-ACK announces the maximum segment size the device announced`() {
-        // docs/vpn-mitm-audit.md PKT-45: without the option the device falls back to 536 bytes
+        // docs/records/vpn-mitm-audit.md PKT-45: without the option the device falls back to 536 bytes
         appLookupGate.countDown()
 
         val withMss = PacketFixtures.buildTcpSynPacket(localAddr, 46200, remoteAddr, serverSocket.localPort, mss = 1460)

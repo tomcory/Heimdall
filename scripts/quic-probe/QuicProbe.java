@@ -10,7 +10,7 @@ import java.nio.file.Paths;
  * Sends canned QUIC client Initial datagrams over one connected UDP socket, the way a QUIC
  * client does, and reports what the socket sees: an ICMP error ("refused"), an answer, or
  * nothing. Used by the "quic" group of scripts/emulator-traffic.sh, which runs it on the
- * emulator with app_process (docs/vpn-mitm-audit.md PKT-52). Netcat cannot tell these apart,
+ * emulator with app_process (docs/records/vpn-mitm-audit.md PKT-52). Netcat cannot tell these apart,
  * because only a connected socket is told about ICMP errors.
  *
  * Usage: QuicProbe HOST PORT FILE...   (one file per datagram, sent in order)

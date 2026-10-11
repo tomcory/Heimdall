@@ -1,6 +1,6 @@
 # Heimdall — Architectural Issues
 
-A point-in-time snapshot from a code audit of the whole codebase (2026-09-15), revised after a line-by-line check against the `ui-rework` working tree. It is not a tracked issue list. Findings are grouped by subsystem and ranked High/Medium/Low. Each entry gives the file and line, the issue, a concrete failure scenario, and a one-line fix direction. It points at where to look; it doesn't prescribe full fixes. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how these subsystems are supposed to fit together.
+A point-in-time snapshot from a code audit of the whole codebase (2026-09-15), revised after a line-by-line check against the `ui-rework` working tree. It is not a tracked issue list. Findings are grouped by subsystem and ranked High/Medium/Low. Each entry gives the file and line, the issue, a concrete failure scenario, and a one-line fix direction. It points at where to look; it doesn't prescribe full fixes. See [`docs/architecture.md`](../architecture.md) for how these subsystems are supposed to fit together.
 
 ## Start here: live correctness bugs
 
@@ -100,7 +100,7 @@ Fix direction: return `null` for expired entries, and delete the unused `cache/D
 
 **Package install/uninstall handlers are unreachable**
 `app/src/main/AndroidManifest.xml:60-66`; `app/src/main/java/de/tomcory/heimdall/service/HeimdallBroadcastReceiver.kt:33-34, 67-88`
-The receiver's intent filter lists only `BOOT_COMPLETED` and `QUICKBOOT_POWERON`, and nothing registers it at runtime. `ACTION_PACKAGE_ADDED` and `ACTION_PACKAGE_REMOVED` are never delivered. As a result, newly installed apps are never scanned automatically and uninstalled apps are never marked `isInstalled = false`. This contradicts CLAUDE.md and ARCHITECTURE.md, which say scans are triggered on install and remove. `QUICKBOOT_POWERON` also falls through to the `else` branch, so it runs no boot scan. Fix direction: register for package broadcasts at runtime (manifest-declared receivers no longer get these implicit broadcasts on API 26+), or reconcile installed packages in `ScanWorker` on each run. Handle `QUICKBOOT_POWERON` like `BOOT_COMPLETED`.
+The receiver's intent filter lists only `BOOT_COMPLETED` and `QUICKBOOT_POWERON`, and nothing registers it at runtime. `ACTION_PACKAGE_ADDED` and `ACTION_PACKAGE_REMOVED` are never delivered. As a result, newly installed apps are never scanned automatically and uninstalled apps are never marked `isInstalled = false`. This contradicts CLAUDE.md and docs/architecture.md, which say scans are triggered on install and remove. `QUICKBOOT_POWERON` also falls through to the `else` branch, so it runs no boot scan. Fix direction: register for package broadcasts at runtime (manifest-declared receivers no longer get these implicit broadcasts on API 26+), or reconcile installed packages in `ScanWorker` on each run. Handle `QUICKBOOT_POWERON` like `BOOT_COMPLETED`.
 
 **`ScanWorker` enqueueing ignores preferences and cancels in-flight scans**
 `app/src/main/java/de/tomcory/heimdall/service/ScanWorker.kt:64-65, 203-221`
@@ -168,7 +168,7 @@ The composable calls `viewModel.isExpanded(conn.id)`, which reads `_expandedConn
 
 **`Evaluator` provider is redundant and unscoped**
 `app/src/main/java/de/tomcory/heimdall/application/AppModule.kt:25-30`
-`provideEvaluator` has no `@Singleton`, which contradicts `docs/ARCHITECTURE.md`, and it duplicates `Evaluator`'s own `@Inject constructor`. Each `ScoreViewModel` gets a fresh `Evaluator` and three `Module` instances. The cost is small, but the documented contract doesn't hold. ARCHITECTURE.md also says `AppModule` provides the database; it's actually `core/database/.../DatabaseModule.kt`. Fix direction: delete the provider and annotate the class `@Singleton`, then correct ARCHITECTURE.md.
+`provideEvaluator` has no `@Singleton`, which contradicts `docs/architecture.md`, and it duplicates `Evaluator`'s own `@Inject constructor`. Each `ScoreViewModel` gets a fresh `Evaluator` and three `Module` instances. The cost is small, but the documented contract doesn't hold. docs/architecture.md also says `AppModule` provides the database; it's actually `core/database/.../DatabaseModule.kt`. Fix direction: delete the provider and annotate the class `@Singleton`, then correct docs/architecture.md.
 
 **`MainRepository` is an empty scaffold**
 `ui/main/MainRepository.kt:8-11`

@@ -12,7 +12,7 @@ import javax.net.ssl.X509TrustManager
 
 /**
  * A forged certificate signed by a newly generated CA validates under PKIX with the CA as the
- * only trust anchor (docs/vpn-mitm-audit.md PKT-64: the CA's KeyUsage is critical and its
+ * only trust anchor (docs/records/vpn-mitm-audit.md PKT-64: the CA's KeyUsage is critical and its
  * ExtendedKeyUsage no longer allows any purpose, so a validator must still accept the chain).
  *
  * With the environment variable `HEIMDALL_WRITE_CA_CHAIN` set to a directory, the CA and leaf are

@@ -79,7 +79,7 @@ class TlsPassthroughCacheTest {
         assertEquals(5, backingMap.size)
     }
 
-    // ---- recordFailure (docs/vpn-mitm-audit.md PKT-23) ----
+    // ---- recordFailure (docs/records/vpn-mitm-audit.md PKT-23) ----
 
     @Test
     fun `handshake error marks the pair immediately`() {
@@ -147,7 +147,7 @@ class TlsPassthroughCacheTest {
         assertEquals(5, suspectCounts(bounded).size)
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-56: upstream failures and stored reasons ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-56: upstream failures and stored reasons ----
 
     @Test
     fun `an upstream handshake failure marks the pair at once`() {
@@ -174,7 +174,7 @@ class TlsPassthroughCacheTest {
         assertEquals(PassthroughReason.CLIENT_HANDSHAKE_ERROR, cache.getReason(1000, "example.com"))
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-54: idle closes after data was decrypted ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-54: idle closes after data was decrypted ----
 
     @Test
     fun `closed-without-data never marks a pair that has carried data`() {

@@ -8,7 +8,7 @@ import javax.crypto.spec.SecretKeySpec
  * QUIC version 2). They are derived from public values only, the version's salt and the
  * Destination Connection ID of the client's first Initial packet, so anyone on the path can
  * compute them. That is what lets Heimdall read the ClientHello of a QUIC flow without
- * intercepting it (docs/vpn-mitm-audit.md PKT-49).
+ * intercepting it (docs/records/vpn-mitm-audit.md PKT-49).
  *
  * @property key The AEAD key (AES-128-GCM).
  * @property iv The AEAD nonce base.

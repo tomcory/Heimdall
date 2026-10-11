@@ -20,7 +20,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-28 (V-39): a connection's hostname and tracker label come
+ * Tests for docs/records/vpn-mitm-audit.md PKT-28 (V-39): a connection's hostname and tracker label come
  * from a reverse lookup in the DNS cache when the connection is created, and
  * [TransportLayerConnection.refineRemoteHost] lets the encryption layer correct both once the
  * client's ClientHello has named the server.

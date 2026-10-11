@@ -26,7 +26,7 @@ import java.util.Date
 import java.util.concurrent.TimeUnit
 
 /**
- * Regression tests for docs/vpn-mitm-audit.md PKT-09 (V-04): [KeyStoreHelper.initialiseOrLoadKeyStore]
+ * Regression tests for docs/records/vpn-mitm-audit.md PKT-09 (V-04): [KeyStoreHelper.initialiseOrLoadKeyStore]
  * used to reuse an existing keystore purely based on file *existence*, never checking whether its
  * CA certificate was actually still valid - once the CA expired, every TLS handshake would start
  * failing silently. It now checks validity before reusing, regenerating on expiry instead.

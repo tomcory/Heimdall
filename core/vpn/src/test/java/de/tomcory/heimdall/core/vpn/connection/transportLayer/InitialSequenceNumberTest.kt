@@ -3,7 +3,7 @@ package de.tomcory.heimdall.core.vpn.connection.transportLayer
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Tests for docs/vpn-mitm-audit.md PKT-64 (A-9). */
+/** Tests for docs/records/vpn-mitm-audit.md PKT-64 (A-9). */
 class InitialSequenceNumberTest {
 
     @Test

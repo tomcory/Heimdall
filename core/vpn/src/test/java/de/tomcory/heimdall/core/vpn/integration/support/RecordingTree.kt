@@ -5,7 +5,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A Timber tree that keeps every log line, for tests of what is (and is not) logged
- * (docs/vpn-mitm-audit.md PKT-63). Plant it with [plant] and remove it with [uproot].
+ * (docs/records/vpn-mitm-audit.md PKT-63). Plant it with [plant] and remove it with [uproot].
  */
 class RecordingTree : Timber.Tree() {
 

@@ -8,7 +8,7 @@ import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 
 /**
- * Regression tests for docs/vpn-mitm-audit.md PKT-07 (V-02): [MergeTrustManager] is the trust
+ * Regression tests for docs/records/vpn-mitm-audit.md PKT-07 (V-02): [MergeTrustManager] is the trust
  * manager real upstream-server certificate validation should go through (as opposed to the
  * insecure "trust everything" trust manager this fixes). It merges a supplied trust store (here,
  * a CA the test controls) with the platform's default trust store, accepting a chain trusted by

@@ -107,7 +107,7 @@ fun MitMPreferences(
             onValueChange = { value -> viewModel.preferences.setMitmTrustAllUpstreamCerts(value) }
         )
 
-        // docs/vpn-mitm-audit.md PKT-51: off by default
+        // docs/records/vpn-mitm-audit.md PKT-51: off by default
         BooleanPreference(
             text = "Block QUIC (force TLS fallback)",
             value = viewModel.preferences.mitmQuicPolicy.collectAsState(initial = viewModel.prefInit.mitmQuicPolicyInitial).value == MitmQuicPolicy.QUIC_BLOCK,
@@ -116,7 +116,7 @@ fun MitMPreferences(
             }
         )
 
-        // docs/vpn-mitm-audit.md PKT-59: 0 is what older installs read and means the default
+        // docs/records/vpn-mitm-audit.md PKT-59: 0 is what older installs read and means the default
         IntPreference(
             text = "Largest HTTP body to keep (KB)",
             dialogText = "Largest HTTP body to keep, in KB (1 to 1024); longer bodies are stored truncated",

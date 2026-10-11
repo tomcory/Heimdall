@@ -8,7 +8,7 @@ import kotlin.concurrent.write
 /**
  * Per-VPN-session record of (app, hostname) pairs whose TLS connections must not be MitM'd,
  * because the app has shown it won't accept Heimdall's forged certificate (see
- * [recordFailure] and docs/vpn-mitm-audit.md PKT-23).
+ * [recordFailure] and docs/records/vpn-mitm-audit.md PKT-23).
  *
  * @param maxSize Upper bound on both the passthrough entries and the pending suspect counters;
  * the least recently used entries are evicted beyond it.
@@ -59,7 +59,7 @@ class TlsPassthroughCache(
 
     /**
      * The reason the pair was marked for passthrough, or null if it is not marked
-     * (docs/vpn-mitm-audit.md PKT-56).
+     * (docs/records/vpn-mitm-audit.md PKT-56).
      */
     fun getReason(initiator: Int, hostname: String): PassthroughReason? {
         // an access-order LinkedHashMap reorders its internal list on reads too (to track
@@ -87,7 +87,7 @@ class TlsPassthroughCache(
             }
             if (reason == PassthroughReason.CLOSED_WITHOUT_DATA && decrypted[key] != null) {
                 // the app has already sent data through the MitM for this host, so it accepts
-                // the certificate; this was an idle connection (docs/vpn-mitm-audit.md PKT-54)
+                // the certificate; this was an idle connection (docs/records/vpn-mitm-audit.md PKT-54)
                 return@write false
             }
             if (reason == PassthroughReason.CLOSED_WITHOUT_DATA) {
@@ -108,7 +108,7 @@ class TlsPassthroughCache(
      * which proves that the app accepts Heimdall's certificate for the host. From then on,
      * [PassthroughReason.CLOSED_WITHOUT_DATA] is ignored for the pair, and hits counted before are
      * dropped: apps keep idle connections (pools, pre-connects, the loser of a TCP/QUIC race) and
-     * close them without data, which is not a rejection (docs/vpn-mitm-audit.md PKT-54). The
+     * close them without data, which is not a rejection (docs/records/vpn-mitm-audit.md PKT-54). The
      * other reasons are direct evidence of a rejection and still count.
      */
     fun recordDecrypted(initiator: Int, hostname: String) {
@@ -120,7 +120,7 @@ class TlsPassthroughCache(
     }
 
     /**
-     * Records that the QUIC block policy blocked HTTP/3 for the pair (docs/vpn-mitm-audit.md
+     * Records that the QUIC block policy blocked HTTP/3 for the pair (docs/records/vpn-mitm-audit.md
      * PKT-52), so the client was forced onto a TLS fallback.
      */
     fun recordQuicBlocked(initiator: Int, hostname: String) {
@@ -155,7 +155,7 @@ enum class PassthroughReason {
     /**
      * Heimdall's own handshake with the server failed: its certificate did not verify, or the
      * handshake failed otherwise. The app may trust the server where Heimdall does not, e.g.
-     * through its own CA, so it decides for itself on the next connection (docs/vpn-mitm-audit.md
+     * through its own CA, so it decides for itself on the next connection (docs/records/vpn-mitm-audit.md
      * PKT-56).
      */
     UPSTREAM_HANDSHAKE_FAILED

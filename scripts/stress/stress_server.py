@@ -188,7 +188,7 @@ class EchoHandler(socketserver.BaseRequestHandler):
 
 
 class HalfCloseHandler(socketserver.BaseRequestHandler):
-    """Half-closes first, then keeps reading (docs/vpn-mitm-audit.md PKT-53).
+    """Half-closes first, then keeps reading (docs/records/vpn-mitm-audit.md PKT-53).
 
     "HALFCLOSE <token>\\n": answers "HELLO\\n", shuts down its sending side, reads until the
     client closes and records how many bytes followed the line, and their SHA-256.

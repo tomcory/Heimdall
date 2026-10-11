@@ -27,7 +27,7 @@ import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-60 (V-65): a response waits for its request's row however
+ * Tests for docs/records/vpn-mitm-audit.md PKT-60 (V-65): a response waits for its request's row however
  * long the database takes, and a connection's writes happen one at a time, in wire order. Runs on
  * virtual time, so waits of minutes take none.
  */

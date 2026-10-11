@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Tests for [ChunkedBodyTracker] (docs/vpn-mitm-audit.md PKT-32).
+ * Tests for [ChunkedBodyTracker] (docs/records/vpn-mitm-audit.md PKT-32).
  */
 class ChunkedBodyTrackerTest {
 

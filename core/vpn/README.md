@@ -520,7 +520,7 @@ QUIC is never decrypted beyond its first packets. `QuicConnection` does two thin
 1. **Passive inspection.** `QuicInitialInspector` derives the Initial keys from the client's Destination Connection ID (QUIC v1 and v2), decrypts the client's Initial packets, collects CRYPTO frames across up to four datagrams, and parses the ClientHello. SNI, ALPN and the ECH flag are stored on the connection and the hostname is refined, also when MitM is off. Datagrams are forwarded first, so inspection never delays traffic.
 2. **Block policy** (only with MitM on and `QuicPolicy.BLOCK`). The first datagrams are held back until the inspector has a verdict. If the flow offers HTTP/3 (`h3` or `h3-*`) and the TLS MitM would intercept the same app and host, the flow is blocked: the socket is released, the connection is marked `blocked`, every datagram is dropped, and the first three are answered with an ICMP port unreachable error so that the app falls back to TLS over TCP at once. Flows whose ClientHello cannot be read are forwarded.
 
-The default policy is `PASSTHROUGH`. See [`docs/quic_mitm.md`](../../docs/quic_mitm.md) for the analysis behind this design and what full QUIC termination would take.
+The default policy is `PASSTHROUGH`. See [`docs/records/quic-mitm.md`](../../docs/records/quic-mitm.md) for the analysis behind this design and what full QUIC termination would take.
 
 ---
 

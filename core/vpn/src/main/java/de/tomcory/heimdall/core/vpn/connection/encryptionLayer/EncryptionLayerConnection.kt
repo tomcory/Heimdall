@@ -38,7 +38,7 @@ abstract class EncryptionLayerConnection(
 
     /**
      * Whether this connection keeps working when the client finishes sending but still expects
-     * inbound data (a TCP half-close, docs/vpn-mitm-audit.md PKT-30). Read on the transport
+     * inbound data (a TCP half-close, docs/records/vpn-mitm-audit.md PKT-30). Read on the transport
      * layer's thread. Layers that merely forward bytes can always carry it.
      */
     open val supportsHalfClose: Boolean
@@ -46,7 +46,7 @@ abstract class EncryptionLayerConnection(
 
     /**
      * Asynchronously records how this connection is secured, along with what its ClientHello
-     * revealed, on the connection's database entry (docs/vpn-mitm-audit.md PKT-27). Connections
+     * revealed, on the connection's database entry (docs/records/vpn-mitm-audit.md PKT-27). Connections
      * without a database entry (id 0, e.g. DNS) are skipped.
      *
      * @param sni The server name the client asked for, if any.
@@ -63,7 +63,7 @@ abstract class EncryptionLayerConnection(
             // Each write replaces all of these fields, so a connection's writes must land in the
             // order they were made. QUIC writes twice in quick succession (the label when the
             // flow is created, then what the ClientHello revealed), and two independent
-            // coroutines did not always run in that order (docs/vpn-mitm-audit.md PKT-50).
+            // coroutines did not always run in that order (docs/records/vpn-mitm-audit.md PKT-50).
             synchronized(securityWriteLock) {
                 val previous = lastSecurityWrite
                 lastSecurityWrite = CoroutineScope(Dispatchers.IO).launch {
@@ -90,7 +90,7 @@ abstract class EncryptionLayerConnection(
 
     /**
      * Whether the TLS MitM intercepts a connection of this app to [host], provided MitM is on:
-     * the app and host are within the user's MitM scope (docs/vpn-mitm-audit.md PKT-24), and no
+     * the app and host are within the user's MitM scope (docs/records/vpn-mitm-audit.md PKT-24), and no
      * passthrough has been learned for them. The one place this is decided, so that the QUIC
      * block rule, which predicts what a TLS fallback will meet, cannot drift from the TLS path
      * (PKT-52).
@@ -101,7 +101,7 @@ abstract class EncryptionLayerConnection(
      * Why the TLS MitM would not intercept a connection of this app to [host] (see
      * [wouldIntercept]), or null if it would: [OUT_OF_SCOPE], or the name of the
      * [de.tomcory.heimdall.core.vpn.metadata.PassthroughReason] learned for the app and host
-     * (docs/vpn-mitm-audit.md PKT-56).
+     * (docs/records/vpn-mitm-audit.md PKT-56).
      */
     protected fun interceptionSkipReason(host: String): String? {
         if (!componentManager.mitmScope.shouldIntercept(transportLayer.appPackage, host)) {
@@ -112,7 +112,7 @@ abstract class EncryptionLayerConnection(
 
     /**
      * Asynchronously records why this connection was not decrypted although MitM was on
-     * (docs/vpn-mitm-audit.md PKT-56). Connections without a database entry are skipped.
+     * (docs/records/vpn-mitm-audit.md PKT-56). Connections without a database entry are skipped.
      */
     protected fun persistPassthroughReason(reason: String) {
         if (id > 0) {
@@ -211,7 +211,7 @@ abstract class EncryptionLayerConnection(
      * transport layer's thread. The transport layer does not tell the device about the close
      * itself: it hands that step over as [deliverClose], and this layer must call it once
      * everything it was given before the close has been passed on to the device
-     * (docs/vpn-mitm-audit.md PKT-36). Otherwise the close would overtake data that is still
+     * (docs/records/vpn-mitm-audit.md PKT-36). Otherwise the close would overtake data that is still
      * being processed here, and the device would discard that data.
      *
      * The default suits layers that process inbound data synchronously: nothing is pending, so
@@ -243,7 +243,7 @@ abstract class EncryptionLayerConnection(
                 // DNS is never TLS or QUIC. A query's first two bytes are its random ID and its
                 // sixth byte is the low byte of the question count, 1, so one query in 256 used
                 // to pass detectTls() and was swallowed by a TLS connection
-                // (docs/vpn-mitm-audit.md PKT-58).
+                // (docs/records/vpn-mitm-audit.md PKT-58).
                 PlaintextConnection(id, transportLayer, componentManager)
             } else if (transportLayer is TcpConnection && detectTls(rawPayload)) {
                 // TLS only runs over TCP (DTLS has a different record header)
@@ -276,7 +276,7 @@ abstract class EncryptionLayerConnection(
 
         /**
          * Whether the payload is a QUIC client Initial, the only packet a QUIC client can open a
-         * connection with (docs/vpn-mitm-audit.md PKT-26). Anything else, including other QUIC
+         * connection with (docs/records/vpn-mitm-audit.md PKT-26). Anything else, including other QUIC
          * packet types seen first because we joined a flow mid-connection, is not classified as
          * QUIC: there is nothing we could inspect or act on.
          */

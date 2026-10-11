@@ -81,7 +81,7 @@ object ComponentManagerFixtures {
         // validation is orthogonal to what these tests exercise (MITM interception logic), so
         // this intentionally diverges from the strict production default (see PKT-07).
         // (trustAllUpstream = false makes the upstream handshake with such a test double fail,
-        // for the tests of docs/vpn-mitm-audit.md PKT-56)
+        // for the tests of docs/records/vpn-mitm-audit.md PKT-56)
         val mitmManager = CertificateSniffingMitmManager(authority, trustAllServers = trustAllUpstream)
         val dnsCache = DnsCache()
         val tlsPassthroughCache = TlsPassthroughCache()

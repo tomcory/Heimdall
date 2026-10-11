@@ -7,7 +7,7 @@ import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** docs/vpn-mitm-audit.md PKT-51: the QUIC policy preference and its per-session override. */
+/** docs/records/vpn-mitm-audit.md PKT-51: the QUIC policy preference and its per-session override. */
 class QuicPolicyResolverTest {
 
     @Test

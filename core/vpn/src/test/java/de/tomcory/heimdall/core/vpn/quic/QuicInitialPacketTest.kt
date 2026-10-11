@@ -11,7 +11,7 @@ import org.junit.Test
 import java.util.Random
 
 /**
- * docs/vpn-mitm-audit.md PKT-49: removing the protection from QUIC Initial packets, checked
+ * docs/records/vpn-mitm-audit.md PKT-49: removing the protection from QUIC Initial packets, checked
  * against the sample packets of RFC 9001 Appendix A and RFC 9369 Appendix A, and the test
  * fixture that builds such packets checked against the same samples.
  */

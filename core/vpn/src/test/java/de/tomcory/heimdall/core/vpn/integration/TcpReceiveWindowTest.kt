@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-42 (V-49): data for the device is sent only as far as the
+ * Tests for docs/records/vpn-mitm-audit.md PKT-42 (V-49): data for the device is sent only as far as the
  * receive window it advertises allows. It used to be sent as fast as the remote host delivered
  * it, and what the device had no room for was lost.
  *

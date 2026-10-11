@@ -1,10 +1,10 @@
-# Heimdall — Implementation Plan for `docs/architecture-issues.md`
+# Heimdall — Implementation Plan for `docs/records/architecture-issues.md`
 
 > Each packet below is implemented and committed on its own, on request. This document makes no code changes itself.
 
 ## Context
 
-`docs/architecture-issues.md` (revised 2026-09-15 after verification against the `ui-rework` tree) lists ~35 findings. About ten are live bugs:
+`docs/records/architecture-issues.md` (revised 2026-09-15 after verification against the `ui-rework` tree) lists ~35 findings. About ten are live bugs:
 - the live dashboard stays empty
 - install/uninstall scans never run
 - VPN service crashes and teardown races
@@ -83,7 +83,7 @@ This plan resolves all of them as **packets**. Each packet:
 | G4 | Bounded live dashboard; `ScoreViewModel` flows and concurrency | G3 | scalability |
 | G5 | Remove `MainRepository` and dead scanner dialog state | A1 | cleanup |
 | **Group H: Docs** ||||
-| H1 | Update ARCHITECTURE.md, CLAUDE.md, README, issues doc | all | docs |
+| H1 | Update docs/architecture.md, CLAUDE.md, README, issues doc | all | docs |
 
 Group B, the D2–D9 set, and G2/G5 can be done in any order once their dependencies are met.
 
@@ -523,9 +523,9 @@ Add test deps to `core/scanner`.
 
 ## Group H: Docs
 
-### H1: Update ARCHITECTURE.md, CLAUDE.md, README, issues doc
+### H1: Update docs/architecture.md, CLAUDE.md, README, issues doc
 **Changes:**
-- **`docs/ARCHITECTURE.md` and `CLAUDE.md`:**
+- **`docs/architecture.md` and `CLAUDE.md`:**
   - drop `core:proxy`
   - `AppModule` no longer provides the database or `Evaluator`
   - `ScoreModule` plus the card registry replace `Module`/`BuildUICard`
@@ -534,7 +534,7 @@ Add test deps to `core/scanner`.
   - `CaptureWriter`, byte tracking, the per-connection lock order
   - the trust-all preference and passthrough behavior
 - **`README.md`:** MitM trust setting, export status.
-- **`docs/architecture-issues.md`:** mark each finding resolved with its packet ID, or replace it with a short "resolved" note.
+- **`docs/records/architecture-issues.md`:** mark each finding resolved with its packet ID, or replace it with a short "resolved" note.
 
 **Commit:** `updated architecture docs after resolving the architecture issues`
 

@@ -393,7 +393,7 @@ Add an index for completeness.
   reconcile (here: wipe and recreate) on a version mismatch — without the bump, an existing install
   hits a runtime schema mismatch instead of a clean, intentional wipe. Each schema packet below notes
   this as "bump `version` (PKT-00)" rather than repeating the rationale.
-- **Files:** `docs/ARCHITECTURE.md` (record the decision and the revisit trigger).
+- **Files:** `docs/architecture.md` (record the decision and the revisit trigger).
 - **Tests:** none.
 - **Commit:** `docs: record Room migration strategy for core:database`
 

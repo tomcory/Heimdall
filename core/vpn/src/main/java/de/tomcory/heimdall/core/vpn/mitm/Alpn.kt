@@ -6,7 +6,7 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLParameters
 
 /**
- * Application-Layer Protocol Negotiation on an [SSLEngine] (docs/vpn-mitm-audit.md PKT-57).
+ * Application-Layer Protocol Negotiation on an [SSLEngine] (docs/records/vpn-mitm-audit.md PKT-57).
  *
  * The API (`SSLParameters.setApplicationProtocols`, `SSLEngine.getApplicationProtocol`) exists on
  * Android from API 29 and on the JVM from Java 9. It is looked up by reflection rather than gated

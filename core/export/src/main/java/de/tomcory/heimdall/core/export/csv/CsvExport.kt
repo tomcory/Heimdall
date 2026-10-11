@@ -60,7 +60,7 @@ fun requestCsvRow(request: RequestWithConnectionIsTracker): String {
 }
 
 /**
- * A stored body as CSV text (docs/vpn-mitm-audit.md PKT-59): decoded as text if the message's
+ * A stored body as CSV text (docs/records/vpn-mitm-audit.md PKT-59): decoded as text if the message's
  * Content-Type says it is text, Base64 otherwise, so that binary bodies are exported unchanged.
  *
  * @param headers The stored headers, one "Name: value" per line.

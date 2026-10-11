@@ -26,7 +26,7 @@ import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-31 (V-43): an alert the client sends before the
+ * Tests for docs/records/vpn-mitm-audit.md PKT-31 (V-43): an alert the client sends before the
  * client-facing SSLEngine exists used to be handed to that non-existent engine. The resulting
  * null was treated as an engine failure and the client's TCP connection was reset.
  *

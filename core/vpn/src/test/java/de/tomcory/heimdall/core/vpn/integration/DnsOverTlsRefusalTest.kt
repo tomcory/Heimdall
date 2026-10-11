@@ -19,7 +19,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-58: in Private DNS's opportunistic mode, connections to the
+ * Tests for docs/records/vpn-mitm-audit.md PKT-58: in Private DNS's opportunistic mode, connections to the
  * VPN's DNS server on port 853 are refused, so that the resolver falls back to plain DNS.
  */
 class DnsOverTlsRefusalTest {

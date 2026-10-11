@@ -25,7 +25,7 @@ data class ClientHelloInfo(
  * Parses TLS ClientHello handshake messages (RFC 8446 section 4.1.2). Works on the bare
  * handshake message, without a record header, because that is what both carriers have in common:
  * TLS over TCP wraps the message in a record, QUIC carries it in CRYPTO frames
- * (docs/vpn-mitm-audit.md PKT-29).
+ * (docs/records/vpn-mitm-audit.md PKT-29).
  */
 object ClientHelloParser {
 

@@ -12,7 +12,7 @@ import io.mockk.mockk
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Tests for docs/vpn-mitm-audit.md PKT-58: which connections are read as DNS, and how. */
+/** Tests for docs/records/vpn-mitm-audit.md PKT-58: which connections are read as DNS, and how. */
 class AppLayerSelectionTest {
 
     private val componentManager: ComponentManager = mockk(relaxed = true)

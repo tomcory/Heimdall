@@ -16,7 +16,7 @@ import javax.net.ssl.SSLEngineResult.HandshakeStatus
 import javax.net.ssl.SSLException
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-20: [InsecureTrustManager] replaces Netty's
+ * Tests for docs/records/vpn-mitm-audit.md PKT-20: [InsecureTrustManager] replaces Netty's
  * InsecureTrustManagerFactory for the "trust all upstream certificates" mode. The handshake tests
  * run the MitM's real server-facing SSLEngine (from [CertificateSniffingMitmManager], with "HTTPS"
  * endpoint identification enabled) against an in-memory server engine presenting a certificate that
@@ -147,7 +147,7 @@ class InsecureTrustManagerTest {
         }
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-64 (A-16) ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-64 (A-16) ----
 
     @Test
     fun `an upstream engine verifies the hostname and keeps its other parameters`() {

@@ -5,7 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
- * Regression test for docs/vpn-mitm-audit.md PKT-07 (V-02): the proxy's connection to the real
+ * Regression test for docs/records/vpn-mitm-audit.md PKT-07 (V-02): the proxy's connection to the real
  * upstream server used to always trust any certificate (`trustAllServers` was hardcoded `true`),
  * so a network attacker between the phone and the real server was invisible to Heimdall. This
  * asserts the constructor's default now wires through to strict validation instead, via the same

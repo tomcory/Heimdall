@@ -282,7 +282,7 @@ class TlsRecordHandlingTest {
         verify(exactly = 0) { transportLayer.wrapOutbound(any()) }
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-63 ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-63 ----
 
     @Test
     fun `an invalid record type is logged without the payload`() {
@@ -329,7 +329,7 @@ class TlsRecordHandlingTest {
     }
 
     // -----------------------------------------------------------------------
-    // PKT-04 (docs/vpn-mitm-audit.md V-11/V-13): BUFFER_UNDERFLOW retry cap and
+    // PKT-04 (docs/records/vpn-mitm-audit.md V-11/V-13): BUFFER_UNDERFLOW retry cap and
     // handshake-setup coroutine exception guards. handleWrap/handleUnwrap and the
     // initiate*Handshake methods are private, so they're driven via reflection.
     // -----------------------------------------------------------------------
@@ -391,7 +391,7 @@ class TlsRecordHandlingTest {
     }
 
     // -----------------------------------------------------------------------
-    // PKT-05 (docs/vpn-mitm-audit.md V-12): outbound records arriving before the
+    // PKT-05 (docs/records/vpn-mitm-audit.md V-12): outbound records arriving before the
     // client-facing handshake is ready (e.g. a ClientHello split across multiple TLS
     // records) are buffered and replayed, not treated as a protocol violation.
     // `state` and `bufferedOutboundRecords` are private, and ConnectionState is a
@@ -471,7 +471,7 @@ class TlsRecordHandlingTest {
     }
 
     // -----------------------------------------------------------------------
-    // V-26 (docs/vpn-mitm-audit.md): TlsConnection's state/buffers/reassembly caches used to
+    // V-26 (docs/records/vpn-mitm-audit.md): TlsConnection's state/buffers/reassembly caches used to
     // have zero synchronization despite being mutated both by whichever thread calls
     // unwrapOutbound/unwrapInbound and by untracked handshake coroutines. Fixed by confining all
     // mutation to a per-connection single-threaded dispatcher (connectionScope).

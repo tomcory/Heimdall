@@ -2,7 +2,7 @@ package de.tomcory.heimdall.core.vpn.connection.appLayer
 
 /**
  * Follows an HTTP/1.1 chunked message body (RFC 9112 section 7.1) across the payloads it
- * arrives in, to find where it ends (docs/vpn-mitm-audit.md PKT-32).
+ * arrives in, to find where it ends (docs/records/vpn-mitm-audit.md PKT-32).
  *
  * A chunked body is a series of chunks, each a size line in hex followed by that many bytes and
  * a CRLF. It ends with a zero-size chunk, an optional trailer section and an empty line:
@@ -17,7 +17,7 @@ package de.tomcory.heimdall.core.vpn.connection.appLayer
  * including sequences that look like a terminator. The tracker reads every byte once and keeps
  * no copy of the body, so it also works for bodies that are too large to keep. The decoded body
  * (the chunk data, without the framing) can be handed to a sink as it is read
- * (docs/vpn-mitm-audit.md PKT-59).
+ * (docs/records/vpn-mitm-audit.md PKT-59).
  */
 internal class ChunkedBodyTracker {
 

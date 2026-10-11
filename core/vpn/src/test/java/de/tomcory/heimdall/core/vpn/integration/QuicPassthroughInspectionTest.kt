@@ -31,7 +31,7 @@ import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * docs/vpn-mitm-audit.md PKT-50: a QUIC flow is passed through unchanged while its ClientHello
+ * docs/records/vpn-mitm-audit.md PKT-50: a QUIC flow is passed through unchanged while its ClientHello
  * is read, and what it revealed ends up on the connection's row.
  */
 class QuicPassthroughInspectionTest {

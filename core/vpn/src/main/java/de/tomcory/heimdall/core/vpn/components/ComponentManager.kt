@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 /**
  * The MTU of the VPN interface. The service sets it explicitly, and [DevicePollThread] sizes its
- * read buffer from it, so the two cannot drift apart (docs/vpn-mitm-audit.md PKT-64).
+ * read buffer from it, so the two cannot drift apart (docs/records/vpn-mitm-audit.md PKT-64).
  */
 const val VPN_MTU = 1500
 
@@ -70,17 +70,17 @@ class ComponentManager(
     val mitmScope: MitmScope = MitmScope.ALL,
     val learnPassthrough: Boolean = true,
     // how soon after its handshake a client must close a connection without data for the close
-    // to count as certificate pinning (docs/vpn-mitm-audit.md PKT-54)
+    // to count as certificate pinning (docs/records/vpn-mitm-audit.md PKT-54)
     val pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
     // the VPN's DNS server, if connections to it on port 853 are to be refused: in Private DNS's
     // opportunistic mode the resolver then falls back to plain DNS, which Heimdall can read
-    // (docs/vpn-mitm-audit.md PKT-58). Null in strict mode, where refusing would break DNS.
+    // (docs/records/vpn-mitm-audit.md PKT-58). Null in strict mode, where refusing would break DNS.
     val refuseDnsOverTlsTo: InetAddress? = null,
     // how many bytes of each HTTP body are kept; longer bodies are stored truncated
-    // (docs/vpn-mitm-audit.md PKT-59)
+    // (docs/records/vpn-mitm-audit.md PKT-59)
     val maxHttpBodySize: Int = HttpConnection.DEFAULT_MAX_BODY_SIZE,
     // what to do with QUIC flows while MitM is on; PASSTHROUGH whenever MitM is off
-    // (docs/vpn-mitm-audit.md PKT-51)
+    // (docs/records/vpn-mitm-audit.md PKT-51)
     val quicPolicy: QuicPolicy = QuicPolicy.PASSTHROUGH,
     keyStoreDir: File,
     val appFinder: AppFinder,
@@ -257,7 +257,7 @@ class ComponentManager(
             join(devicePollThread)
 
             // stop the other three traffic handling threads and wait for them, so that none of
-            // them is still using what is released below (docs/vpn-mitm-audit.md PKT-47)
+            // them is still using what is released below (docs/records/vpn-mitm-audit.md PKT-47)
             outboundTrafficHandler?.quitSafely()
             inboundTrafficHandler?.interrupt()
             deviceWriteThread?.quitSafely()
@@ -284,7 +284,7 @@ class ComponentManager(
         // Closing a channel that is registered with a selector does not release its descriptor:
         // that happens when the selector next deregisters the cancelled key, and with the
         // selector thread stopped it never would. Closing the selector deregisters every key
-        // and releases the selector's own descriptors (docs/vpn-mitm-audit.md PKT-47).
+        // and releases the selector's own descriptors (docs/records/vpn-mitm-audit.md PKT-47).
         try {
             selector.close()
         } catch (e: IOException) {

@@ -19,7 +19,7 @@ Heimdall is an on-device Android privacy-analysis toolkit. It lets researchers a
 9. [Key Dependencies](#9-key-dependencies)
 10. [External Integrations](#10-external-integrations)
 
-**Known issues**: see [`architecture-issues.md`](architecture-issues.md) for a severity-ranked audit of coupling, concurrency, testability, and scalability problems found in the current implementation.
+**Known issues**: see [`records/architecture-issues.md`](records/architecture-issues.md) for a severity-ranked audit of coupling, concurrency, testability, and scalability problems found in the current implementation.
 
 ---
 
@@ -173,7 +173,7 @@ the first payload of a flow:
 
 Earlier versions also offered an alternative interception path via a LittleProxy-mitm-derived HTTP proxy (`core/proxy`). That module has been removed; the VPN/TUN-based engine above is the sole interception mechanism. `TrafficScannerViewModel.VpnMode` is `OFF`, `PLAIN_VPN` or `MITM_VPN`.
 
-For the full component-by-component reference (threading model, TLS MitM deep dive, configuration, limitations), see [`core/vpn/README.md`](../core/vpn/README.md). Diagrams of the component (architecture, sequence, BPMN) are in [`docs/diagrams/`](diagrams/README.md). The findings and fix packets behind the current implementation are in [`vpn-mitm-audit.md`](vpn-mitm-audit.md); the QUIC analysis is in [`quic_mitm.md`](quic_mitm.md).
+For the full component-by-component reference (threading model, TLS MitM deep dive, configuration, limitations), see [`core/vpn/README.md`](../core/vpn/README.md). Diagrams of the component (architecture, sequence, BPMN) are in [`docs/diagrams/`](diagrams/README.md). The findings and fix packets behind the current implementation are in [`records/vpn-mitm-audit.md`](records/vpn-mitm-audit.md); the QUIC analysis is in [`records/quic-mitm.md`](records/quic-mitm.md).
 
 ### Generating the CA via adb
 
@@ -231,7 +231,7 @@ Each module also provides a Compose `UICard` used on the Score detail screen.
 
 ## 8. Database Schema
 
-Room database, version 10, 14 entities. There is no migration path yet: every schema change bumps the version and wipes local data (`fallbackToDestructiveMigration`). See [`database-schema-audit.md`](database-schema-audit.md).
+Room database, version 10, 14 entities. There is no migration path yet: every schema change bumps the version and wipes local data (`fallbackToDestructiveMigration`). See [`records/database-schema-audit.md`](records/database-schema-audit.md).
 
 ```
 App ──────── AppXPermission ── Permission

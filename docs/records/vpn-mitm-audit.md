@@ -5,7 +5,7 @@ connection handling, and the certificate-sniffing MitM engine), plus `app/.../He
 and `app/src/main/AndroidManifest.xml` where relevant.
 
 This document is a findings register plus a set of **independently-committable packets**, in the
-same format as `docs/database-schema-audit.md`. Each packet stands on its own: it lists what it
+same format as `docs/records/database-schema-audit.md`. Each packet stands on its own: it lists what it
 resolves, which files it touches, how to verify it, and a suggested commit message. Nothing here
 has been implemented — no file under `core/vpn` was changed while producing this audit.
 
@@ -13,10 +13,10 @@ All file:line references were verified against the source at the time of writing
 Line numbers drift — use the surrounding quoted code to re-locate if they no longer match.
 
 **Addendum 2026-09-30:** V-32–V-35 / PKT-20–PKT-24, found during the QUIC analysis
-(`docs/quic_mitm.md`), plus V-36 / PKT-25, found while implementing PKT-23. References were checked against branch `bugfix/mitm-vpn` at `cb7cc22`.
+(`docs/records/quic-mitm.md`), plus V-36 / PKT-25, found while implementing PKT-23. References were checked against branch `bugfix/mitm-vpn` at `cb7cc22`.
 
 **Addendum 2026-10-01:** V-37–V-41 / PKT-26–PKT-29 and PKT-49–PKT-52, the implementation
-packets for phases Q0 to Q2 of `docs/quic_mitm.md` (detection hardening, passive Initial
+packets for phases Q0 to Q2 of `docs/records/quic-mitm.md` (detection hardening, passive Initial
 inspection, QUIC block policy). References were checked against `bugfix/mitm-vpn` at `3454f48`.
 PKT-26 to PKT-29 are implemented; PKT-49 to PKT-52 are not.
 
@@ -744,7 +744,7 @@ uses it when `trustAllServers` is set. Nothing else in `core/` or `app/` imports
 (`gradle/libs.versions.toml:34,106`). That is an old release that adds APK weight, method count and
 dependency-audit surface. The code already flags this itself with the TODO at `SSLEngineSource.kt:138`
 ("can we get rid of the InsecureTrustManagerFactory (with the goal of eliminating Netty)?").
-`CLAUDE.md` and `docs/ARCHITECTURE.md` also describe Netty as doing "TCP/TLS handling in the
+`CLAUDE.md` and `docs/architecture.md` also describe Netty as doing "TCP/TLS handling in the
 VPN's MitM engine", which is not true.
 
 **Recommendation:** replace it with a small in-house `X509ExtendedTrustManager` and drop the
@@ -827,7 +827,7 @@ connection's single-threaded dispatcher, and retry rather than drop a record the
 
 ## QUIC findings (V-37–V-41)
 
-Background, protocol details and the reasoning behind the phases are in `docs/quic_mitm.md`
+Background, protocol details and the reasoning behind the phases are in `docs/records/quic-mitm.md`
 (§1 to §3.3). The findings here are the parts of it that Q0 to Q2 resolve.
 
 ### V-37 — `detectQuic()` is too permissive to act on (Medium)
@@ -886,7 +886,7 @@ enabled, every app that speaks HTTP/3 sends that traffic past the decryption pip
 TCP traffic is intercepted. Almost all such clients fall back to TCP+TLS when UDP/443 fails, and
 for Chromium-based clients (Chrome, Cronet) a fallback is the only possible outcome anyway,
 because they refuse QUIC certificates that do not chain to a public root
-(`docs/quic_mitm.md` §2.6). There is currently no way to trigger that fallback.
+(`docs/records/quic-mitm.md` §2.6). There is currently no way to trigger that fallback.
 
 **Recommendation:** a user preference to block h3 QUIC while MitM is on, off by default,
 enforced only where the TLS fallback would actually be intercepted (PKT-51, PKT-52).
@@ -1989,9 +1989,9 @@ Not new, listed so the register shows everything that is unresolved:
     from `gradle/libs.versions.toml`. Guava stays, because `SSLEngineSource`'s certificate cache
     uses it.
   - Update the docs that describe Netty: `CLAUDE.md` (module tree and dependency table),
-    `docs/ARCHITECTURE.md` (dependency table), `core/vpn/README.md` (trust-all description and
-    dependency table) and `docs/quic_mitm.md` (§3.4 and open question 2). Leave the historical
-    `docs/implementation-plan.md` alone.
+    `docs/architecture.md` (dependency table), `core/vpn/README.md` (trust-all description and
+    dependency table) and `docs/records/quic-mitm.md` (§3.4 and open question 2). Leave the historical
+    `docs/records/implementation-plan.md` alone.
 - **Files:** new `mitm/InsecureTrustManager.kt`, `mitm/SSLEngineSource.kt`,
   `core/vpn/build.gradle.kts`, `gradle/libs.versions.toml`, and the docs listed above.
 - **Tests:** new `core/vpn/src/test/java/de/tomcory/heimdall/core/vpn/mitm/InsecureTrustManagerTest.kt`:
@@ -2183,7 +2183,7 @@ Not new, listed so the register shows everything that is unresolved:
 ### PKT-26 — Only classify genuine client Initial datagrams as QUIC
 
 - **Priority:** Medium · **Depends on:** —
-- **Resolves:** V-37 · **Phase:** Q0.1 of `docs/quic_mitm.md`
+- **Resolves:** V-37 · **Phase:** Q0.1 of `docs/records/quic-mitm.md`
 - **Approach:** in `detectQuic()`, keep the long-header and fixed-bit test and additionally
   require:
   - a version other than 0;
@@ -2216,7 +2216,7 @@ Not new, listed so the register shows everything that is unresolved:
     - `blocked: Boolean = false`.
 
     Bump `HeimdallDatabase` to **version 8**. This wipes local data (no migrations by design,
-    see PKT-00 in `docs/database-schema-audit.md`), so every column Q1 and Q2 need lands here
+    see PKT-00 in `docs/records/database-schema-audit.md`), so every column Q1 and Q2 need lands here
     and no later packet bumps the version again. Rewrite `Protocol.kt`'s kdoc, which says the
     opposite.
   - **DAO.** `ConnectionDao.updateSecurity(id, securityProtocol, sni, alpn, echOffered)`,
@@ -3519,7 +3519,7 @@ passed-through and blocked QUIC both rely on the UDP path and on a TLS fallback 
 - **Commit:** `feat(vpn): block HTTP/3 over QUIC while MitM is on so clients fall back to TLS`
 
 **Order for the QUIC packets (PKT-26 to PKT-29, PKT-49 to PKT-52):** all done (phases Q0 to
-Q2 of `docs/quic_mitm.md`). None of the
+Q2 of `docs/records/quic-mitm.md`). None of the
 remaining four changes the database version.
 
 ### PKT-53 — Keep forwarding the client's data after the remote host closes its side
@@ -3851,7 +3851,7 @@ remaining four changes the database version.
     API level, because it only reads the ClientHello.
   - HTTP/2 decryption (letting `h2` through and recording it) needs an HTTP/2 frame and HPACK
     parser in place of `RawConnection`. That is a project of its own and belongs in a separate
-    design document, like `docs/quic_mitm.md` for QUIC.
+    design document, like `docs/records/quic-mitm.md` for QUIC.
 - **Files:** `connection/encryptionLayer/TlsConnection.kt`, `mitm/SSLEngineSource.kt`,
   `mitm/CertificateSniffingMitmManager.kt`; `scripts/stress/StressClient.java`.
 - **Tests:**
@@ -4261,7 +4261,7 @@ database schema (destructively, as before); doing them in this order means two v
 - **Tests:** nothing new; the change removes code. All `core:vpn` and `app` tests pass, and
   `./gradlew build` (with lint) succeeds. Device: `emulator-traffic.sh run` and
   `run-stress.sh tls,tlsbulk` are clean, and the CA (generated through the adb trigger, see
-  `docs/ca-adb-trigger-plan.md`) is unaffected: an existing install keeps its CA and
+  `docs/records/ca-adb-trigger-plan.md`) is unaffected: an existing install keeps its CA and
   intercepts as before.
 - **Implementation notes (2026-10-04):**
   - Deleted, after a repository-wide search found no references outside the deleted code

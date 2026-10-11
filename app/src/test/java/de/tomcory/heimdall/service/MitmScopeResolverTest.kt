@@ -9,7 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Tests for docs/vpn-mitm-audit.md PKT-24. */
+/** Tests for docs/records/vpn-mitm-audit.md PKT-24. */
 class MitmScopeResolverTest {
 
     private val system = setOf("com.android.system", "com.android.phone")

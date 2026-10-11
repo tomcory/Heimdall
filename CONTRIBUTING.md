@@ -22,7 +22,7 @@ No API keys, extra signing configs, or submodules are required to build.
 
 ## Codebase orientation
 
-Heimdall is a multi-module Android project — `app/` plus several `core/*` library modules (database, scanner, vpn, util, export, datastore, datastore-proto). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of modules, the MVVM/Hilt architecture, the VPN/MitM packet pipeline, and the database schema. The VPN/MitM engine specifically has its own deep-dive at [`core/vpn/README.md`](core/vpn/README.md).
+Heimdall is a multi-module Android project — `app/` plus several `core/*` library modules (database, scanner, vpn, util, export, datastore, datastore-proto). See [`docs/architecture.md`](docs/architecture.md) for the full breakdown of modules, the MVVM/Hilt architecture, the VPN/MitM packet pipeline, and the database schema. The VPN/MitM engine specifically has its own deep-dive at [`core/vpn/README.md`](core/vpn/README.md).
 
 ## Adding a new privacy-score module
 
@@ -40,5 +40,5 @@ Look at `StaticPermissionsScore`, `TrackerScore`, or `PrivacyPolicyScore` for re
 
 - Keep PRs focused — one feature or fix per PR is easier to review than a bundle of unrelated changes.
 - Make sure `./gradlew build` passes locally before opening a PR; CI will run the same check.
-- If your change affects behavior described in the README or `docs/ARCHITECTURE.md`, update those docs in the same PR.
+- If your change affects behavior described in the README or `docs/architecture.md`, update those docs in the same PR.
 - For bug reports or feature requests that aren't ready as a PR, open an [issue](https://github.com/tomcory/Heimdall/issues) instead.

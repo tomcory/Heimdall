@@ -30,7 +30,7 @@ class DevicePollThread internal constructor(
         Timber.d("Thread started")
 
         // one buffer for every read: a read returns one packet of at most the interface's MTU
-        // (docs/vpn-mitm-audit.md PKT-64)
+        // (docs/records/vpn-mitm-audit.md PKT-64)
         val packet = ByteArray(VPN_MTU)
 
         // prepare to poll the inputStream

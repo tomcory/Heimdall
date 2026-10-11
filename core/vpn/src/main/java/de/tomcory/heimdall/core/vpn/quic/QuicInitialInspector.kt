@@ -6,7 +6,7 @@ import java.util.BitSet
 
 /**
  * Reads the ClientHello of one QUIC flow out of the client's Initial packets, without taking
- * part in the connection (docs/vpn-mitm-audit.md PKT-50). One instance per flow, fed with the
+ * part in the connection (docs/records/vpn-mitm-audit.md PKT-50). One instance per flow, fed with the
  * client's datagrams in the order they were sent, until it reaches a terminal [Result].
  *
  * What real clients do, and what this therefore has to handle:

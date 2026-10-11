@@ -5,7 +5,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * Regression tests for docs/vpn-mitm-audit.md PKT-06 (V-01): the MitM CA keystore password used
+ * Regression tests for docs/records/vpn-mitm-audit.md PKT-06 (V-01): the MitM CA keystore password used
  * to be the hardcoded literal "changeit" (the well-known Java default cacerts password), which
  * gave the CA's private key no real protection. [Authority.getDefaultInstance] now generates a
  * random per-install password on first use and persists it next to the keystore.

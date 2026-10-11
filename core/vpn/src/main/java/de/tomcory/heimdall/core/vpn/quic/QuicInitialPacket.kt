@@ -8,7 +8,7 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Removes the protection from QUIC Initial packets (RFC 9000 section 17.2.2, RFC 9001
  * sections 5.3 and 5.4; RFC 9369 for version 2), so that the ClientHello they carry can be read
- * (docs/vpn-mitm-audit.md PKT-49).
+ * (docs/records/vpn-mitm-audit.md PKT-49).
  *
  * A datagram may hold several QUIC packets back to back (coalesced, RFC 9000 section 12.2).
  * [decrypt] handles the packet at one offset and reports how many bytes it took, so a caller can

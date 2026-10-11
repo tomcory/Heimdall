@@ -1,5 +1,8 @@
 # Heimdall - The Android privacy monitoring toolkit
 
+> Heimdall is the traffic capture and app scanner of the Asgard suite (Observation dimension of the
+> O/D/E framework).
+
 ![Build Status](https://github.com/tomcory/Heimdall/actions/workflows/android.yml/badge.svg)
 
 Heimdall is an advanced toolkit designed to empower researchers, developers, and privacy enthusiasts in analysing and studying the privacy-related behavior of Android applications.
@@ -15,6 +18,15 @@ Feel free to use the [issue tracker](https://github.com/tomcory/Heimdall/issues)
 - **Network Traffic Monitoring:** Real-time inspection of network traffic to help you identify potential data leakages or suspicious connections.
 - **Privacy Scoring:** Computes a per-app privacy score from permissions, embedded trackers, and privacy-policy coverage, with a breakdown of the contributing factors.
 - **Fully on-device:** Heimdall requires no external infrastructure and does not transmit any data off the device, be it personal or any other kind of data.
+
+## Role in Asgard
+
+Heimdall belongs to the **Observation** dimension. It consumes the apps installed on a device and
+produces what they are observed to do: declared permissions, embedded tracker SDKs and the captured
+network traffic (requests and responses with headers and bodies, attributed to the initiating app),
+stored in an on-device database with CSV and LaTeX exporters. **Loki** drives an app through its UI so
+that Heimdall sees its traffic, and **Vör** annotates the PII in captured HTTP messages; neither
+connection has an adapter yet.
 
 ## Getting Started
 
@@ -79,7 +91,30 @@ All data collected by Heimdall is persisted in an on-device SQLite database. Exp
 
 Feel free to open a new [issue](https://github.com/tomcory/Heimdall/issues) for bug reports or feature requests. Pull requests for contributions are always welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
 
-For a deeper dive into Heimdall's architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the VPN/MitM engine specifically is documented in [core/vpn/README.md](core/vpn/README.md).
+For a deeper dive into Heimdall's architecture, see [docs/architecture.md](docs/architecture.md); the VPN/MitM engine specifically is documented in [core/vpn/README.md](core/vpn/README.md).
+
+## Tests
+
+```bash
+./gradlew test                   # unit tests
+./gradlew connectedAndroidTest   # instrumentation tests (requires a device or emulator)
+```
+
+## Documentation
+
+| Document | Kind | Content |
+|---|---|---|
+| [docs/architecture.md](docs/architecture.md) | reference | Module structure, UI screens, the VPN and traffic inspection pipeline, scoring modules, background services, database schema |
+| [core/vpn/README.md](core/vpn/README.md) | reference | The VPN/MitM engine: threading model, TLS interception, configuration, limitations |
+| [docs/diagrams](docs/diagrams/README.md) | reference | Architecture, sequence and BPMN diagrams of the VPN component |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | reference | Development setup and guidelines |
+| [docs/records/architecture-issues.md](docs/records/architecture-issues.md) | record | Code audit of the whole codebase (2026-09-15) |
+| [docs/records/implementation-plan.md](docs/records/implementation-plan.md) | record | Work packets that address the architectural issues |
+| [docs/records/database-schema-audit.md](docs/records/database-schema-audit.md) | record | Audit of the Room schema in `core:database` (2026-09-18) |
+| [docs/records/vpn-mitm-audit.md](docs/records/vpn-mitm-audit.md) | record | Audit of `core:vpn` with its fix packets (2026-09-28) |
+| [docs/records/quic-mitm.md](docs/records/quic-mitm.md) | record | QUIC interception: state, gaps and path forward |
+| [docs/records/ca-adb-trigger-plan.md](docs/records/ca-adb-trigger-plan.md) | record | Plan for generating the CA certificate via adb (implemented) |
+| [docs/records/ui-redesign.md](docs/records/ui-redesign.md) | record | Design document of the UI redesign |
 
 ## Citations
 

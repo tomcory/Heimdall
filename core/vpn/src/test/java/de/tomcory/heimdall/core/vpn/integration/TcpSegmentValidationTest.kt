@@ -24,7 +24,7 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/vpn-mitm-audit.md PKT-39 (V-17): segments from the device are checked against
+ * Tests for docs/records/vpn-mitm-audit.md PKT-39 (V-17): segments from the device are checked against
  * the next expected sequence number. The device retransmits whenever an ACK from the VPN is
  * late, and such a segment used to be forwarded to the remote host a second time.
  *
@@ -163,7 +163,7 @@ class TcpSegmentValidationTest {
 
     @Test
     fun `a segment that follows a gap is kept and delivered once the gap is filled`() {
-        // docs/vpn-mitm-audit.md PKT-48: the device does not have to send it again
+        // docs/records/vpn-mitm-audit.md PKT-48: the device does not have to send it again
         val start = connect()
         val messagesBefore = deviceWriter.sentMessages.size
 

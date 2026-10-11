@@ -116,7 +116,7 @@ class UdpConnection internal constructor(
         // UDP has no flow control: datagrams that arrive while the buffer is full are dropped by
         // the kernel. A burst (QUIC, media) easily outruns the selector thread for a moment, so
         // ask for a generous buffer; the kernel caps the request at its own limit
-        // (docs/vpn-mitm-audit.md PKT-34).
+        // (docs/records/vpn-mitm-audit.md PKT-34).
         selectableChannel.socket().receiveBufferSize = RECEIVE_BUFFER_SIZE
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
         state = TransportLayerState.CONNECTED
@@ -153,12 +153,12 @@ class UdpConnection internal constructor(
         // if the application layer returned anything, write it to the connection's outward-facing channel
         if (payload.isNotEmpty()) {
             // Wrapped rather than copied into outBuffer: a datagram can be larger than that
-            // buffer, up to the 64 kB that IP allows (docs/vpn-mitm-audit.md PKT-46).
+            // buffer, up to the 64 kB that IP allows (docs/records/vpn-mitm-audit.md PKT-46).
             val outBuffer = ByteBuffer.wrap(payload)
             // One attempt per datagram. A datagram channel sends a datagram whole or not at
             // all, and one it has no room for is dropped, as UDP allows. Retrying in a loop
             // would hold up the thread that handles every packet from the device
-            // (docs/vpn-mitm-audit.md PKT-43).
+            // (docs/records/vpn-mitm-audit.md PKT-43).
             val bytesWritten = try {
                 selectableChannel.write(outBuffer)
             } catch (e: IOException) {

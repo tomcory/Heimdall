@@ -30,7 +30,7 @@ class InboundTrafficHandler(
             // going back into select(), which would block the registration, until it is done.
             // The selected keys are processed outside the monitor: holding it for that long
             // made every new connection wait for all pending inbound work
-            // (docs/vpn-mitm-audit.md PKT-41).
+            // (docs/records/vpn-mitm-audit.md PKT-41).
             synchronized(ComponentManager.selectorMonitor) { }
 
             try {

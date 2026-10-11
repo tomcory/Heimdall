@@ -29,7 +29,7 @@ import java.net.SocketTimeoutException
 import java.nio.channels.DatagramChannel
 
 /**
- * docs/vpn-mitm-audit.md PKT-52: with MitM on and the Block policy, an HTTP/3 flow whose TLS
+ * docs/records/vpn-mitm-audit.md PKT-52: with MitM on and the Block policy, an HTTP/3 flow whose TLS
  * fallback would be intercepted is blocked and answered with an ICMP error; every other flow
  * is forwarded unchanged.
  */

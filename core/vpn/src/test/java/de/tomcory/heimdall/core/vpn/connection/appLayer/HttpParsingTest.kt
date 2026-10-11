@@ -95,7 +95,7 @@ class HttpParsingTest {
         }
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-58: the Host header names an unnamed connection ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-58: the Host header names an unnamed connection ----
 
     @Test
     fun `a connection without a hostname is named after the request's Host header`() {
@@ -118,7 +118,7 @@ class HttpParsingTest {
         verify(exactly = 0) { transportLayer.fillMissingRemoteHost(any()) }
     }
 
-    // ---- docs/vpn-mitm-audit.md PKT-63: what an unparseable message leaves in the log ----
+    // ---- docs/records/vpn-mitm-audit.md PKT-63: what an unparseable message leaves in the log ----
 
     @Test
     fun `a message that cannot be parsed is logged without its content`() {
@@ -210,7 +210,7 @@ class HttpParsingTest {
 
     @Test
     fun `chunk data containing an embedded CRLF is dechunked without truncation`() {
-        // docs/vpn-mitm-audit.md PKT-18 (V-19): dechunkHttpMessage used to split the whole
+        // docs/records/vpn-mitm-audit.md PKT-18 (V-19): dechunkHttpMessage used to split the whole
         // chunked body on every literal CRLF, desyncing as soon as a chunk's own data contained
         // one - a multi-line body (e.g. JSON) is a routine case, not an edge case
         val chunkData = "line1\r\nline2"
@@ -324,7 +324,7 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-17 (V-18, V-20): per-direction reassembly state
+    // docs/records/vpn-mitm-audit.md PKT-17 (V-18, V-20): per-direction reassembly state
     // and request/response correlation
     // -----------------------------------------------------------------------
 
@@ -440,7 +440,7 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-32 (V-44): the end of a chunked message is found by following
+    // docs/records/vpn-mitm-audit.md PKT-32 (V-44): the end of a chunked message is found by following
     // the declared chunk sizes, after every payload including the first
     // -----------------------------------------------------------------------
 
@@ -666,7 +666,7 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-33 (V-45): responses that have no body whatever their
+    // docs/records/vpn-mitm-audit.md PKT-33 (V-45): responses that have no body whatever their
     // headers say, bodies that run until the connection closes, and connections that stop
     // being HTTP
     // -----------------------------------------------------------------------
@@ -865,7 +865,7 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-37 (V-52), PKT-59 (V-64): of a body above the size limit only
+    // docs/records/vpn-mitm-audit.md PKT-37 (V-52), PKT-59 (V-64): of a body above the size limit only
     // the first limit bytes are kept; the rest is counted, not buffered
     // -----------------------------------------------------------------------
 
@@ -1021,7 +1021,7 @@ class HttpParsingTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-59 (V-64): bodies are stored as bytes, unchanged
+    // docs/records/vpn-mitm-audit.md PKT-59 (V-64): bodies are stored as bytes, unchanged
     // -----------------------------------------------------------------------
 
     /** Every byte value, including CR, LF and bytes that are not valid UTF-8. */

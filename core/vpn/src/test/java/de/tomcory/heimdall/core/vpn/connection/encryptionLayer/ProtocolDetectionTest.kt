@@ -69,7 +69,7 @@ class ProtocolDetectionTest {
 
     @Test
     fun `detectTls returns true for a minimal 6-byte ClientHello prefix`() {
-        // docs/vpn-mitm-audit.md PKT-19 (V-29): the length guard used to be one byte stricter
+        // docs/records/vpn-mitm-audit.md PKT-19 (V-29): the length guard used to be one byte stricter
         // than what byte[5] actually requires (`size > 6` instead of `size > 5`), so this exact
         // 6-byte boundary case was permanently miscategorized as non-TLS
         val minimalClientHello = byteArrayOf(0x16, 0x03, 0x03, 0x00, 0x01, 0x01)
@@ -90,7 +90,7 @@ class ProtocolDetectionTest {
 
     // -----------------------------------------------------------------------
     // detectQuic — client Initial only: long header, version != 0, Initial packet type,
-    // datagram >= 1200 bytes (docs/vpn-mitm-audit.md PKT-26)
+    // datagram >= 1200 bytes (docs/records/vpn-mitm-audit.md PKT-26)
     // -----------------------------------------------------------------------
 
     /**
@@ -140,7 +140,7 @@ class ProtocolDetectionTest {
 
     @Test
     fun `detectQuic returns true for an Initial of an unknown QUIC version`() {
-        // docs/vpn-mitm-audit.md PKT-19 (V-29): detectQuic used to require an exact version
+        // docs/records/vpn-mitm-audit.md PKT-19 (V-29): detectQuic used to require an exact version
         // match, so any other QUIC version fell through to PlaintextConnection. Unknown versions
         // are assumed to number their packet types like v1.
         assertTrue(EncryptionLayerConnection.detectQuic(quicDatagram(0xC0, 0x00000002)))
@@ -201,7 +201,7 @@ class ProtocolDetectionTest {
     }
 
     // -----------------------------------------------------------------------
-    // AppLayerConnection.getInstance's HTTP-sniff guard — docs/vpn-mitm-audit.md
+    // AppLayerConnection.getInstance's HTTP-sniff guard — docs/records/vpn-mitm-audit.md
     // PKT-19 (V-31): payload.size > 7 let 8/9/10-byte payloads through the guard, but
     // sliceArray(0..10) needs 11 bytes and threw for exactly those sizes, silently falling back
     // to RawConnection via the blanket catch.
@@ -250,7 +250,7 @@ class ProtocolDetectionTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/vpn-mitm-audit.md PKT-58: which transports may carry TLS or QUIC
+    // docs/records/vpn-mitm-audit.md PKT-58: which transports may carry TLS or QUIC
     // -----------------------------------------------------------------------
 
     private inline fun <reified T : TransportLayerConnection> transport(port: Int): T {

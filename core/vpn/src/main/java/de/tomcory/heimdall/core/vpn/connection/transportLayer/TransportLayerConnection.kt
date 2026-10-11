@@ -194,7 +194,7 @@ abstract class TransportLayerConnection protected constructor(
      * Called by an encryption layer that processes inbound data on another thread, when it
      * takes on [bytes] bytes it will finish with later. Together with [inboundProcessingFinished]
      * this lets the transport layer see data that it has read but that has not come back to it
-     * yet for sending to the device (docs/vpn-mitm-audit.md PKT-42).
+     * yet for sending to the device (docs/records/vpn-mitm-audit.md PKT-42).
      */
     fun inboundProcessingDeferred(bytes: Int) {
         inboundInProcess.addAndGet(bytes.toLong())
@@ -219,7 +219,7 @@ abstract class TransportLayerConnection protected constructor(
      * The outbound counterpart of [inboundProcessingDeferred]: called by an encryption layer
      * that processes the device's data on another thread, when it takes on [bytes] bytes it
      * will finish with later. It lets the transport layer count data it has accepted from the
-     * device but not yet been handed back for the remote host (docs/vpn-mitm-audit.md PKT-43).
+     * device but not yet been handed back for the remote host (docs/records/vpn-mitm-audit.md PKT-43).
      */
     fun outboundProcessingDeferred(bytes: Int) {
         outboundInProcess.addAndGet(bytes.toLong())
@@ -239,7 +239,7 @@ abstract class TransportLayerConnection protected constructor(
             0
         } else {
             // does not wait for the database: this runs on the thread that handles the device's
-            // packets, for every new connection (docs/vpn-mitm-audit.md PKT-41)
+            // packets, for every new connection (docs/records/vpn-mitm-audit.md PKT-41)
             componentManager.databaseConnector.persistTransportLayerConnection(
                 sessionId = componentManager.sessionId,
                 protocol = protocol,
@@ -259,7 +259,7 @@ abstract class TransportLayerConnection protected constructor(
     /**
      * Corrects the connection's hostname with the server name the client itself asked for in its
      * ClientHello, re-evaluates the tracker label and persists both
-     * (docs/vpn-mitm-audit.md PKT-28). The name known at creation time is only a reverse lookup
+     * (docs/records/vpn-mitm-audit.md PKT-28). The name known at creation time is only a reverse lookup
      * of the remote address in the DNS cache: it is missing when the app resolves names outside
      * our view (DoH/DoT, Private DNS, lookups made before the VPN started) and ambiguous when
      * several hosts share one address.
@@ -293,7 +293,7 @@ abstract class TransportLayerConnection protected constructor(
 
     /**
      * Gives a connection that has no hostname yet the name [name], e.g. from an HTTP request's
-     * Host header, and re-evaluates the tracker label (docs/vpn-mitm-audit.md PKT-58). A name the
+     * Host header, and re-evaluates the tracker label (docs/records/vpn-mitm-audit.md PKT-58). A name the
      * connection already has is never replaced, unlike with [refineRemoteHost] and an SNI.
      */
     fun fillMissingRemoteHost(name: String) {
@@ -315,7 +315,7 @@ abstract class TransportLayerConnection protected constructor(
     // added up here and written in batches by flushByteCounters(): one database UPDATE per data
     // segment queued thousands of writes during a large transfer, and everything else that
     // needed the database, including the setup of new connections, waited behind them
-    // (docs/vpn-mitm-audit.md PKT-38).
+    // (docs/records/vpn-mitm-audit.md PKT-38).
     private val pendingBytesOut = AtomicLong(0)
     private val pendingBytesIn = AtomicLong(0)
 
@@ -459,10 +459,10 @@ abstract class TransportLayerConnection protected constructor(
                     if(tcpPacket.header.rst) {
                         // A reset for a connection that is not (or no longer) known. There is
                         // nothing to reset, and a reset is never answered: the answer would be
-                        // another reset (docs/vpn-mitm-audit.md PKT-44).
+                        // another reset (docs/records/vpn-mitm-audit.md PKT-44).
                         null
                     } else if(tcpPacket.header.fin || tcpPacket.header.ack) {
-                        // e.g. "FIN-ACK" (docs/vpn-mitm-audit.md PKT-63; resets were handled above)
+                        // e.g. "FIN-ACK" (docs/records/vpn-mitm-audit.md PKT-63; resets were handled above)
                         val headerString = listOfNotNull(
                             "FIN".takeIf { tcpPacket.header.fin },
                             "ACK".takeIf { tcpPacket.header.ack }
@@ -472,7 +472,7 @@ abstract class TransportLayerConnection protected constructor(
                         null
                     } else if(refusesDnsOverTls(initialPacket, tcpPacket, componentManager)) {
                         // Private DNS in opportunistic mode: the resolver then uses plain DNS on
-                        // the VPN, which fills the DNS cache (docs/vpn-mitm-audit.md PKT-58)
+                        // the VPN, which fills the DNS cache (docs/records/vpn-mitm-audit.md PKT-58)
                         Timber.d("Refusing DNS over TLS to ${initialPacket.header.dstAddr.hostAddress}:853")
                         deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_STRAY, IpPacketBuilder.buildStray(initialPacket, TcpConnection.buildResetFor(initialPacket))))
                         null

@@ -1,7 +1,7 @@
 package de.tomcory.heimdall.core.vpn.quic
 
 /**
- * What the VPN does with QUIC flows while MitM is on (docs/vpn-mitm-audit.md PKT-51). The app
+ * What the VPN does with QUIC flows while MitM is on (docs/records/vpn-mitm-audit.md PKT-51). The app
  * maps the user's preference onto this, so that `core:vpn` does not depend on the preference
  * schema, as with [de.tomcory.heimdall.core.vpn.mitm.MitmScope].
  */

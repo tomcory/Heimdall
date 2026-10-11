@@ -1,5 +1,7 @@
 # Heimdall UI Redesign — Design Document
 
+> **Status: record.** Design document for the UI redesign, committed on 2026-09-17.
+
 ## Overview
 
 A full redesign of the Heimdall Android UI. The goal is to replace a sparse, utilitarian interface with one that is modern, adaptive, technically-flavoured, and information-rich — without sacrificing the clarity that a privacy/network analysis tool requires.

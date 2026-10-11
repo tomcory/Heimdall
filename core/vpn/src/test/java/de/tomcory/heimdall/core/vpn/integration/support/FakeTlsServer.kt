@@ -19,7 +19,7 @@ class FakeTlsServer(hostname: String = "example.com", applicationProtocols: List
 
     val leafCert: X509Certificate
 
-    /** The ALPN protocol negotiated on the last accepted connection, "" if none (docs/vpn-mitm-audit.md PKT-57). */
+    /** The ALPN protocol negotiated on the last accepted connection, "" if none (docs/records/vpn-mitm-audit.md PKT-57). */
     @Volatile
     var negotiatedProtocol: String? = null
         private set

@@ -24,7 +24,7 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
 
     /**
      * @param applicationProtocols What the engine offers the server through ALPN; none if empty
-     * (docs/vpn-mitm-audit.md PKT-57).
+     * (docs/records/vpn-mitm-audit.md PKT-57).
      */
     fun createServerSSLEngine(peerHost: String?, peerPort: Int, applicationProtocols: List<String> = emptyList()): SSLEngine? {
         val engine = if(peerHost != null) sslEngineSource?.newSSLEngine(peerHost, peerPort) else createServerSSLEngine()
@@ -41,7 +41,7 @@ class CertificateSniffingMitmManager(authority: Authority?, trustAllServers: Boo
      * impersonates the remote server with a fake certificate.
      *
      * @param applicationProtocols What the engine accepts from the client through ALPN; none if
-     * empty (docs/vpn-mitm-audit.md PKT-57).
+     * empty (docs/records/vpn-mitm-audit.md PKT-57).
      */
     fun createClientSSLEngineFor(serverSSLSession: SSLSession, applicationProtocols: List<String> = emptyList()): SSLEngine {
         val engine = try {

@@ -8,7 +8,7 @@ import javax.net.ssl.X509ExtendedTrustManager
 /**
  * Trust manager that accepts every certificate chain without any validation. Only used for the
  * MitM engine's upstream (server-facing) connections, and only when the user explicitly enables
- * "Trust all upstream TLS certificates" (see [SSLEngineSource] and docs/vpn-mitm-audit.md PKT-07);
+ * "Trust all upstream TLS certificates" (see [SSLEngineSource] and docs/records/vpn-mitm-audit.md PKT-07);
  * strict validation via [MergeTrustManager] is the default.
  *
  * This deliberately extends [X509ExtendedTrustManager] rather than implementing the plain
@@ -17,7 +17,7 @@ import javax.net.ssl.X509ExtendedTrustManager
  * checks on top of it. Since [SSLEngineSource.newSSLEngine] enables "HTTPS" endpoint
  * identification, a plain implementation would still reject hostname mismatches - i.e. it wouldn't
  * actually trust all certificates. Replaces Netty's InsecureTrustManagerFactory
- * (docs/vpn-mitm-audit.md PKT-20).
+ * (docs/records/vpn-mitm-audit.md PKT-20).
  */
 object InsecureTrustManager : X509ExtendedTrustManager() {
 

@@ -14,7 +14,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Regression tests for docs/vpn-mitm-audit.md PKT-15 (V-24): the old key was a hand-rolled
+ * Regression tests for docs/records/vpn-mitm-audit.md PKT-15 (V-24): the old key was a hand-rolled
  * `remoteAddress.hashCode() xor (protocol shl 16) xor (localPort shl 8) xor remotePort` Int
  * whose localPort/remotePort bit ranges overlapped - e.g. (localPort=1, remotePort=0) and
  * (localPort=0, remotePort=256) both packed to `(1 shl 8) xor 0 == 256 == 0 xor 256`, so adding

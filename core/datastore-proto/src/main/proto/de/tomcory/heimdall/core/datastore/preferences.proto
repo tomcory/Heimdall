@@ -24,7 +24,7 @@ enum ReportRetentionMode {
   REPORT_RETENTION_LATEST_ONLY = 1;
 }
 
-// What the MitM-VPN does with QUIC flows (docs/vpn-mitm-audit.md PKT-51). Only applies while MitM is
+// What the MitM-VPN does with QUIC flows (docs/records/vpn-mitm-audit.md PKT-51). Only applies while MitM is
 // enabled. Passthrough is the zero value and with it the default, including for existing installs.
 enum MitmQuicPolicy {
   // forward QUIC flows; their ClientHello is still read for the hostname
@@ -56,7 +56,7 @@ message Preferences {
   // ---- MITM PREFERENCES
   bool mitm_enable = 12;
   // whether the MitM learns, per VPN session, to stop intercepting (app, host) pairs whose app
-  // rejects Heimdall's forged certificate (docs/vpn-mitm-audit.md PKT-23/PKT-24). The historical
+  // rejects Heimdall's forged certificate (docs/records/vpn-mitm-audit.md PKT-23/PKT-24). The historical
   // name is kept for storage compatibility.
   bool mitm_appLayer_passthrough = 13;
   string mitm_caCert_path = 14;
@@ -115,6 +115,6 @@ message Preferences {
   bool mitm_trust_all_upstream_certs = 49;
   MitmQuicPolicy mitm_quic_policy = 50;
   // largest HTTP body kept per request or response, in KB; longer bodies are stored truncated.
-  // 0 (the value of installs from before this field) means the default (docs/vpn-mitm-audit.md PKT-59)
+  // 0 (the value of installs from before this field) means the default (docs/records/vpn-mitm-audit.md PKT-59)
   int32 mitm_http_body_limit_kb = 51;
 }

@@ -5,7 +5,7 @@ import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
 
 /**
  * Turns the user's QUIC policy preference into the [QuicPolicy] the VPN applies
- * (docs/vpn-mitm-audit.md PKT-51).
+ * (docs/records/vpn-mitm-audit.md PKT-51).
  */
 object QuicPolicyResolver {
 

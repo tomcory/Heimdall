@@ -44,7 +44,7 @@ class DnsConnection(
     companion object {
         /**
          * Fills the DNS cache from the A and AAAA records of the DNS response [message], under the
-         * name the response's first question asked for (docs/vpn-mitm-audit.md PKT-58).
+         * name the response's first question asked for (docs/records/vpn-mitm-audit.md PKT-58).
          *
          * @return false if [message] is not a DNS message that could be read.
          */
