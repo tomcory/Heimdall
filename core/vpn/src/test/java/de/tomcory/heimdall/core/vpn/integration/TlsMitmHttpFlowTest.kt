@@ -199,13 +199,12 @@ class TlsMitmHttpFlowTest {
         assertEquals("Hello, world!", String(dbConnector.responses[0].content))
 
         // the connection is recorded as TLS along with the server name the client asked for
-        // (docs/records/vpn-mitm-audit.md PKT-27)
         assertEquals(1, dbConnector.connections.size)
         assertEquals(SecurityProtocol.TLS, dbConnector.connections[0].securityProtocol)
         assertEquals(hostname, dbConnector.connections[0].sni)
 
         // the row was created without a hostname (nothing was in the DNS cache); the SNI fills it
-        // in (docs/records/vpn-mitm-audit.md PKT-28)
+        // in
         assertEquals(hostname, dbConnector.connections[0].remoteHost)
 
         // --- certificate assertion: the dynamically-generated leaf cert must mirror FakeTlsServer's CN ---

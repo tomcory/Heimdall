@@ -8,7 +8,7 @@ import java.io.File
 
 /**
  * Keeps the canned QUIC client Initials that `scripts/emulator-traffic.sh` sends in its "quic"
- * group (docs/records/vpn-mitm-audit.md PKT-50) identical to what [QuicInitialFixtures] produces, and
+ * group identical to what [QuicInitialFixtures] produces, and
  * checks that each of them yields the expected ClientHello.
  *
  * Initial keys depend only on the version and the Destination Connection ID, so the datagrams

@@ -117,7 +117,7 @@ class HeimdallVpnService : VpnService() {
                 // Make Heimdall the prepared VPN app. The system forgets which app that is on
                 // every reboot, and without it establishing the interface fails. This only
                 // succeeds from here if the user has consented before; if not, the consent
-                // dialog has to be shown by an activity (docs/records/vpn-mitm-audit.md PKT-40).
+                // dialog has to be shown by an activity.
                 val consentIntent = try {
                     prepare(this)
                 } catch (e: Exception) {
@@ -290,7 +290,7 @@ class HeimdallVpnService : VpnService() {
         }
 
         // Read before the interface exists: Heimdall's own traffic bypasses the VPN, so this is
-        // the network the device uses without it (docs/records/vpn-mitm-audit.md PKT-58)
+        // the network the device uses without it
         val strictPrivateDns = isPrivateDnsStrict()
 
         // Open the database before the interface exists. After a schema change Room's
@@ -355,8 +355,7 @@ class HeimdallVpnService : VpnService() {
     }
 
     /**
-     * Resolves the user's MitM monitoring-scope preferences into the [MitmScope] the VPN applies
-     * (docs/records/vpn-mitm-audit.md PKT-24).
+     * Resolves the user's MitM monitoring-scope preferences into the [MitmScope] the VPN applies.
      */
     private suspend fun resolveMitmScope(): MitmScope = MitmScopeResolver.resolve(
         appScope = preferences.mitmMonitoringScopeApps.first(),
@@ -382,7 +381,7 @@ class HeimdallVpnService : VpnService() {
     /**
      * Whether Private DNS is in strict mode, i.e. set to a named provider. On API 28+ the name is
      * on the link properties of every network then; in "automatic" mode and with Private DNS off
-     * there is none. Below API 28 there is no Private DNS (docs/records/vpn-mitm-audit.md PKT-58).
+     * there is none. Below API 28 there is no Private DNS.
      */
     private fun isPrivateDnsStrict(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
@@ -492,8 +491,7 @@ class HeimdallVpnService : VpnService() {
         // on mobile data even on Wi-Fi (deferred updates, syncs and prefetching), so Heimdall
         // would not record what they do without it. Not metered here means "metered exactly when
         // an underlying network is". The underlying networks are left unset, which means the
-        // default network: the one Heimdall's protected sockets use
-        // (docs/records/vpn-mitm-audit.md PKT-55).
+        // default network: the one Heimdall's protected sockets use.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
@@ -668,8 +666,7 @@ class HeimdallVpnService : VpnService() {
          * Optional intent extra that sets the QUIC policy for this session only, overriding the
          * stored preference without changing it: "block" or "passthrough". Meant for scripted
          * tests (`scripts/emulator-traffic.sh vpn-start --quic-policy`). The service is not
-         * exported, so only the app itself or a root shell can pass it
-         * (docs/records/vpn-mitm-audit.md PKT-51).
+         * exported, so only the app itself or a root shell can pass it.
          */
         const val QUIC_POLICY_EXTRA = "de.tomcory.heimdall.core.vpn.QUIC_POLICY"
 

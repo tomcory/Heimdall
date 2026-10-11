@@ -13,7 +13,7 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-58: DNS over a stream (TCP to port 53, decrypted DNS over
+ * DNS over a stream (TCP to port 53, decrypted DNS over
  * TLS) frames each message with a two-byte length.
  */
 class DnsStreamConnectionTest {

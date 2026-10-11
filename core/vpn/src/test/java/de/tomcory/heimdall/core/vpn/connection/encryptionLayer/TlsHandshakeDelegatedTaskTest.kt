@@ -24,7 +24,7 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult.HandshakeStatus
 
 /**
- * Regression test for docs/records/vpn-mitm-audit.md PKT-25 (V-36): when several handshake records arrived
+ * Regression test: when several handshake records arrived
  * in one transport payload, the first one left the SSLEngine with delegated tasks pending. Those
  * tasks were run in a separately launched coroutine, so the following records were unwrapped
  * while tasks were still pending. The engine consumed none of their bytes, and TlsConnection then

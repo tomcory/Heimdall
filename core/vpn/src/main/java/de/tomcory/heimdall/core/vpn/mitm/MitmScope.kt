@@ -4,7 +4,7 @@ import de.tomcory.heimdall.core.util.Trie
 
 /**
  * Which TLS connections the MitM engine may intercept, as configured by the user's MitM monitoring
- * scope preferences (docs/records/vpn-mitm-audit.md PKT-24). Connections outside the scope are passed
+ * scope preferences. Connections outside the scope are passed
  * through unmodified. `core:vpn` doesn't depend on the preference schema, so the app module
  * resolves the preferences into this type.
  *

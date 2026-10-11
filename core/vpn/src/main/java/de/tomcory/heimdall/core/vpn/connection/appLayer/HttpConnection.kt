@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * @param persistDispatcher Runs this connection's database writes (docs/records/vpn-mitm-audit.md PKT-60).
+ * @param persistDispatcher Runs this connection's database writes.
  * Replaceable for tests.
  */
 class HttpConnection(
@@ -82,8 +82,8 @@ class HttpConnection(
     }
 
     /**
-     * A message body as far as it is kept: its first [limit] bytes, and its real length
-     * (docs/records/vpn-mitm-audit.md PKT-59). Bytes, not text, so that binary and compressed bodies are
+     * A message body as far as it is kept: its first [limit] bytes, and its real length.
+     * Bytes, not text, so that binary and compressed bodies are
      * stored as they were sent; memory is bounded by [limit] however long the body is.
      */
     private class BoundedBody(private val limit: Int) {
@@ -107,7 +107,7 @@ class HttpConnection(
     private val outboundState = ReassemblyState()
     private val inboundState = ReassemblyState()
 
-    /** How much of a body is kept (docs/records/vpn-mitm-audit.md PKT-59). */
+    /** How much of a body is kept. */
     private val maximumBodySize = componentManager.maxHttpBodySize.coerceIn(0, MAX_BODY_SIZE_LIMIT)
 
     /**
@@ -127,8 +127,8 @@ class HttpConnection(
 
     /**
      * Lets one of this connection's database writes run at a time, in the order the messages were
-     * seen: the mutex is fair, so waiting writes are let in first come, first served
-     * (docs/records/vpn-mitm-audit.md PKT-60). Writes used to run as independent coroutines on the shared
+     * seen: the mutex is fair, so waiting writes are let in first come, first served.
+     * Writes used to run as independent coroutines on the shared
      * IO dispatcher, so a burst started thousands of concurrent inserts, and the backlog delayed
      * request rows by more than the 30 s a response used to wait for them (V-65). A dispatcher
      * limited to one thread would not serialise them: a write that suspends inside the database
@@ -197,8 +197,7 @@ class HttpConnection(
     /**
      * Whether to log every payload. Off by default: these lines are written once per TCP
      * segment, and with Timber's debug tree each costs a stack trace to find its tag. During
-     * an upload they took half of the time of the thread that handles the device's packets
-     * (docs/records/vpn-mitm-audit.md PKT-45).
+     * an upload they took half of the time of the thread that handles the device's packets.
      */
     private val log = false
 
@@ -244,7 +243,7 @@ class HttpConnection(
             val lowercaseHeaders = headerBlock.lowercase()
 
             // Some responses have no body whatever their headers say, and some end HTTP on this
-            // connection altogether (docs/records/vpn-mitm-audit.md PKT-33). Both depend on the status
+            // connection altogether. Both depend on the status
             // code and on the method of the request being answered (RFC 9112 section 6.3).
             if(!isOutbound) {
                 val statusCode = parseStatusCode(headerBlock)
@@ -293,7 +292,7 @@ class HttpConnection(
 
             if(contentLength >= 0) {
                 // Only the first maximumBodySize bytes of the body are kept, the rest is only
-                // counted (docs/records/vpn-mitm-audit.md PKT-37, PKT-59), so memory stays bounded
+                // counted, so memory stays bounded
                 // however large the body is.
                 if(availableBodyBytes >= contentLength) {
                     // the message is complete; anything behind it belongs to the next one
@@ -367,7 +366,7 @@ class HttpConnection(
     }
 
     /**
-     * Handles bytes of a chunked message (docs/records/vpn-mitm-audit.md PKT-32). The end of the body is
+     * Handles bytes of a chunked message. The end of the body is
      * found by following the declared chunk sizes, since that is the only reliable way: chunk
      * data may contain anything, and the terminating zero-size chunk can arrive in the same
      * payload as the headers, on its own, or split across payloads.
@@ -428,7 +427,7 @@ class HttpConnection(
 
         if (isOutbound) {
             // Without a name from the DNS cache or an SNI, the request's own Host header names
-            // the server; it also names the connection from now on (docs/records/vpn-mitm-audit.md PKT-58)
+            // the server; it also names the connection from now on
             if (encryptionLayer.transportLayer.remoteHost.isNullOrEmpty()) {
                 hostHeaderName(headers)?.let { encryptionLayer.transportLayer.fillMissingRemoteHost(it) }
             }
@@ -565,8 +564,7 @@ class HttpConnection(
     }
 
     /**
-     * What may be logged about a message that could not be parsed (docs/records/vpn-mitm-audit.md
-     * PKT-63): its length and its first token (a method, or `HTTP/1.1`), cut short. Not the
+     * What may be logged about a message that could not be parsed: its length and its first token (a method, or `HTTP/1.1`), cut short. Not the
      * rest: the request line's query string and the headers (`Cookie`, `Authorization`) carry
      * secrets, and logcat can be read by other apps with `READ_LOGS` and ends up in bug reports.
      */
@@ -619,7 +617,7 @@ class HttpConnection(
     }
 
     companion object {
-        /** The default of the "largest HTTP body to keep" preference (docs/records/vpn-mitm-audit.md PKT-59). */
+        /** The default of the "largest HTTP body to keep" preference. */
         const val DEFAULT_MAX_BODY_SIZE = 256 * 1024
 
         /**
@@ -631,8 +629,7 @@ class HttpConnection(
         private val EMPTY_BODY = ByteArray(0)
 
         /**
-         * How long one database write may take before it is given up (docs/records/vpn-mitm-audit.md
-         * PKT-60). Only a safety net against a write that never returns. Time spent waiting
+         * How long one database write may take before it is given up. Only a safety net against a write that never returns. Time spent waiting
          * behind earlier writes does not count, so a long backlog delays messages but no longer
          * discards them, as the 30 s wait for a request's ID did before (V-65).
          */

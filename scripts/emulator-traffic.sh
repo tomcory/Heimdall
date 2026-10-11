@@ -11,7 +11,7 @@
 #   scripts/emulator-traffic.sh vpn-start [--quic-policy P] | vpn-stop
 #
 # --quic-policy block|passthrough sets the VPN's QUIC policy for this session only, without
-# changing the stored preference (docs/records/vpn-mitm-audit.md PKT-51). It only acts while MitM is on.
+# changing the stored preference. It only acts while MitM is on.
 # A VPN that is already running keeps its policy; stop it first.
 #   scripts/emulator-traffic.sh traffic [GROUP...]           send traffic (VPN must be running)
 #   scripts/emulator-traffic.sh report                       pull the database, summarise the latest session
@@ -39,7 +39,7 @@
 #
 # The "quic" group sends the canned client Initial datagrams in scripts/quic-initials.txt to
 # $QUIC_TARGET:443, where nothing answers, from a connected UDP socket (scripts/quic-probe).
-# Heimdall reads the ClientHello from them (docs/records/vpn-mitm-audit.md PKT-50), so each case should
+# Heimdall reads the ClientHello from them, so each case should
 # appear as a QUIC row with its SNI as the hostname and its ALPN. With MitM on and
 # --quic-policy block, the h3 cases are blocked (PKT-52): the probe reports "refused" and the
 # row is marked blocked; the doq case is forwarded and gets "no answer". The datagrams are
@@ -88,7 +88,7 @@ APPS="${HEIMDALL_APPS:-com.android.vending com.google.android.youtube}"
 APP_WAIT="${HEIMDALL_APP_WAIT:-25}"
 # Seconds the shell-driven TCP clients keep their sending side open after writing, the way an
 # ordinary client does while it waits for the response. The "http" group additionally sends one
-# request that closes its sending side at once (a TCP half-close, docs/records/vpn-mitm-audit.md PKT-30).
+# request that closes its sending side at once (a TCP half-close).
 HOLD_OPEN="${HEIMDALL_HOLD_OPEN:-4}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -203,7 +203,7 @@ dns_query() {
 }
 
 # Sends an A query for $1 over TCP (two-byte length prefix) to 8.8.8.8:53 and stores the first
-# address of the answer in TCP_DNS_IP (docs/records/vpn-mitm-audit.md PKT-58).
+# address of the answer in TCP_DNS_IP.
 dns_query_tcp() {
     local host="$1" qname="" label length hex
     local IFS='.'
@@ -267,7 +267,7 @@ group_http() {
             | tr -d '\r' | { read -r status; info "GET http://$host/ -> ${status:-no response}"; }
     done
     # A HEAD and a GET pipelined on one connection. The HEAD response states a Content-Length
-    # but has no body (docs/records/vpn-mitm-audit.md PKT-33), so both responses must be recorded.
+    # but has no body, so both responses must be recorded.
     host="${HTTP_HOSTS##* }"
     adb shell "{ printf 'HEAD /head HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\n\\r\\nGET /after-head HTTP/1.1\\r\\nHost: $host\\r\\nUser-Agent: heimdall-traffic\\r\\nConnection: close\\r\\n\\r\\n'; sleep $HOLD_OPEN; } | timeout 12 nc -w 5 -q 3 $host 80 | grep -c '^HTTP/1.1 '" \
         | tr -d '\r' | { read -r count; info "HEAD http://$host/head + GET /after-head on one connection -> ${count:-0} responses"; }
@@ -317,7 +317,7 @@ tls_case() {
         return
     fi
     if [ "$name" = "early-alert" ]; then
-        # a close_notify alert right behind the ClientHello (docs/records/vpn-mitm-audit.md PKT-31)
+        # a close_notify alert right behind the ClientHello
         printf '\x15\x03\x03\x00\x02\x01\x00' >> "$file"
     fi
     adb push "$file" "$DEVICE_TMP/$name.bin" >/dev/null 2>&1
@@ -357,7 +357,7 @@ group_quic() {
     d8="$(ls "$sdk"/build-tools/*/d8 2>/dev/null | sort | tail -1)"
     [ -x "$d8" ] || die "d8 not found under $sdk/build-tools"
     # the probe sends over a connected UDP socket, so it sees the ICMP error a blocked flow
-    # is answered with (docs/records/vpn-mitm-audit.md PKT-52); netcat would not
+    # is answered with; netcat would not
     javac --release 8 -Xlint:-options -d "$WORK/probe" "$REPO_ROOT/scripts/quic-probe/QuicProbe.java" || die "javac failed"
     "$d8" --min-api 26 --output "$WORK/probe" "$WORK"/probe/*.class || die "d8 failed"
     adb shell "mkdir -p $DEVICE_TMP" < /dev/null
@@ -463,7 +463,7 @@ cmd_report() {
         from Request r join Connection c on c.id = r.connectionId
         where c.sessionId = $session order by r.id limit 30;"
 
-    say "Stored HTTP bodies (kept bytes against real length; docs/records/vpn-mitm-audit.md PKT-59)"
+    say "Stored HTTP bodies (kept bytes against real length)"
     sqlite3 -header -column "$db" "
         select 'request' kind, count(*) n, coalesce(sum(length(content)), 0) kept_bytes,
                coalesce(sum(contentLength), 0) real_bytes, coalesce(sum(contentTruncated), 0) truncated

@@ -17,7 +17,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-46 (V-54): a UDP datagram larger than the tunnel's MTU
+ * A UDP datagram larger than the tunnel's MTU
  * reaches the VPN as IP fragments, which have to be put back together before the datagram can
  * be forwarded.
  */

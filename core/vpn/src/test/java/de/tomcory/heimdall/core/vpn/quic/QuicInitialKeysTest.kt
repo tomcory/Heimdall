@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * docs/records/vpn-mitm-audit.md PKT-49: the Initial keys, checked against RFC 9001 Appendix A.1 and
+ * The Initial keys, checked against RFC 9001 Appendix A.1 and
  * RFC 9369 Appendix A.1.
  */
 class QuicInitialKeysTest {

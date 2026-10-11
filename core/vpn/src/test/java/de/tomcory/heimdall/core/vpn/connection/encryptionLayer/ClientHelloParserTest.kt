@@ -12,7 +12,7 @@ import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-29: [ClientHelloParser] reads SNI, ALPN, the offered TLS
+ * [ClientHelloParser] reads SNI, ALPN, the offered TLS
  * versions and the presence of an ECH extension from a bare ClientHello handshake message.
  */
 class ClientHelloParserTest {

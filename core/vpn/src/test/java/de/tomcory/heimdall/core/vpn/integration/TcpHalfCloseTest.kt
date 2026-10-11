@@ -30,7 +30,7 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-30 (V-42): a client may finish sending (TCP FIN) and still
+ * A client may finish sending (TCP FIN) and still
  * wait for the remote host's reply. The FIN used to close the outward-facing socket at once, so
  * that reply was lost.
  */

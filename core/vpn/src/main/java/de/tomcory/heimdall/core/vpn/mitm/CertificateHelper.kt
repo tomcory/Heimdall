@@ -128,7 +128,6 @@ object CertificateHelper {
         certificateBuilder.addExtension(Extension.basicConstraints, true, BasicConstraints(true))
 
         // Key Usage: only what a CA does, and critical, as RFC 5280 section 4.2.1.3 asks of a CA
-        // (docs/records/vpn-mitm-audit.md PKT-64)
         val usage = KeyUsage(KeyUsage.keyCertSign
                     or KeyUsage.cRLSign
                     or KeyUsage.digitalSignature)

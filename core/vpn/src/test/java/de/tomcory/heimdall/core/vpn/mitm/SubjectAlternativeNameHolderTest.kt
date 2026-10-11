@@ -122,7 +122,7 @@ class SubjectAlternativeNameHolderTest {
     }
 
     // -----------------------------------------------------------------------
-    // addAll (docs/records/vpn-mitm-audit.md PKT-11, V-06): entries whose value the JDK returns as a
+    // addAll: entries whose value the JDK returns as a
     // byte[] (rather than a String) must be skipped, not forwarded as garbage via toString().
     // -----------------------------------------------------------------------
 

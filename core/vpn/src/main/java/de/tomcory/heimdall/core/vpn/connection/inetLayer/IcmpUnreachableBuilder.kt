@@ -4,7 +4,7 @@ import java.net.Inet4Address
 
 /**
  * Builds the ICMP "destination unreachable, port unreachable" error (RFC 792) that tells an app
- * its UDP datagram will not be answered (docs/records/vpn-mitm-audit.md PKT-52). The kernel matches the
+ * its UDP datagram will not be answered. The kernel matches the
  * error to the app's socket by the datagram it quotes, and a connected UDP socket then fails
  * with "connection refused" at once, instead of the app waiting for its own timeout.
  *

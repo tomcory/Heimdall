@@ -83,7 +83,7 @@ class TcpConnection internal constructor(
     @Volatile
     private var pendingFinAck: IpPacket? = null
 
-    // Sending to the device (docs/records/vpn-mitm-audit.md PKT-42). Data for the device is queued and
+    // Sending to the device. Data for the device is queued and
     // sent only as far as the device's receive window allows. Everything a segment's sequence
     // number depends on happens under sendLock, so that segments are built and handed to the
     // device writer in sequence order whichever thread sends them: the selector thread
@@ -126,7 +126,7 @@ class TcpConnection internal constructor(
     @Volatile
     private var readPaused = false
 
-    // Sending to the remote host (docs/records/vpn-mitm-audit.md PKT-43). What the outward-facing
+    // Sending to the remote host. What the outward-facing
     // channel does not take at once is queued and written when the selector reports the channel
     // writable. Nothing waits for the channel in a loop: that loop used to run on the thread
     // that handles every packet from the device, and a slow remote host stalled all traffic.
@@ -187,7 +187,7 @@ class TcpConnection internal constructor(
     /**
      * Whether the remote host closed its side while the device's side was still open. A FIN
      * only says that the remote host has finished sending. It may still read, so the device's
-     * data is forwarded until the device closes too (docs/records/vpn-mitm-audit.md PKT-53).
+     * data is forwarded until the device closes too.
      */
     @Volatile
     private var remoteClosedFirst = false
@@ -244,7 +244,7 @@ class TcpConnection internal constructor(
      * connection (a binder call), protecting the socket from the VPN (another one), connecting
      * it (which involves netd) and registering it with the selector. On the thread that handles
      * the device's packets this held up every other connection's packets, and with them their
-     * ACKs, for as long as new connections kept coming (docs/records/vpn-mitm-audit.md PKT-41).
+     * ACKs, for as long as new connections kept coming.
      *
      * The device has only sent its SYN at this point and waits for our SYN-ACK, which is sent
      * once the outward-facing channel is connected ([unwrapInboundConnectable]).
@@ -281,7 +281,7 @@ class TcpConnection internal constructor(
                 Timber.e("tcp$id Error while creating TCP connection: ${e.message}")
                 deleteDatabaseEntity()
                 // tell the device, which is waiting for an answer to its SYN, that there will
-                // be no connection (docs/records/vpn-mitm-audit.md PKT-44)
+                // be no connection
                 closeHard()
             } else {
                 closeChannel()
@@ -302,7 +302,7 @@ class TcpConnection internal constructor(
         selectableChannel.socket().soTimeout = 0
         // The receive buffer is deliberately left at the platform default. It bounds the window
         // the remote host may send into, and shrinking it (it used to be set to maxPacketSize)
-        // halved download throughput (docs/records/vpn-mitm-audit.md PKT-34).
+        // halved download throughput.
         selectableChannel.connect(InetSocketAddress(remoteAddress, remotePort))
     }
 
@@ -359,7 +359,7 @@ class TcpConnection internal constructor(
     private class BufferedSegment(val payload: Packet?, val payloadLength: Int, val fin: Boolean, val finAckNumber: Int?)
 
     /**
-     * Segments that arrived ahead of a gap, by sequence number (docs/records/vpn-mitm-audit.md PKT-48).
+     * Segments that arrived ahead of a gap, by sequence number.
      * The keys lie within one receive window of each other, so their wrap-around difference
      * orders them correctly. Only touched by the thread that handles the device's packets. Not
      * emptied explicitly when the connection closes: it goes with the connection object, which
@@ -419,8 +419,8 @@ class TcpConnection internal constructor(
 
     /**
      * Checks a segment that occupies sequence space (data, a FIN, or both) against the next
-     * sequence number expected from the device, and forwards only data that is new
-     * (docs/records/vpn-mitm-audit.md PKT-39). The device retransmits whenever an ACK of ours is late,
+     * sequence number expected from the device, and forwards only data that is new.
+     * The device retransmits whenever an ACK of ours is late,
      * so duplicates are routine. Forwarding one repeats bytes in the stream, which a TLS peer
      * rejects as a bad record.
      *
@@ -823,7 +823,7 @@ class TcpConnection internal constructor(
 
     /**
      * Whether data from the device is forwarded: the connection is established, or only the
-     * remote host has closed its side (docs/records/vpn-mitm-audit.md PKT-53). Once the device has sent
+     * remote host has closed its side. Once the device has sent
      * its FIN, any further data from it is a protocol violation.
      */
     private fun acceptsDeviceData(): Boolean {
@@ -859,8 +859,7 @@ class TcpConnection internal constructor(
         if (theirSeqNum.get().toInt() + newBytes - advertisedEdge > 0) {
             // Beyond the window the device was told: too much of what it sent earlier is still
             // waiting for the remote host. Drop it and say again where the window ends; the
-            // device keeps the data and sends it again once the window opens
-            // (docs/records/vpn-mitm-audit.md PKT-43).
+            // device keeps the data and sends it again once the window opens.
             Timber.d("tcp$id Dropping segment sent beyond the advertised window (${payload.length()} bytes)")
             sendEmptyAck()
             return false
@@ -910,8 +909,7 @@ class TcpConnection internal constructor(
             }
             TransportLayerState.CLOSING -> synchronized(closeLock) {
                 // Only the ACK that covers our FIN moves the closing handshake forward. Others
-                // acknowledge data sent before the FIN and say nothing about the close
-                // (docs/records/vpn-mitm-audit.md PKT-35).
+                // acknowledge data sent before the FIN and say nothing about the close.
                 if (state == TransportLayerState.CLOSING && finSent && ackNumber == ourFinAckNumber) {
                     ourFinAcknowledged = true
                     finishCloseIfComplete()
@@ -987,7 +985,7 @@ class TcpConnection internal constructor(
             }
             TransportLayerState.CONNECTED -> {
                 // A FIN only means the client has finished sending. It may still be waiting for
-                // the remote host's reply (docs/records/vpn-mitm-audit.md PKT-30), so if the layers above
+                // the remote host's reply, so if the layers above
                 // can carry it, pass the half-close on instead of closing the connection.
                 notifyClientClosed()
                 if (encryptionLayerSupportsHalfClose() && shutdownOutwardOutput()) {
@@ -1143,8 +1141,7 @@ class TcpConnection internal constructor(
         var readError: IOException? = null
         do {
             // Read no further ahead of the device than the backlog limit. This is what keeps a
-            // device that reads slowly from being sent data it has no room for
-            // (docs/records/vpn-mitm-audit.md PKT-42).
+            // device that reads slowly from being sent data it has no room for.
             if (readsStopped || pauseReadingIfBacklogged()) {
                 break
             }
@@ -1175,8 +1172,7 @@ class TcpConnection internal constructor(
         readError?.let {
             // The remote host reset the connection, or it broke in some other way. That is not
             // the end of the stream: the device has to see a reset, not a FIN, or its app takes
-            // a truncated response for a complete one or waits for the rest until it times out
-            // (docs/records/vpn-mitm-audit.md PKT-44).
+            // a truncated response for a complete one or waits for the rest until it times out.
             Timber.d("tcp$id Error reading from SocketChannel (${it.javaClass.simpleName}: ${it.message}), resetting the connection")
             closeHard()
             return
@@ -1185,8 +1181,7 @@ class TcpConnection internal constructor(
         // the remote host has finished sending
         if (bytesRead == -1) {
             // It may still read: a FIN closes only one direction, and the device may still have
-            // data for it, which used to be answered with a reset and lost (docs/records/vpn-mitm-audit.md
-            // PKT-53). So only the receiving side is shut down. The channel is closed once the
+            // data for it, which used to be answered with a reset and lost. So only the receiving side is shut down. The channel is closed once the
             // closing handshake with the device is complete (finishCloseIfComplete), when writing
             // to it fails, or by the sweep.
             readsStopped = true
@@ -1198,7 +1193,7 @@ class TcpConnection internal constructor(
             }
             // The device must not hear about the close before it has received everything the
             // remote host sent. The layers above may still be working on that data, so they
-            // decide when the close is delivered (docs/records/vpn-mitm-audit.md PKT-36).
+            // decide when the close is delivered.
             notifyRemoteClosed(::deliverRemoteClose)
         }
     }
@@ -1219,7 +1214,7 @@ class TcpConnection internal constructor(
                     // closing handshake with a FIN-ACK, which goes out once the device has been
                     // sent everything that is still queued for it. It has to carry the ACK flag like every
                     // segment of an established connection, or the device discards it and never
-                    // learns that the remote host is done (docs/records/vpn-mitm-audit.md PKT-35). The
+                    // learns that the remote host is done. The
                     // device's ACK for it and the device's own FIN complete the handshake
                     // (handleAckEmpty, handleFin).
                     Timber.d("tcp$id Remote host closed its side, state transition $state -> CLOSING")
@@ -1358,8 +1353,8 @@ class TcpConnection internal constructor(
         val builder = buildTcpPayload(urg = false, ack = true, psh = false, rst = false, syn = true, fin = false, rawPayload = ByteArray(0))
         // Announce a maximum segment size. Without the option the device has to assume the
         // default of 536 bytes and sends its data in segments about a third of the size its
-        // interface allows, each of which costs a trip through the whole pipeline
-        // (docs/records/vpn-mitm-audit.md PKT-45). The size the device announced itself is what its
+        // interface allows, each of which costs a trip through the whole pipeline.
+        // The size the device announced itself is what its
         // side of the tunnel can carry, so the same is asked of it.
         deviceMss?.let { mss ->
             builder.options(
@@ -1389,8 +1384,7 @@ class TcpConnection internal constructor(
     }
 
     /**
-     * Constructs a reset that the device accepts in the state its side of the connection is in
-     * (docs/records/vpn-mitm-audit.md PKT-44).
+     * Constructs a reset that the device accepts in the state its side of the connection is in.
      *
      * - Before our SYN-ACK was sent, the device is waiting for an answer to its SYN. There a
      *   reset only counts if it acknowledges the SYN: sequence number 0, acknowledgement number
@@ -1534,7 +1528,7 @@ class TcpConnection internal constructor(
 
         /**
          * A random initial sequence number for our side of a connection, from the full 32-bit
-         * space and unpredictable (docs/records/vpn-mitm-audit.md PKT-64). It used to be drawn from 28
+         * space and unpredictable. It used to be drawn from 28
          * bits with Math.random(). Returned as an unsigned value in a Long, as the sequence
          * number fields are used.
          */
@@ -1542,7 +1536,7 @@ class TcpConnection internal constructor(
 
         /**
          * Builds the reset that answers [segment], a segment for a connection that does not exist
-         * (RFC 9293 section 3.10.7.1; docs/records/vpn-mitm-audit.md PKT-64):
+         * (RFC 9293 section 3.10.7.1):
          *
          * - If the segment carries ACK, the reset takes its sequence number from the
          *   segment's acknowledgement number and carries no ACK of its own.

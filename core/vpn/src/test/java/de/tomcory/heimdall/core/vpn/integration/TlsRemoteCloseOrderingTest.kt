@@ -27,7 +27,7 @@ import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLSocket
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-36 (V-46): a server that sends its response and closes
+ * A server that sends its response and closes
  * the connection at once. The transport layer sees the end of the stream on the selector thread,
  * while the TLS layer is still working through the response on its own dispatcher. The close
  * used to be passed on to the device straight away, ahead of the response data, so the device

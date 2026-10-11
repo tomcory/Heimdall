@@ -14,7 +14,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-53: bytes the transport layer counts as in process in the
+ * Bytes the transport layer counts as in process in the
  * TLS layer are released exactly once, also when the TLS layer has already closed itself and
  * never processes them. Otherwise the transport layer waits forever before closing its channel.
  */

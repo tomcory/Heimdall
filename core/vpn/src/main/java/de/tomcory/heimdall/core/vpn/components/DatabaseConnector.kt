@@ -18,8 +18,7 @@ interface DatabaseConnector {
      * Stores a new connection and returns its ID. Called on the thread that handles the
      * device's packets for every new connection, so it must not block: implementations assign
      * the ID themselves and may write the row in the background. They then have to make sure
-     * that every later call that names this ID takes effect after the row exists
-     * (docs/records/vpn-mitm-audit.md PKT-41).
+     * that every later call that names this ID takes effect after the row exists.
      */
     fun persistTransportLayerConnection(
         sessionId : Long,
@@ -81,8 +80,7 @@ interface DatabaseConnector {
     )
 
     /**
-     * Records why a TLS connection was not decrypted although MitM was on
-     * (docs/records/vpn-mitm-audit.md PKT-56).
+     * Records why a TLS connection was not decrypted although MitM was on.
      */
     suspend fun updateConnectionPassthroughReason(
         id: Long,

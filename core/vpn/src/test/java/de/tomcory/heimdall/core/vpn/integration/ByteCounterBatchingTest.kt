@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-38: a connection's byte counters used to be written to
+ * A connection's byte counters used to be written to
  * the database once per data segment. A large upload queued thousands of writes, and the next
  * new connection then blocked the packet thread behind them for seconds.
  */

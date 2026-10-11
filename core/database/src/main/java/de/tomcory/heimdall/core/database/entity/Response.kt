@@ -25,7 +25,7 @@ data class Response(
     val timestamp: Long,
     val headers: String,
     // the body as received (bytes, so binary and compressed bodies survive), at most the
-    // configured limit; contentLength is the body's real length (docs/records/vpn-mitm-audit.md PKT-59)
+    // configured limit; contentLength is the body's real length
     val content: ByteArray,
     val contentLength: Int,
     // the body was longer than the limit, or ran until the connection closed, so content holds

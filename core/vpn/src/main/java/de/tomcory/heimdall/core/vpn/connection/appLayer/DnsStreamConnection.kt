@@ -7,8 +7,8 @@ import timber.log.Timber
 import java.io.ByteArrayOutputStream
 
 /**
- * DNS over a stream: TCP to port 53, or DNS over TLS (port 853) once decrypted
- * (docs/records/vpn-mitm-audit.md PKT-58). Each message is preceded by its length in two bytes (RFC 1035
+ * DNS over a stream: TCP to port 53, or DNS over TLS (port 853) once decrypted.
+ * Each message is preceded by its length in two bytes (RFC 1035
  * section 4.2.2), a message may be split across segments, and one segment may carry several.
  *
  * Every byte is passed on unchanged and at once in both directions. The responses are also

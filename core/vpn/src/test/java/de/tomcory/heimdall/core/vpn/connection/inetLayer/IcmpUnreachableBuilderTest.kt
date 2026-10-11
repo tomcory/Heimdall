@@ -7,7 +7,7 @@ import org.junit.Test
 import java.net.Inet4Address
 import java.net.InetAddress
 
-/** docs/records/vpn-mitm-audit.md PKT-52: the ICMP port unreachable error that answers a blocked QUIC datagram. */
+/** The ICMP port unreachable error that answers a blocked QUIC datagram. */
 class IcmpUnreachableBuilderTest {
 
     private val local = InetAddress.getByName("10.120.0.1") as Inet4Address

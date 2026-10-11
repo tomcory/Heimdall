@@ -35,7 +35,7 @@ class QuicConnection(
     override val protocol = "QUIC"
 
     /**
-     * Reads the ClientHello from the client's Initial packets (docs/records/vpn-mitm-audit.md PKT-50).
+     * Reads the ClientHello from the client's Initial packets.
      * Dropped once it has a result, so that the flow's later datagrams cost nothing. Only used
      * on the thread that handles the device's packets, as is everything below that decides
      * whether to block.
@@ -43,8 +43,8 @@ class QuicConnection(
     private var inspector: QuicInitialInspector? = QuicInitialInspector()
 
     /**
-     * Datagrams held back until the inspector's verdict, under the Block policy
-     * (docs/records/vpn-mitm-audit.md PKT-52). Null when nothing is held: the policy does not apply, or
+     * Datagrams held back until the inspector's verdict, under the Block policy.
+     * Null when nothing is held: the policy does not apply, or
      * the verdict is in. The inspector gives up after a few datagrams, which bounds this.
      */
     private var held: MutableList<ByteArray>? =
@@ -133,8 +133,8 @@ class QuicConnection(
 
     /**
      * Whether to block the flow under the Block policy: it offers HTTP/3, and the TLS MitM would
-     * intercept the same app and host, so a client that falls back to TLS over TCP is decrypted
-     * (docs/records/vpn-mitm-audit.md PKT-52). A flow whose ClientHello could not be read is forwarded.
+     * intercept the same app and host, so a client that falls back to TLS over TCP is decrypted.
+     * A flow whose ClientHello could not be read is forwarded.
      */
     private fun shouldBlock(verdict: QuicInitialInspector.Result): Boolean {
         if (verdict !is QuicInitialInspector.Result.Complete) {
@@ -146,7 +146,7 @@ class QuicConnection(
 
     /**
      * @param host The name the TLS path will use for the fallback connection, under which the
-     * block is recorded for passthrough learning (docs/records/vpn-mitm-audit.md PKT-54).
+     * block is recorded for passthrough learning.
      */
     private fun block(held: List<ByteArray>, host: String) {
         blocked = true

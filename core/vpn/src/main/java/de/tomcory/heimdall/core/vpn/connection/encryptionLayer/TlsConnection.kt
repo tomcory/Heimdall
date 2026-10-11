@@ -61,7 +61,7 @@ class TlsConnection(
      * fields, and the reassembly caches below are mutated both by whichever thread calls
      * unwrapOutbound/unwrapInbound (OutboundTrafficHandler and InboundTrafficHandler are each one
      * shared thread serving every connection) and by the ad-hoc handshake coroutines further
-     * down - a real cross-direction race (docs/records/vpn-mitm-audit.md V-26), e.g. the server-facing
+     * down - a real cross-direction race, e.g. the server-facing
      * handshake finishing (driven by inbound records) calls initiateClientHandshake(), which
      * mutates `state` and replays `bufferedOutboundRecords`, a list also written from the
      * outbound code path. `limitedParallelism(1)` gives this guarantee without a dedicated OS
@@ -133,7 +133,7 @@ class TlsConnection(
     /** Whether [upstreamHandshakeFailed] has run for this connection. */
     private var upstreamFailureRecorded = false
 
-    /** The application protocols the client offered in its ClientHello (docs/records/vpn-mitm-audit.md PKT-57). */
+    /** The application protocols the client offered in its ClientHello. */
     private var clientAlpn: List<String> = emptyList()
 
     private val log = false
@@ -155,7 +155,6 @@ class TlsConnection(
         // of the two true external entry points where a thread outside this connection's own
         // confinement first touches its state
         // counted by the transport layer until it is processed, as inbound payloads are
-        // (docs/records/vpn-mitm-audit.md PKT-43)
         transportLayer.outboundProcessingDeferred(payload.size)
         launchCounted(payload.size, transportLayer::outboundProcessingFinished) {
             try {
@@ -180,7 +179,7 @@ class TlsConnection(
      * counts as in process until [finished] is called. Once this connection has closed itself,
      * the scope is cancelled and the block never runs, e.g. for the client's close_notify after
      * the server's. The count is released then as well: the transport layer waits for it before
-     * it closes the outward-facing channel (docs/records/vpn-mitm-audit.md PKT-53).
+     * it closes the outward-facing channel.
      */
     private fun launchCounted(bytes: Int, finished: (Int) -> Unit, block: () -> Unit) {
         val started = AtomicBoolean(false)
@@ -206,7 +205,7 @@ class TlsConnection(
     override fun unwrapInbound(payload: ByteArray) {
         // The payload is worked on later, on the connection's own dispatcher. Until then the
         // transport layer counts it as read but not yet sent on, so that it does not read
-        // further ahead than the device takes the data (docs/records/vpn-mitm-audit.md PKT-42).
+        // further ahead than the device takes the data.
         transportLayer.inboundProcessingDeferred(payload.size)
         launchCounted(payload.size, transportLayer::inboundProcessingFinished) {
             try {
@@ -327,7 +326,7 @@ class TlsConnection(
                 echOffered = clientHello?.echOffered ?: false
             )
 
-            // only MitM connections within the user's MitM scope (docs/records/vpn-mitm-audit.md PKT-24)
+            // only MitM connections within the user's MitM scope
             // that aren't marked for passthrough; the QUIC block rule makes the same check. A
             // connection that is passed through records why (PKT-56).
             if (doMitm) {
@@ -338,8 +337,7 @@ class TlsConnection(
             }
             // A client that offers ALPN without HTTP/1.1 (gRPC, other protocols) cannot be
             // given what it asked for by a MitM that only speaks HTTP/1.1, so it is passed
-            // through. Decided per connection from its own ClientHello, so nothing is learned
-            // (docs/records/vpn-mitm-audit.md PKT-57).
+            // through. Decided per connection from its own ClientHello, so nothing is learned.
             if (doMitm && !Alpn.interceptable(clientAlpn)) {
                 doMitm = false
                 persistPassthroughReason(ALPN_UNSUPPORTED)
@@ -608,8 +606,8 @@ class TlsConnection(
                     var (unwrappedPayload, res) = handleUnwrap(it, isClientFacing)
                     if(res != null && res.bytesConsumed() == 0 && res.handshakeStatus == SSLEngineResult.HandshakeStatus.NEED_TASK) {
                         // the engine refused the record because it still had delegated tasks
-                        // pending - run them and retry, instead of losing the record
-                        // (docs/records/vpn-mitm-audit.md PKT-25). Tasks are run inline below, so this is
+                        // pending - run them and retry, instead of losing the record.
+                        // Tasks are run inline below, so this is
                         // purely defensive.
                         val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
                         if(!runDelegatedTasks(engine, direction)) {
@@ -661,7 +659,7 @@ class TlsConnection(
             // accept further records until its tasks have run - it returns NEED_TASK without
             // consuming them. Running the tasks in a separately launched coroutine (as before) left
             // a window in which the remaining records of a multi-record flight were unwrapped,
-            // refused and dropped, hanging the handshake (docs/records/vpn-mitm-audit.md PKT-25).
+            // refused and dropped, hanging the handshake.
             SSLEngineResult.HandshakeStatus.NEED_TASK -> {
                 val engine = if(isClientFacing) clientSSLEngine else serverSSLEngine
                 if(!runDelegatedTasks(engine, direction)) {
@@ -686,7 +684,7 @@ class TlsConnection(
 
     /**
      * Handles an alert the client sent before the client-facing SSLEngine exists, i.e. while we
-     * are still busy with the server-facing handshake (docs/records/vpn-mitm-audit.md PKT-31). There is
+     * are still busy with the server-facing handshake. There is
      * no engine to unwrap it with, and no need for one: the client has no keys yet, so the alert
      * is plaintext.
      *
@@ -808,7 +806,7 @@ class TlsConnection(
         // create a new SSLEngine to handle the TLS session facing the remote host
         // Offer the server HTTP/1.1 if the client offered ALPN at all (and so HTTP/1.1, see
         // handleOutboundRecord), nothing otherwise: the server answers in the protocol the
-        // client will be given (docs/records/vpn-mitm-audit.md PKT-57). A server that only speaks
+        // client will be given. A server that only speaks
         // HTTP/2 rejects the offer, which PKT-56 learns, so the app's retry is passed through.
         val upstreamAlpn = if (clientAlpn.isNotEmpty()) listOf(Alpn.HTTP_1_1) else emptyList()
         serverSSLEngine = componentManager.mitmManager.createServerSSLEngine(sni, transportLayer.remotePort, upstreamAlpn)
@@ -1040,7 +1038,7 @@ class TlsConnection(
                 learnPassthrough(PassthroughReason.CLIENT_HANDSHAKE_ERROR)
             }
             // the server-facing engine failing on the server's data mid-handshake: typically
-            // its certificate did not verify (docs/records/vpn-mitm-audit.md PKT-56)
+            // its certificate did not verify
             if(!isOutbound && state == ConnectionState.SERVER_HANDSHAKE) {
                 upstreamHandshakeFailed()
             }
@@ -1103,7 +1101,7 @@ class TlsConnection(
                     // The server sent close_notify: it has said everything it had to say and is
                     // about to close, or has already closed, its TCP connection. End the
                     // client-facing session with our own close_notify, and leave the transport
-                    // layer to pass the TCP close on after it (docs/records/vpn-mitm-audit.md PKT-36).
+                    // layer to pass the TCP close on after it.
                     // Resetting the client here instead would race that close_notify, and
                     // answering the server would mean writing to a channel that may be gone.
                     closeConnection(closeTransport = false, closeServerSession = false)
@@ -1193,7 +1191,7 @@ class TlsConnection(
         val payload = checkForSnippets(rawPayload, isOutbound)
         if(payload.isEmpty()) {
             // nothing to do; the transport layer passes no empty payloads, but payload[0] below
-            // must not be able to throw (docs/records/vpn-mitm-audit.md PKT-63)
+            // must not be able to throw
             return
         }
         val recordType = payload[0].toInt()
@@ -1263,7 +1261,7 @@ class TlsConnection(
             // make sure that we have a valid TLS record...
             if(recordType !in 0x14..0x17) {
                 // the payload itself is traffic, possibly plaintext that was taken for TLS, so it
-                // is only logged when per-record logging is on (docs/records/vpn-mitm-audit.md PKT-63)
+                // is only logged when per-record logging is on
                 Timber.e("tls$id prepareRecords ($direction) Invalid TLS record type 0x%02x in a payload of %d bytes", recordType and 0xFF, payload.size)
                 if(log) Timber.e("tls$id ${ByteUtils.bytesToHex(payload)}")
                 return
@@ -1386,7 +1384,7 @@ class TlsConnection(
 
     /**
      * Records a client-side MitM failure for this connection's (app, hostname) pair so later
-     * connections for the pair pass through unmodified (docs/records/vpn-mitm-audit.md PKT-23). Keyed the
+     * connections for the pair pass through unmodified. Keyed the
      * same way as the passthrough check in [handleOutboundRecord]. Only relevant while this
      * connection is actually being MitM'd, and only for connections attributed to an app.
      */
@@ -1409,7 +1407,7 @@ class TlsConnection(
      * Only a close soon after the handshake counts. A client that rejects a pin closes right
      * after its handshake; connections that sit idle in a pool, were opened in advance or lost a
      * race against QUIC are closed seconds to minutes later, when the app evicts them or is
-     * stopped, and say nothing about the certificate (docs/records/vpn-mitm-audit.md PKT-54).
+     * stopped, and say nothing about the certificate.
      *
      * The exception is a TLS fallback that Heimdall forced by blocking the pair's HTTP/3
      * (PKT-52): a client that refuses to use it rejects it, however long it keeps it open first
@@ -1430,8 +1428,7 @@ class TlsConnection(
     }
 
     /**
-     * Records that Heimdall's own handshake with the server failed (docs/records/vpn-mitm-audit.md
-     * PKT-56): the app and host are passed through from now on, so the app's retry reaches the
+     * Records that Heimdall's own handshake with the server failed: the app and host are passed through from now on, so the app's retry reaches the
      * server and the app applies its own trust decision. This connection cannot be saved, since
      * its ClientHello went into the failed handshake; it is marked so the database says why it
      * was not decrypted. Only called during the server-facing handshake, and only once.
@@ -1459,7 +1456,7 @@ class TlsConnection(
 
     /**
      * Tells the passthrough cache that this connection's app accepts the certificate for the
-     * host: it has sent application data through the MitM (docs/records/vpn-mitm-audit.md PKT-54).
+     * host: it has sent application data through the MitM.
      */
     private fun recordDecrypted() {
         val appId = transportLayer.appId ?: return
@@ -1499,13 +1496,13 @@ class TlsConnection(
     companion object {
         /**
          * How soon after its handshake a client must close a connection without data for the
-         * close to count as certificate pinning (docs/records/vpn-mitm-audit.md PKT-54). Pinning is
+         * close to count as certificate pinning. Pinning is
          * checked right after the handshake, so a rejecting client closes within milliseconds;
          * the margin allows for a slow device.
          */
         const val DEFAULT_PINNING_CLOSE_WINDOW_MS = 3_000L
 
-        /** Passthrough reason for a client that offers ALPN without HTTP/1.1 (docs/records/vpn-mitm-audit.md PKT-57). */
+        /** Passthrough reason for a client that offers ALPN without HTTP/1.1. */
         const val ALPN_UNSUPPORTED = "ALPN_UNSUPPORTED"
     }
 

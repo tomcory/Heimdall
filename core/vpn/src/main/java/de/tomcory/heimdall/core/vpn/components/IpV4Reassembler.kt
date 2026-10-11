@@ -7,7 +7,7 @@ import java.net.Inet4Address
 import java.util.TreeMap
 
 /**
- * Puts IPv4 fragments from the device back together (docs/records/vpn-mitm-audit.md PKT-46). An app that
+ * Puts IPv4 fragments from the device back together. An app that
  * sends a UDP datagram larger than the tunnel's MTU has it split by the device's IP stack, and
  * only the first fragment carries the UDP header. Without reassembly none of the fragments can
  * be attributed to a connection, and the datagram is lost.

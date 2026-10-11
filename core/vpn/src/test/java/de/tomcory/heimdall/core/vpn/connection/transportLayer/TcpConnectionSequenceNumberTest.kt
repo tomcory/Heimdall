@@ -18,7 +18,7 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Regression test for docs/records/vpn-mitm-audit.md PKT-01 (V-14): `TcpConnection.wrapInbound()`'s
+ * Regression test: `TcpConnection.wrapInbound()`'s
  * split-payload loop used to advance the server-facing sequence number by the size of the
  * *entire* original payload on every iteration, instead of the size of the segment actually
  * written - inflating `ourSeqNum` by `(segmentCount - 1) * payload.size` for any inbound payload

@@ -96,7 +96,7 @@ class SSLEngineSource (
 
     /**
      * Makes [sslEngine] verify that the server's certificate matches the host it connects to,
-     * keeping the engine's other parameters (docs/records/vpn-mitm-audit.md PKT-64). The method used to
+     * keeping the engine's other parameters. The method used to
      * be looked up by reflection, for Java 7, and replaced all parameters with a fresh set.
      */
     private fun enableHostnameVerification(sslEngine: SSLEngine) {

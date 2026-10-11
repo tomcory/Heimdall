@@ -29,8 +29,7 @@ class InboundTrafficHandler(
             // waking the selector up. Passing through the monitor here keeps this thread from
             // going back into select(), which would block the registration, until it is done.
             // The selected keys are processed outside the monitor: holding it for that long
-            // made every new connection wait for all pending inbound work
-            // (docs/records/vpn-mitm-audit.md PKT-41).
+            // made every new connection wait for all pending inbound work.
             synchronized(ComponentManager.selectorMonitor) { }
 
             try {

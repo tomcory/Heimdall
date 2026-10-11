@@ -14,7 +14,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 
 /**
- * Regression tests for docs/records/vpn-mitm-audit.md PKT-13 (V-22): unlike TCP, UDP has no FIN/RST of
+ * Regression tests: unlike TCP, UDP has no FIN/RST of
  * its own to signal "this flow is done", so without an idle sweep, every UDP "connection" (other
  * than the DNS special-case, which self-closes after its first reply) stays registered - holding
  * a DatagramChannel fd and its buffers - for the entire VPN session.

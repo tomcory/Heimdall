@@ -79,7 +79,7 @@ class DeviceWriteThread(
         /** A one-off packet not tied to any tracked connection, e.g. an RST answering a segment for an unknown flow. */
         const val WRITE_STRAY = 2
 
-        /** An ICMP error built as raw bytes, e.g. the answer to a blocked QUIC datagram (docs/records/vpn-mitm-audit.md PKT-52). */
+        /** An ICMP error built as raw bytes, e.g. the answer to a blocked QUIC datagram. */
         const val WRITE_ICMP = 3
     }
 }

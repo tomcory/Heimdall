@@ -152,7 +152,7 @@ class CertificateHelperTest {
     }
 
     // -----------------------------------------------------------------------
-    // initRandomSerial (private; docs/records/vpn-mitm-audit.md PKT-08, V-03)
+    // initRandomSerial (private)
     // -----------------------------------------------------------------------
 
     @Test
@@ -184,7 +184,7 @@ class CertificateHelperTest {
         }
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-64 (A-6): the CA's extensions ----
+    // ---- the CA's extensions ----
 
     @Test
     fun `a new CA has a critical KeyUsage with only the CA bits`() {

@@ -30,7 +30,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-43 (V-50): a remote host that takes data slowly must slow
+ * A remote host that takes data slowly must slow
  * the app down, not the thread that handles every packet from the device. Data the outward-facing
  * channel does not take is queued, and the receive window advertised to the device shrinks with
  * the room that is left.

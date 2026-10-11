@@ -37,7 +37,7 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 
 /**
- * End-to-end tests for docs/records/vpn-mitm-audit.md PKT-23: TlsConnection learns per-session
+ * End-to-end tests: TlsConnection learns per-session
  * passthrough entries from client-side MitM failures, and later connections for the same
  * (app, host) pair are no longer intercepted. All connections in a test share one
  * ComponentManager, and therefore one [TlsPassthroughCache], like a real VPN session.
@@ -200,7 +200,7 @@ class TlsPassthroughLearningTest {
         assertEquals(0, suspectCount())
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-54: idle connections are not pinning ----
+    // ---- idle connections are not pinning ----
 
     @Test
     fun `connections closed without data long after the handshake are not counted`() {
@@ -266,7 +266,7 @@ class TlsPassthroughLearningTest {
         assertFalse(cache.get(appId, hostname))
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-56: upstream handshake failures ----
+    // ---- upstream handshake failures ----
 
     @Test
     fun `an upstream handshake failure resets the client, and the next connection is passed through`() {
@@ -305,7 +305,7 @@ class TlsPassthroughLearningTest {
         assertNull(passthroughReasonOf(45062))
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-57: ALPN ----
+    // ---- ALPN ----
 
     /** Replaces the test server with one that speaks [protocols]. */
     private fun useServer(protocols: List<String>) {
@@ -371,7 +371,7 @@ class TlsPassthroughLearningTest {
         assertEquals("h2", retry.engine.applicationProtocol)
     }
 
-    // ---- MitM scope and learning switch (docs/records/vpn-mitm-audit.md PKT-24) ----
+    // ---- MitM scope and learning switch ----
 
     @Test
     fun `host outside the MitM scope is passed through`() {

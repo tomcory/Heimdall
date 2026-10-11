@@ -5,7 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Tests for docs/records/vpn-mitm-audit.md PKT-24. */
 class MitmScopeTest {
 
     @Test

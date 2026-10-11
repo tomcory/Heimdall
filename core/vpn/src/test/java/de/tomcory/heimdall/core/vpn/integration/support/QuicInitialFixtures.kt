@@ -11,7 +11,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * Builds protected QUIC Initial packets, the way a client would send them, for tests of the code
- * that takes them apart (docs/records/vpn-mitm-audit.md PKT-49). Validated by reproducing the sample
+ * that takes them apart. Validated by reproducing the sample
  * packets of RFC 9001 and RFC 9369 byte for byte (`QuicInitialPacketTest`).
  */
 object QuicInitialFixtures {

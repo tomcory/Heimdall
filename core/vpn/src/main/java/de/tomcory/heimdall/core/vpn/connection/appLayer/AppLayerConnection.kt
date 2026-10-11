@@ -32,7 +32,7 @@ abstract class AppLayerConnection(
         /**
          * Whether the connection carries DNS that Heimdall can read: UDP or TCP to port 53, or
          * DNS over TLS (port 853) that is decrypted. A passed-through DoT connection hands the
-         * application layer ciphertext, which is not DNS (docs/records/vpn-mitm-audit.md PKT-58).
+         * application layer ciphertext, which is not DNS.
          */
         private fun isDns(encryptionLayer: EncryptionLayerConnection): Boolean {
             return when (encryptionLayer.transportLayer.remotePort) {

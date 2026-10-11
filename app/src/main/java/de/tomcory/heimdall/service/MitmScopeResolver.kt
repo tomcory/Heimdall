@@ -5,8 +5,8 @@ import de.tomcory.heimdall.MonitoringScopeHosts
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 
 /**
- * Turns the user's MitM monitoring-scope preferences into the [MitmScope] the VPN applies
- * (docs/records/vpn-mitm-audit.md PKT-24). Kept free of Android dependencies so it can be unit tested.
+ * Turns the user's MitM monitoring-scope preferences into the [MitmScope] the VPN applies.
+ * Kept free of Android dependencies so it can be unit tested.
  */
 object MitmScopeResolver {
 

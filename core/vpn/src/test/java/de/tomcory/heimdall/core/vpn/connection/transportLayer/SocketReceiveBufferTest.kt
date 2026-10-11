@@ -16,7 +16,7 @@ import java.nio.channels.DatagramChannel
 import java.nio.channels.SocketChannel
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-34 (V-53): both transports used to set their
+ * Both transports used to set their
  * outward-facing socket's receive buffer to maxPacketSize (16 KB). For UDP that made the kernel
  * drop most of any burst, for TCP it throttled downloads.
  */

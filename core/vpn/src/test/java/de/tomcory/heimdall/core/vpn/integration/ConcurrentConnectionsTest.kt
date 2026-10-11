@@ -119,7 +119,7 @@ class ConcurrentConnectionsTest {
     }
 
     /**
-     * Regression test for docs/records/vpn-mitm-audit.md PKT-16 (V-25): `TcpConnection.ourSeqNum`/
+     * Regression test: `TcpConnection.ourSeqNum`/
      * `theirSeqNum` used to be plain non-atomic `Long` fields advanced via `+=`, mutated from both
      * the InboundTrafficHandler-driven data path (`wrapInbound`) and the OutboundTrafficHandler-
      * driven path (`handleAckData`/`handleFin`) for the same connection - a genuine concurrent

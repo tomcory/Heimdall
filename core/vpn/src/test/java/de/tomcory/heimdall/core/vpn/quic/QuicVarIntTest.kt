@@ -5,7 +5,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** docs/records/vpn-mitm-audit.md PKT-49: QUIC variable-length integers, with the examples of RFC 9000 appendix A.1. */
+/** QUIC variable-length integers, with the examples of RFC 9000 appendix A.1. */
 class QuicVarIntTest {
 
     @Test

@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Random
 
-/** docs/records/vpn-mitm-audit.md PKT-50: reading the ClientHello of a QUIC flow from its Initial packets. */
+/** Reading the ClientHello of a QUIC flow from its Initial packets. */
 class QuicInitialInspectorTest {
 
     private fun complete(result: QuicInitialInspector.Result): QuicInitialInspector.Result.Complete {

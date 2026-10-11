@@ -4,7 +4,6 @@ import de.tomcory.heimdall.core.vpn.connection.appLayer.HttpConnection
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Tests for docs/records/vpn-mitm-audit.md PKT-59. */
 class HttpBodyLimitResolverTest {
 
     @Test

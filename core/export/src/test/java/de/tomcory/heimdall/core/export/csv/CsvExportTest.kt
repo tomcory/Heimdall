@@ -4,7 +4,6 @@ import de.tomcory.heimdall.core.database.dao.RequestWithConnectionIsTracker
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Tests for docs/records/vpn-mitm-audit.md PKT-59. */
 class CsvExportTest {
 
     @Test

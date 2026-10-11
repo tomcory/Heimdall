@@ -30,7 +30,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-53 (V-59): a FIN from the remote host only says that it
+ * A FIN from the remote host only says that it
  * has finished sending. Data the device sends afterwards must still reach the remote host, and
  * must not be answered with a reset.
  *

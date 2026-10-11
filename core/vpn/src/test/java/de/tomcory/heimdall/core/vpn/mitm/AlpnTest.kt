@@ -7,7 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.net.ssl.SSLContext
 
-/** Tests for docs/records/vpn-mitm-audit.md PKT-57. */
 class AlpnTest {
 
     @Test

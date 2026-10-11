@@ -167,7 +167,7 @@ class ConnectionTeardownTest {
         )
         connection?.unwrapOutbound(finPacket.payload)
 
-        // docs/records/vpn-mitm-audit.md PKT-30: the FIN only ends the device's sending side. It is
+        // The FIN only ends the device's sending side. It is
         // ACKed, and the connection stays open for whatever the remote host still sends.
         assertEquals(
             "expected exactly one new segment (the ACK for the FIN) to be written back to the device",
@@ -204,7 +204,7 @@ class ConnectionTeardownTest {
         )
 
         // an ACK that doesn't cover our FIN (e.g. one for earlier data that was still in flight)
-        // must not be mistaken for the end of the handshake (docs/records/vpn-mitm-audit.md PKT-35)
+        // must not be mistaken for the end of the handshake
         val ourFin = newSegments.last { it.header.fin }
         val staleAckPacket = PacketFixtures.buildTcpDataPacket(
             localAddr = localAddr, localPort = localPort, remoteAddr = remoteAddr, remotePort = remotePort,
@@ -435,7 +435,6 @@ class ConnectionTeardownTest {
 
         // the remote server closes its side first: the connection starts its closing handshake
         // with the device, but keeps the channel for data the device may still send
-        // (docs/records/vpn-mitm-audit.md PKT-53)
         peerSocket!!.close()
         val closingDeadline = System.currentTimeMillis() + 5000
         while (System.currentTimeMillis() < closingDeadline &&
@@ -460,7 +459,7 @@ class ConnectionTeardownTest {
 
     @Test
     fun `ACK for an unknown flow is answered with a stray RST using WRITE_STRAY`() {
-        // docs/records/vpn-mitm-audit.md PKT-21 (V-33): this path used to post the RST with an undeclared magic code 6
+        // This path used to post the RST with an undeclared magic code 6
         val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
         val deviceWriter = RecordingDeviceWriter()
         val localAddr = InetAddress.getByName("10.0.0.7") as Inet4Address
@@ -481,7 +480,7 @@ class ConnectionTeardownTest {
         assertTrue("stray reply should be an RST", tcp.header.rst)
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-64 (A-14): resets for unknown flows, per RFC 9293 ----
+    // ---- resets for unknown flows, per RFC 9293 ----
 
     private fun strayReset(segment: org.pcap4j.packet.IpPacket): TcpPacket {
         val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
@@ -523,7 +522,7 @@ class ConnectionTeardownTest {
 
     @Test
     fun `a FIN-ACK for an unknown flow is logged with both flags`() {
-        // docs/records/vpn-mitm-audit.md PKT-63 (A-13): operator precedence used to make this log "FIN"
+        // Operator precedence used to make this log "FIN"
         val componentManager = ComponentManagerFixtures.buildTestComponentManager(keyStoreDir = createTempDir())
         val tree = RecordingTree().plant()
         try {
@@ -539,7 +538,7 @@ class ConnectionTeardownTest {
         }
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-44: telling the device about failures of the outward-facing connection ----
+    // ---- telling the device about failures of the outward-facing connection ----
 
     private val pkt44LocalAddr = InetAddress.getByName("10.0.0.8") as Inet4Address
     private val pkt44RemoteAddr = InetAddress.getByName("127.0.0.1") as Inet4Address
@@ -653,7 +652,7 @@ class ConnectionTeardownTest {
         assertTrue("a reset must never be answered", deviceWriter.sentMessages.isEmpty())
     }
 
-    // ---- docs/records/vpn-mitm-audit.md PKT-22: client-closed notification to the encryption layer ----
+    // ---- client-closed notification to the encryption layer ----
 
     /** Waits for the fake server to accept the connection, then closes it from the remote side. */
     private fun closeAcceptedSocket() {
@@ -801,7 +800,7 @@ class ConnectionTeardownTest {
     }
 
     // -----------------------------------------------------------------------
-    // docs/records/vpn-mitm-audit.md PKT-35 (V-47): the remote-initiated close
+    // The remote-initiated close
     // -----------------------------------------------------------------------
 
     /** Closes the fake server's side and returns the segment our transport sends to the device in response. */

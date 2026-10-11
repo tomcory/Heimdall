@@ -587,8 +587,8 @@ public class StressClient {
     }
 
     /**
-     * The server answers, shuts down its sending side, and goes on reading
-     * (docs/records/vpn-mitm-audit.md PKT-53). What the client sends after the server's FIN must arrive
+     * The server answers, shuts down its sending side, and goes on reading.
+     * What the client sends after the server's FIN must arrive
      * complete. The server reports what it received on a second connection.
      */
     static void halfClose() throws Exception {
@@ -827,7 +827,7 @@ public class StressClient {
     }
 
     /**
-     * Passthrough learning from connections closed without data (docs/records/vpn-mitm-audit.md PKT-54).
+     * Passthrough learning from connections closed without data.
      * Two connections that sit idle after their handshake and are then closed, as a connection
      * pool does, must not make Heimdall stop intercepting the host. Two that are closed right
      * after the handshake, as a client that rejects a pinned certificate does, must. Each case
@@ -877,7 +877,7 @@ public class StressClient {
     }
 
     /**
-     * Servers whose certificate Heimdall's MitM does not trust (docs/records/vpn-mitm-audit.md PKT-56).
+     * Servers whose certificate Heimdall's MitM does not trust.
      * The first connection to each is reset, because Heimdall's own handshake with the server
      * fails; the VPN then passes the host through, so the second connection reaches the server
      * and this trust-all client sees its real certificate. Without MitM both connections succeed.
@@ -946,7 +946,7 @@ public class StressClient {
             if (alpn == null || alpn.isEmpty() || alpn.equals("http/1.1")) {
                 // Use the connection like a real client. One closed without any data right
                 // after its handshake counts toward pinning detection, and two of those would
-                // make the VPN pass the host through (docs/records/vpn-mitm-audit.md PKT-54).
+                // make the VPN pass the host through.
                 s.getOutputStream().write(("HEAD / HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
                 readHead(s.getInputStream());
             }
@@ -957,7 +957,7 @@ public class StressClient {
     }
 
     /**
-     * ALPN through the MitM (docs/records/vpn-mitm-audit.md PKT-57). With MitM on, a client offering h2
+     * ALPN through the MitM. With MitM on, a client offering h2
      * and HTTP/1.1 is intercepted and gets HTTP/1.1, and a client offering only h2 is passed
      * through and gets h2 from the real server. Without MitM, everyone gets what the server picks.
      */

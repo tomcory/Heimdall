@@ -21,7 +21,7 @@ import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Tests for docs/records/vpn-mitm-audit.md PKT-41 (V-51): storing a new connection must not make the
+ * Storing a new connection must not make the
  * caller wait for the database, and whatever is written about that connection afterwards must
  * still reach the database after the connection's row.
  */

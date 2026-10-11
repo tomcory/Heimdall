@@ -151,7 +151,7 @@ class MalformedInputRobustnessTest {
             connection?.state
         )
 
-        // unrecognised payloads are recorded as PLAIN (docs/records/vpn-mitm-audit.md PKT-27); the
+        // unrecognised payloads are recorded as PLAIN; the
         // update is written asynchronously
         val securityDeadline = System.currentTimeMillis() + 5000
         while (System.currentTimeMillis() < securityDeadline && dbConnector.connections.firstOrNull()?.securityProtocol == null) {
