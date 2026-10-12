@@ -77,7 +77,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- adb-only entry point for starting and stopping the traffic capture; DUMP is held by shell and system only -->
+        <!-- adb-only entry point for starting, stopping and exporting the traffic capture; DUMP is held by shell and system only -->
         <receiver
             android:name=".service.CaptureCommandReceiver"
             android:exported="true"
@@ -86,6 +86,7 @@
                 <action android:name="de.tomcory.heimdall.action.START_CAPTURE" />
                 <action android:name="de.tomcory.heimdall.action.STOP_CAPTURE" />
                 <action android:name="de.tomcory.heimdall.action.CAPTURE_STATUS" />
+                <action android:name="de.tomcory.heimdall.action.EXPORT_CAPTURE" />
             </intent-filter>
         </receiver>
 

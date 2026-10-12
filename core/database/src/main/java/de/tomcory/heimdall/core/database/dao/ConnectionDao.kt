@@ -46,6 +46,24 @@ interface ConnectionDao {
     @Query("SELECT * FROM Connection")
     suspend fun getAll(): List<Connection>
 
+    @Query("SELECT * FROM Connection WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<Connection>
+
+    /**
+     * The connections of a session in the order they were opened, page by page.
+     *
+     * @param sessionId The session, or -1 for all sessions.
+     * @param filterApps Whether only the connections of [apps] are returned.
+     */
+    @Query("""
+        SELECT * FROM Connection
+        WHERE (:sessionId < 0 OR sessionId = :sessionId)
+          AND (:filterApps = 0 OR initiatorPkg IN (:apps))
+        ORDER BY id ASC
+        LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getForExport(sessionId: Long, filterApps: Boolean, apps: List<String>, limit: Int, offset: Int): List<Connection>
+
     @Query("SELECT * FROM Connection ORDER BY initialTimestamp DESC")
     fun getAllObservable(): kotlinx.coroutines.flow.Flow<List<Connection>>
 

@@ -7,6 +7,8 @@ import de.tomcory.heimdall.core.database.HeimdallDatabase
 import de.tomcory.heimdall.core.database.entity.Connection
 import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.database.entity.Request
+import de.tomcory.heimdall.service.CaptureExportOptions
+import de.tomcory.heimdall.service.CaptureExporter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -15,9 +17,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 enum class DbFilter { ALL, TRACKERS_ONLY, TCP, UDP }
+
+/** Where the capture export started from this screen stands. */
+sealed interface ExportState {
+    data object Idle : ExportState
+    data object Running : ExportState
+    data class Done(val result: CaptureExporter.Result) : ExportState
+    data class Failed(val message: String) : ExportState
+}
 
 data class AnalyticsData(
     val timelineBuckets: List<Int> = emptyList(),       // connection count per minute, last 30 min
@@ -28,11 +40,35 @@ data class AnalyticsData(
 @HiltViewModel
 class DatabaseViewModel @Inject constructor(
     private val database: HeimdallDatabase,
+    private val exporter: CaptureExporter,
 ) : ViewModel() {
 
     private val allConnections: StateFlow<List<Connection>> =
         database.connectionDao().getAllObservable()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // ── Export ─────────────────────────────────────────────────────────────────
+
+    private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
+    val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+
+    fun export(options: CaptureExportOptions) {
+        _exportState.value = ExportState.Running
+        viewModelScope.launch {
+            _exportState.value = try {
+                ExportState.Done(exporter.start(options).result.await())
+            } catch (e: CaptureExporter.NoSuchSessionException) {
+                ExportState.Failed("no session has been captured yet")
+            } catch (e: Exception) {
+                Timber.e(e, "Error exporting the capture")
+                ExportState.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
+    fun resetExport() {
+        _exportState.value = ExportState.Idle
+    }
 
     // ── Filter state ───────────────────────────────────────────────────────────
 

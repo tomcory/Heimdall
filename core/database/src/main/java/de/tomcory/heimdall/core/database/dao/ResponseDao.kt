@@ -29,6 +29,9 @@ interface ResponseDao {
     @Query("Select * FROM Response")
     fun getAllObservable(): Flow<List<Response>>
 
+    @Query("SELECT * FROM Response WHERE requestId IN (:requestIds)")
+    suspend fun getForRequests(requestIds: List<Long>): List<Response>
+
     @Query("SELECT * FROM Response WHERE requestId = :requestId LIMIT 1")
     suspend fun getForRequest(requestId: Long): Response?
 }

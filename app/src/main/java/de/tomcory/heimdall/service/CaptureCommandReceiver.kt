@@ -30,11 +30,16 @@ import javax.inject.Inject
  *   -a de.tomcory.heimdall.action.STOP_CAPTURE
  * adb shell am broadcast -f 0x20 -n de.tomcory.heimdall/.service.CaptureCommandReceiver \
  *   -a de.tomcory.heimdall.action.CAPTURE_STATUS
+ * adb shell am broadcast -f 0x20 -n de.tomcory.heimdall/.service.CaptureCommandReceiver \
+ *   -a de.tomcory.heimdall.action.EXPORT_CAPTURE \
+ *   [--es session latest|all|<id>] [--es apps <pkg,pkg>] [--es formats messages,connections,sqlite]
  * ```
  *
  * The extras apply to the started session only and change no preference. The outcome is returned
  * as the broadcast's result data, which `am broadcast` prints (see [CaptureCommandResult]). A
- * start or stop that takes longer than [WAIT_MS] is reported as `starting` or `stopping`.
+ * start or stop that takes longer than [WAIT_MS] is reported as `starting` or `stopping`, an
+ * export that takes longer as `running`: it is complete once its folder holds
+ * [CaptureExporter.MANIFEST_FILE].
  *
  * The receiver is protected by `android.permission.DUMP` in the manifest, which only the shell
  * and system hold, so other apps can't trigger it. The VPN has to have been consented to once,
@@ -45,12 +50,14 @@ class CaptureCommandReceiver : BroadcastReceiver() {
 
     @Inject lateinit var database: HeimdallDatabase
     @Inject lateinit var captureState: CaptureState
+    @Inject lateinit var exporter: CaptureExporter
 
     override fun onReceive(context: Context, intent: Intent) {
         val command: suspend () -> Pair<Int, String> = when (intent.action) {
             ACTION_START_CAPTURE -> { -> start(context.applicationContext, intent) }
             ACTION_STOP_CAPTURE -> { -> stop(context.applicationContext) }
             ACTION_CAPTURE_STATUS -> { -> Activity.RESULT_OK to CaptureCommandResult.status(captureState.snapshot.value) }
+            ACTION_EXPORT_CAPTURE -> { -> export(intent) }
             else -> {
                 Timber.d("Unknown intent action: ${intent.action}")
                 return
@@ -168,6 +175,33 @@ class CaptureCommandReceiver : BroadcastReceiver() {
         return Activity.RESULT_OK to CaptureCommandResult.stopped(stopped, connections, requests)
     }
 
+    private suspend fun export(intent: Intent): Pair<Int, String> {
+        val running = try {
+            val options = CaptureExportOptions.parse(
+                session = intent.getStringExtra(EXTRA_SESSION),
+                apps = intent.getStringExtra(EXTRA_APPS),
+                formats = intent.getStringExtra(EXTRA_FORMATS)
+            )
+            exporter.start(options)
+        } catch (e: CaptureExportOptions.InvalidOptionException) {
+            return Activity.RESULT_CANCELED to CaptureCommandResult.error(e.reason)
+        } catch (e: CaptureExporter.NoSuchSessionException) {
+            return Activity.RESULT_CANCELED to CaptureCommandResult.error(e.reason)
+        }
+
+        val result = try {
+            withTimeoutOrNull(WAIT_MS) { running.result.await() }
+        } catch (e: Exception) {
+            Timber.e(e, "Error exporting the capture")
+            return Activity.RESULT_CANCELED to CaptureCommandResult.error("export_failed", "message=${e.javaClass.simpleName}")
+        }
+        return Activity.RESULT_OK to if (result == null) {
+            CaptureCommandResult.exportRunning(running.directory.absolutePath)
+        } else {
+            CaptureCommandResult.exported(result.directory.absolutePath, result.sessionId, result.counts.mapKeys { it.key.key })
+        }
+    }
+
     private fun isInstalled(context: Context, packageName: String): Boolean = try {
         context.packageManager.getApplicationInfo(packageName, 0)
         true
@@ -179,12 +213,15 @@ class CaptureCommandReceiver : BroadcastReceiver() {
         const val ACTION_START_CAPTURE = "de.tomcory.heimdall.action.START_CAPTURE"
         const val ACTION_STOP_CAPTURE = "de.tomcory.heimdall.action.STOP_CAPTURE"
         const val ACTION_CAPTURE_STATUS = "de.tomcory.heimdall.action.CAPTURE_STATUS"
+        const val ACTION_EXPORT_CAPTURE = "de.tomcory.heimdall.action.EXPORT_CAPTURE"
 
         const val EXTRA_TAG = "tag"
         const val EXTRA_APPS = "apps"
         const val EXTRA_BLOCK_HOSTS = "block_hosts"
         const val EXTRA_MITM = "mitm"
         const val EXTRA_QUIC_POLICY = "quic_policy"
+        const val EXTRA_SESSION = "session"
+        const val EXTRA_FORMATS = "formats"
 
         /** How long a command waits for the capture to come up or go down before it answers. */
         private const val WAIT_MS = 8_000L

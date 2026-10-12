@@ -9,33 +9,6 @@ import androidx.room.Update
 import de.tomcory.heimdall.core.database.entity.Request
 import kotlinx.coroutines.flow.Flow
 
-/**
- * [Request] joined with its parent [de.tomcory.heimdall.core.database.entity.Connection]'s
- * [de.tomcory.heimdall.core.database.entity.Connection.isTracker] flag — `Request` itself no
- * longer stores this (see the removed `Request.isTracker` field); the connection is the single
- * source of truth.
- */
-@Suppress("ArrayInDataClass") // never compared
-data class RequestWithConnectionIsTracker(
-    val id: Long,
-    val connectionId: Long,
-    val timestamp: Long,
-    val headers: String,
-    val content: ByteArray,
-    val contentLength: Int,
-    val contentTruncated: Boolean,
-    val method: String,
-    val remoteHost: String,
-    val remotePath: String,
-    val remoteIp: String,
-    val remotePort: Int,
-    val localIp: String,
-    val localPort: Int,
-    val initiatorId: Int,
-    val initiatorPkg: String,
-    val connectionIsTracker: Boolean
-)
-
 @Dao
 interface RequestDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -53,15 +26,21 @@ interface RequestDao {
     @Query("SELECT COUNT(*) FROM Request r JOIN Connection c ON r.connectionId = c.id WHERE c.sessionId = :sessionId")
     suspend fun countForSession(sessionId: Long): Int
 
+    /**
+     * The requests of a session in the order they were recorded, page by page.
+     *
+     * @param sessionId The session, or -1 for all sessions.
+     * @param filterApps Whether only the requests of [apps] are returned.
+     */
     @Query("""
-        SELECT r.id, r.connectionId, r.timestamp, r.headers, r.content, r.contentLength, r.contentTruncated, r.method,
-               r.remoteHost, r.remotePath, r.remoteIp, r.remotePort, r.localIp, r.localPort,
-               r.initiatorId, r.initiatorPkg, c.isTracker AS connectionIsTracker
-        FROM Request r
+        SELECT r.* FROM Request r
         JOIN Connection c ON r.connectionId = c.id
+        WHERE (:sessionId < 0 OR c.sessionId = :sessionId)
+          AND (:filterApps = 0 OR c.initiatorPkg IN (:apps))
+        ORDER BY r.id ASC
         LIMIT :limit OFFSET :offset
     """)
-    suspend fun getAllWithConnectionIsTrackerPaginated(limit: Int, offset: Int): List<RequestWithConnectionIsTracker>
+    suspend fun getForExport(sessionId: Long, filterApps: Boolean, apps: List<String>, limit: Int, offset: Int): List<Request>
 
     @Query("Select * FROM Request")
     fun getAllObservable(): Flow<List<Request>>

@@ -15,13 +15,9 @@ class ScannerViewModel @Inject constructor(
 ) : ViewModel() {
 
     val showPreferencesDialogInitial = false
-    val showExportDialogInitial = false
 
     private val _showPreferencesDialog = MutableStateFlow(showPreferencesDialogInitial)
     val showPreferencesDialog = _showPreferencesDialog.asStateFlow()
-
-    private val _showExportDialog = MutableStateFlow(showExportDialogInitial)
-    val showExportDialog = _showExportDialog.asStateFlow()
 
     fun onShowPreferencesDialog() {
         _showPreferencesDialog.value = true
@@ -29,13 +25,5 @@ class ScannerViewModel @Inject constructor(
 
     fun onDismissPreferencesDialog() {
         _showPreferencesDialog.value = false
-    }
-
-    fun onShowExportDialog() {
-        _showExportDialog.value = true
-    }
-
-    fun onDismissExportDialog() {
-        _showExportDialog.value = false
     }
 }

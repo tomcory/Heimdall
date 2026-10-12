@@ -24,6 +24,16 @@ object CaptureCommandResult {
         else -> inTransition(snapshot)
     }
 
+    /**
+     * @param sessionId The exported session, or null for all sessions.
+     * @param counts Records written, by format.
+     */
+    fun exported(directory: String, sessionId: Long?, counts: Map<String, Int>) =
+        "status=exported dir=$directory session=${sessionId ?: "all"}" + counts.entries.joinToString("") { " ${it.key}=${it.value}" }
+
+    /** The command returned before the export was complete; it is once its folder holds the manifest. */
+    fun exportRunning(directory: String) = "status=running dir=$directory"
+
     /** @param detail Further `key=value` pairs, already formatted. */
     fun error(reason: String, detail: String = "") =
         "status=error reason=$reason" + if (detail.isNotEmpty()) " $detail" else ""
