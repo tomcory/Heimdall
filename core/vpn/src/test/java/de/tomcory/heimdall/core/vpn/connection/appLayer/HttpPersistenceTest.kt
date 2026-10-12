@@ -98,6 +98,43 @@ class HttpPersistenceTest {
     }
 
     @Test
+    fun `a request is stamped with its first bytes, a response with its completion`() = runTest {
+        var clock = 1_000L
+        val requestTimes = CopyOnWriteArrayList<Long>()
+        val responseTimes = CopyOnWriteArrayList<Long>()
+        coEvery {
+            connector.persistHttpRequest(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers { requestTimes += secondArg<Long>(); requestTimes.size.toLong() }
+        coEvery {
+            connector.persistHttpResponse(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers { responseTimes += thirdArg<Long>(); 1L }
+        val http = HttpConnection(0, encryptionLayer, componentManager, StandardTestDispatcher(testScheduler)) { clock }
+
+        // an upload in three segments: headers, and a body in two parts
+        http.unwrapOutbound("POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 6\r\n\r\n".toByteArray())
+        clock = 1_400L
+        http.unwrapOutbound("abc".toByteArray())
+        clock = 1_900L
+        http.unwrapOutbound("def".toByteArray())
+
+        // the response's headers and body arrive apart as well
+        clock = 2_000L
+        http.unwrapInbound("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n".toByteArray())
+        clock = 2_300L
+        http.unwrapInbound("ok".toByteArray())
+
+        // the next request on the connection, much later, with its headers split over two segments
+        clock = 60_000L
+        http.unwrapOutbound("GET /next HTTP/1.1\r\nHost: exa".toByteArray())
+        clock = 60_050L
+        http.unwrapOutbound("mple.com\r\n\r\n".toByteArray())
+        advanceUntilIdle()
+
+        assertEquals(listOf(1_000L, 60_000L), requestTimes.toList())
+        assertEquals(listOf(2_300L), responseTimes.toList())
+    }
+
+    @Test
     fun `a response whose request could not be written is dropped, and nothing hangs`() = runTest {
         requestWrite { throw IllegalStateException("database gone") }
         val http = connection()

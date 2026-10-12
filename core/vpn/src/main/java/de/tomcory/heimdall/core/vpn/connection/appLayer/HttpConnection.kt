@@ -22,12 +22,14 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * @param persistDispatcher Runs this connection's database writes.
  * Replaceable for tests.
+ * @param now The clock that messages are stamped with, in epoch milliseconds. Replaceable for tests.
  */
 class HttpConnection(
     id: Long,
     encryptionLayer: EncryptionLayerConnection,
     componentManager: ComponentManager,
-    persistDispatcher: CoroutineDispatcher = Dispatchers.IO
+    persistDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val now: () -> Long = System::currentTimeMillis
 ) : AppLayerConnection(
     id,
     encryptionLayer,
@@ -60,6 +62,9 @@ class HttpConnection(
         /** The body of the message that is still arriving, as far as it is kept. */
         var body: BoundedBody? = null
 
+        /** When the first bytes of the message that is arriving were seen, or null between messages. */
+        var startedAt: Long? = null
+
         /**
          * This direction no longer carries HTTP messages that can be told apart: the connection
          * switched protocols, a response body runs until the connection closes, or the data
@@ -78,6 +83,7 @@ class HttpConnection(
             chunkTracker.reset()
             headerBlock = null
             body = null
+            startedAt = null
         }
     }
 
@@ -211,6 +217,10 @@ class HttpConnection(
                 state.previousPayload = ByteArray(0)
             }
             return
+        }
+
+        if(state.startedAt == null && payload.isNotEmpty()) {
+            state.startedAt = now()
         }
 
         val assembledPayload = state.previousPayload + payload
@@ -418,11 +428,13 @@ class HttpConnection(
         val bodyLength = body?.length ?: 0L
         val contentLength = bodyLength.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         val contentTruncated = truncated || bodyLength > content.size
-        // when the message was seen, not when its row is written, which may be later
-        val timestamp = System.currentTimeMillis()
+        // A request is stamped with the arrival of its first bytes, which is closest to what made
+        // the app send it; a response with its completion. Neither with the time its row is
+        // written, which may be later.
+        val state = if (isOutbound) outboundState else inboundState
+        val timestamp = if (isOutbound) state.startedAt ?: now() else now()
 
         // reset the reassembly state for the next message
-        val state = if (isOutbound) outboundState else inboundState
         state.resetMessage()
 
         if (isOutbound) {
