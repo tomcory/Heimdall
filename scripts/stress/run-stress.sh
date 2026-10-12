@@ -20,7 +20,8 @@
 #
 # Around the run it records Heimdall's open file descriptors, threads and memory, and afterwards
 # summarises warnings and errors from logcat. Requirements: as for emulator-traffic.sh, plus a
-# JDK (javac) and the Android SDK build tools (d8).
+# JDK (javac), the Android SDK build tools (d8) and root on the emulator (`su`), which reading
+# Heimdall's file descriptors and threads takes.
 
 set -u
 
@@ -101,7 +102,7 @@ if [ "$baseline" = "1" ]; then
     "$TRAFFIC" vpn-stop | tail -1
     say "Running WITHOUT the VPN (baseline)"
 else
-    "$TRAFFIC" vpn-start | tail -1
+    "$TRAFFIC" vpn-start --tag stress | tail -1
     # without this check a VPN that failed to start gives a clean run that tested nothing
     adb shell ip addr show tun0 2>/dev/null | grep -q 'inet ' \
         || die "the VPN is not up; check 'adb logcat -s HeimdallVpnService'"

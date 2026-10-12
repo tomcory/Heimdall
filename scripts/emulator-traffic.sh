@@ -5,16 +5,22 @@
 # retyping the same adb commands every time.
 #
 # Usage:
-#   scripts/emulator-traffic.sh run [--install] [--quic-policy P] [GROUP...]
+#   scripts/emulator-traffic.sh run [--install] [OPTION...] [GROUP...]
 #                                                            start VPN, send traffic, report, stop VPN
 #   scripts/emulator-traffic.sh install                      install app/build/outputs/apk/debug/app-debug.apk
-#   scripts/emulator-traffic.sh vpn-start [--quic-policy P] | vpn-stop
-#
-# --quic-policy block|passthrough sets the VPN's QUIC policy for this session only, without
-# changing the stored preference. It only acts while MitM is on.
-# A VPN that is already running keeps its policy; stop it first.
+#   scripts/emulator-traffic.sh vpn-start [OPTION...] | vpn-stop
 #   scripts/emulator-traffic.sh traffic [GROUP...]           send traffic (VPN must be running)
-#   scripts/emulator-traffic.sh report                       pull the database, summarise the latest session
+#   scripts/emulator-traffic.sh report                       export the database, summarise the latest session
+#
+# The VPN is started, stopped and queried, and its database exported, with Heimdall's capture
+# commands (docs/automation.md), so the script needs no root. Options for the session that is
+# started, none of which changes a stored preference:
+#   --quic-policy block|passthrough   the QUIC policy; it only acts while MitM is on
+#   --mitm on|off                     whether TLS is decrypted (default: the stored preference)
+#   --block-hosts HOST[,HOST...]      hosts that are unreachable during the session, in addition
+#                                     to the stored block list; a domain also blocks its subdomains
+#   --tag LABEL                       label of the session (default: emulator-traffic)
+# A VPN that is already running keeps its options; stop it first.
 #
 # Traffic groups (default: all of them, in this order):
 #   dns    plain DNS queries over UDP/53 to 8.8.8.8, which also fill Heimdall's DNS cache
@@ -60,17 +66,18 @@
 #                           and "raw" groups into a half-close.
 #
 # Requirements: adb, openssl, nc, xxd, sqlite3, python3, a JDK and the Android build tools (d8)
-# on this machine; a rooted emulator (`su`)
-# with Heimdall installed and VPN consent already granted once through the UI.
+# on this machine; an emulator with Heimdall installed and VPN consent already granted once,
+# through the UI or with `adb shell appops set de.tomcory.heimdall ACTIVATE_VPN allow`. Decrypted
+# TLS needs Heimdall's CA certificate in the system store, which takes a rooted emulator.
 
 set -u
 
 PKG="de.tomcory.heimdall"
-SERVICE="$PKG/.service.HeimdallVpnService"
-ACTIVITY="$PKG/.ui.main.MainActivity"
-VPN_ACTION_EXTRA="de.tomcory.heimdall.net.vpn.ACTION_START"
-QUIC_POLICY_EXTRA="de.tomcory.heimdall.core.vpn.QUIC_POLICY"
+RECEIVER="$PKG/.service.CaptureCommandReceiver"
 QUIC_POLICY=""
+MITM=""
+BLOCK_HOSTS=""
+TAG="emulator-traffic"
 DEVICE_TMP="/data/local/tmp/heimdall-traffic"
 ALL_GROUPS="dns http raw tls quic apps"
 
@@ -124,13 +131,34 @@ pick_device() {
                || die "$ANDROID_SERIAL is not an emulator; set HEIMDALL_ALLOW_DEVICE=1 to use it anyway" ;;
     esac
     [ "$(adb get-state 2>/dev/null)" = "device" ] || die "$ANDROID_SERIAL is not online"
-    adb shell 'su -c id' 2>/dev/null | grep -q 'uid=0' || die "$ANDROID_SERIAL is not rooted (su failed)"
     info "device: $ANDROID_SERIAL ($(adb emu avd name 2>/dev/null | head -1 | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r'))"
 }
 
-root() { adb shell "su -c '$*'"; }
+# Sends a capture command to Heimdall and prints its answer: key=value pairs, starting with
+# "status". Prints nothing if Heimdall did not answer.
+capture() {
+    local action="$1"
+    shift
+    adb shell "am broadcast -f 0x20 -n $RECEIVER -a $PKG.action.$action $*" < /dev/null 2>/dev/null \
+        | tr -d '\r' | sed -n 's/.*data="\(.*\)".*/\1/p' | tail -1
+}
 
-vpn_is_up() { adb shell ip addr show tun0 2>/dev/null | grep -q 'UP'; }
+# The value of key $2 in the answer $1.
+field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -1; }
+
+capture_status() { field "$(capture CAPTURE_STATUS)" status; }
+
+vpn_is_up() { [ "$(capture_status)" = "running" ]; }
+
+# Asks for the capture's status until it is $1, for at most $2 seconds.
+await_status() {
+    local waited=0
+    until [ "$(capture_status)" = "$1" ]; do
+        sleep 1
+        waited=$((waited + 1))
+        [ "$waited" -lt "$2" ] || return 1
+    done
+}
 
 # --- commands -----------------------------------------------------------------------------------
 
@@ -143,46 +171,47 @@ cmd_install() {
 cmd_vpn_start() {
     say "Starting the VPN"
     adb shell pm path "$PKG" >/dev/null 2>&1 || die "$PKG is not installed"
-    adb shell appops get "$PKG" ACTIVATE_VPN | grep -q 'allow' \
-        || die "VPN consent has not been granted; start the VPN once from Heimdall's UI"
-    if vpn_is_up; then
-        info "already running"
-        return
-    fi
-    local since
+    local since extras answer
     since="$(adb shell "date +'%m-%d %H:%M:%S.000'" | tr -d '\r')"
-    # the service needs the app process (Hilt) to be up before it is started
-    adb shell am start -n "$ACTIVITY" >/dev/null 2>&1
-    sleep 4
-    local extras=""
-    [ -n "$QUIC_POLICY" ] && extras="--es $QUIC_POLICY_EXTRA $QUIC_POLICY"
-    root "am start-foreground-service -n $SERVICE $extras" >/dev/null
-    local waited=0
-    until vpn_is_up; do
-        sleep 1
-        waited=$((waited + 1))
-        [ "$waited" -lt 25 ] || die "tun0 did not come up within 25s; check 'adb logcat -s HeimdallVpnService'"
-    done
+    extras="--es tag $TAG"
+    [ -n "$QUIC_POLICY" ] && extras="$extras --es quic_policy $QUIC_POLICY"
+    [ -n "$MITM" ] && extras="$extras --ez mitm $MITM"
+    [ -n "$BLOCK_HOSTS" ] && extras="$extras --es block_hosts $BLOCK_HOSTS"
+    answer="$(capture START_CAPTURE "$extras")"
+    case "$(field "$answer" status)" in
+        started) ;;
+        starting)
+            await_status running 25 || die "the VPN did not come up within 25s; check 'adb logcat -s HeimdallVpnService'" ;;
+        running)
+            info "already running (session $(field "$answer" session)), with the options it was started with"
+            return ;;
+        error)
+            case "$(field "$answer" reason)" in
+                vpn_consent_missing)
+                    die "VPN consent has not been granted; start the VPN once from Heimdall's UI, or run: adb shell appops set $PKG ACTIVATE_VPN allow" ;;
+                *) die "Heimdall refused to start the VPN: ${answer#status=error }" ;;
+            esac ;;
+        '') die "Heimdall did not answer; is this build recent enough to have the capture commands?" ;;
+        *) die "the VPN is busy ($answer); try again in a moment" ;;
+    esac
     # the tracker list and traffic handlers are initialised after the interface is established
     sleep 3
-    info "tun0 is up; $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'MitM mode: [a-z]*' | tail -1); $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'QUIC policy: [A-Z]*' | tail -1)"
-    adb shell input keyevent KEYCODE_HOME
+    answer="$(capture CAPTURE_STATUS)"
+    info "session $(field "$answer" session): MitM $(field "$answer" mitm), $(field "$answer" blocked_hosts) blocked host(s); $(adb logcat -d -T "$since" -s HeimdallVpnService 2>/dev/null | grep -o 'QUIC policy: [A-Z]*' | tail -1)"
 }
 
 cmd_vpn_stop() {
     say "Stopping the VPN"
-    if ! vpn_is_up; then
-        info "not running"
-        return
-    fi
-    root "am start-foreground-service -n $SERVICE --ei $VPN_ACTION_EXTRA 1" >/dev/null
-    local waited=0
-    while vpn_is_up; do
-        sleep 1
-        waited=$((waited + 1))
-        [ "$waited" -lt 15 ] || { info "tun0 is still up after 15s"; return; }
-    done
-    info "stopped"
+    local answer
+    answer="$(capture STOP_CAPTURE)"
+    case "$(field "$answer" status)" in
+        idle) info "not running" ;;
+        stopped) info "stopped: session $(field "$answer" session), $(field "$answer" connections) connections, $(field "$answer" requests) requests" ;;
+        stopping|starting)
+            if await_status idle 15; then info "stopped"; else info "the VPN is still up after 15s"; fi ;;
+        '') info "Heimdall did not answer" ;;
+        *) info "not stopped: $answer" ;;
+    esac
 }
 
 resolve() {
@@ -421,17 +450,29 @@ cmd_traffic() {
 cmd_report() {
     need sqlite3
     say "Report"
-    local remote="/sdcard/heimdall-traffic-db"
-    root "rm -rf $remote; mkdir -p $remote && cp /data/data/$PKG/databases/heimdall* $remote/" \
-        || die "could not copy the database"
-    adb pull "$remote/." "$WORK/db" >/dev/null 2>&1 || die "could not pull the database"
-    adb shell rm -rf "$remote"
-    local db="$WORK/db/heimdall"
+    local answer remote waited=0
+    answer="$(capture EXPORT_CAPTURE "--es session latest --es formats sqlite")"
+    case "$(field "$answer" status)" in
+        exported|running) ;;
+        '') die "Heimdall did not answer the export command" ;;
+        *) die "could not export the database: ${answer#status=error }" ;;
+    esac
+    remote="$(field "$answer" dir)"
+    # a long export is answered before it is done; its manifest is written last
+    until adb shell "ls $remote/manifest.json" >/dev/null 2>&1; do
+        sleep 2
+        waited=$((waited + 2))
+        [ "$waited" -lt 120 ] || die "the export in $remote did not finish within 120s"
+    done
+    mkdir -p "$WORK/export"
+    adb pull "$remote" "$WORK/export" >/dev/null 2>&1 || die "could not pull $remote"
+    adb shell "rm -rf $remote"
+    local db="$WORK/export/$(basename "$remote")/heimdall.sqlite"
     [ -f "$db" ] || die "database not found after pull"
 
     local session
-    session="$(sqlite3 "$db" 'select max(id) from Session')"
-    info "database: $db (schema v$(sqlite3 "$db" 'pragma user_version'), session $session)"
+    session="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["session"])' "$(dirname "$db")/manifest.json")"
+    info "database: $db (schema v$(sqlite3 "$db" 'pragma user_version'), session $session, tag $(sqlite3 "$db" "select coalesce(tag, '-') from Session where id = $session"))"
 
     say "Connections by transport and security"
     sqlite3 -header -column "$db" "
@@ -445,14 +486,15 @@ cmd_report() {
     sqlite3 -header -column "$db" "
         select initiatorPkg app, securityProtocol sec, remotePort port,
                coalesce(remoteHost, '-') host, coalesce(sni, '-') sni, coalesce(alpn, '-') alpn,
-               echOffered ech, isTracker trk, blocked blk, coalesce(passthroughReason, '-') passthrough, count(*) n
+               echOffered ech, isTracker trk, coalesce(blockReason, '-') blocked,
+               coalesce(passthroughReason, '-') passthrough, count(*) n
         from Connection where sessionId = $session and securityProtocol in ('TLS', 'QUIC')
         group by 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 order by 2, 1, 4;"
 
     say "Other connections"
     sqlite3 -header -column "$db" "
         select initiatorPkg app, protocol, coalesce(securityProtocol, '(none)') sec, remoteIp,
-               remotePort port, coalesce(remoteHost, '-') host, bytesOut, bytesIn
+               remotePort port, coalesce(remoteHost, '-') host, bytesOut, bytesIn, coalesce(blockReason, '-') blocked
         from Connection where sessionId = $session and (securityProtocol is null or securityProtocol = 'PLAIN')
         order by id;"
 
@@ -475,7 +517,11 @@ cmd_report() {
         where c.sessionId = $session;"
 
     say "Checks"
-    local mismatches crashes
+    local mismatches crashes leaked
+    # nothing an app sent may have reached a host on the block list
+    leaked="$(sqlite3 "$db" "select count(*) from Request r join Connection c on c.id = r.connectionId
+        where c.sessionId = $session and c.blockReason = 'host_rule'")"
+    info "connections blocked by a host rule: $(sqlite3 "$db" "select count(*) from Connection where sessionId = $session and blockReason = 'host_rule'"), requests recorded on them: $leaked (expected 0)"
     mismatches="$(sqlite3 "$db" "select count(*) from Connection where sessionId = $session
         and sni is not null and echOffered = 0 and remoteHost is not lower(sni)")"
     info "connections whose hostname differs from their SNI (ECH not offered): $mismatches (expected 0)"
@@ -529,6 +575,20 @@ while [ $# -gt 0 ]; do
         --quic-policy)
             [ $# -ge 2 ] || die "--quic-policy needs a value (block or passthrough)"
             case "$2" in block|passthrough) QUIC_POLICY="$2" ;; *) die "--quic-policy is block or passthrough, not '$2'" ;; esac
+            shift 2 ;;
+        --mitm)
+            [ $# -ge 2 ] || die "--mitm needs a value (on or off)"
+            case "$2" in on) MITM="true" ;; off) MITM="false" ;; *) die "--mitm is on or off, not '$2'" ;; esac
+            shift 2 ;;
+        --block-hosts)
+            [ $# -ge 2 ] || die "--block-hosts needs a list of hosts separated by commas"
+            case "$2" in *[!A-Za-z0-9.:,*_-]*|'') die "--block-hosts takes host names and addresses separated by commas, not '$2'" ;; esac
+            BLOCK_HOSTS="$2"
+            shift 2 ;;
+        --tag)
+            [ $# -ge 2 ] || die "--tag needs a label"
+            case "$2" in *[!A-Za-z0-9._:-]*|'') die "--tag takes letters, digits and . _ : - only, not '$2'" ;; esac
+            TAG="$2"
             shift 2 ;;
         --install)
             INSTALL_FIRST=1
