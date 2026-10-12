@@ -16,23 +16,16 @@ Feel free to use the [issue tracker](https://github.com/tomcory/Heimdall/issues)
 - **Permission Analysis:** Heimdall helps you to view and analyze the permissions used by installed apps, providing a detailed breakdown of what resources an app may access.
 - **Library Detection:** Easily detect embedded third-party libraries and SDKs that may be collecting user data.
 - **Network Traffic Monitoring:** Real-time inspection of network traffic to help you identify potential data leakages or suspicious connections.
+- **Host Blocking:** Block connections to chosen hosts during a capture, to see how an app behaves without them.
+- **Export and Automation:** Export captured traffic as JSON Lines or as a copy of the database, and start, stop and export captures over adb for scripted workflows.
 - **Privacy Scoring:** Computes a per-app privacy score from permissions, embedded trackers, and privacy-policy coverage, with a breakdown of the contributing factors.
 - **Fully on-device:** Heimdall requires no external infrastructure and does not transmit any data off the device, be it personal or any other kind of data.
-
-## Role in Asgard
-
-Heimdall belongs to the **Observation** dimension. It consumes the apps installed on a device and
-produces what they are observed to do: declared permissions, embedded tracker SDKs and the captured
-network traffic (requests and responses with headers and bodies, attributed to the initiating app),
-stored in an on-device database with CSV and LaTeX exporters. **Loki** drives an app through its UI so
-that Heimdall sees its traffic, and **Vör** annotates the PII in captured HTTP messages; neither
-connection has an adapter yet.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Android SDK version 24 (Android 7) or higher.
+- Android SDK version 26 (Android 8) or higher.
 - Root access is required to decrypt HTTPS traffic of monitored apps. All other features work in standard user space. If you don't need to access the application-layer traffic of monitored apps, there's no need to modify your device in any way.
 
 ### Installation
@@ -85,7 +78,18 @@ Once you have installed the custom CA certificate, simply enable the MitM VPN vi
 
 ### Data export
 
-All data collected by Heimdall is persisted in an on-device SQLite database. Export tooling for external analysis (CSV, LaTeX) already exists at the data layer and is being wired into the UI - track progress on the [issue tracker](https://github.com/tomcory/Heimdall/issues).
+All data collected by Heimdall is persisted in an on-device SQLite database. Captured traffic can be exported from the **Export** button on the Insights tab, or over adb: HTTP messages and connections as JSON Lines, and a copy of the database.
+
+### Automation
+
+A capture can be started, stopped, queried and exported from a host machine without the UI, and hosts can be blocked for a session:
+
+```bash
+H="am broadcast -f 0x20 -n de.tomcory.heimdall/.service.CaptureCommandReceiver"
+adb shell "$H -a de.tomcory.heimdall.action.START_CAPTURE --es tag run-1 --es apps com.example.app --es block_hosts ads.example.net"
+adb shell "$H -a de.tomcory.heimdall.action.STOP_CAPTURE"
+adb shell "$H -a de.tomcory.heimdall.action.EXPORT_CAPTURE"   # answers with the folder to adb pull
+```
 
 ## Contributing
 
@@ -106,15 +110,7 @@ For a deeper dive into Heimdall's architecture, see [docs/architecture.md](docs/
 |---|---|---|
 | [docs/architecture.md](docs/architecture.md) | reference | Module structure, UI screens, the VPN and traffic inspection pipeline, scoring modules, background services, database schema |
 | [core/vpn/README.md](core/vpn/README.md) | reference | The VPN/MitM engine: threading model, TLS interception, configuration, limitations |
-| [docs/diagrams](docs/diagrams/README.md) | reference | Architecture, sequence and BPMN diagrams of the VPN component |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | reference | Development setup and guidelines |
-| [docs/records/architecture-issues.md](docs/records/architecture-issues.md) | record | Code audit of the whole codebase (2026-09-15) |
-| [docs/records/implementation-plan.md](docs/records/implementation-plan.md) | record | Work packets that address the architectural issues |
-| [docs/records/database-schema-audit.md](docs/records/database-schema-audit.md) | record | Audit of the Room schema in `core:database` (2026-09-18) |
-| [docs/records/vpn-mitm-audit.md](docs/records/vpn-mitm-audit.md) | record | Audit of `core:vpn` with its fix packets (2026-09-28) |
-| [docs/records/quic-mitm.md](docs/records/quic-mitm.md) | record | QUIC interception: state, gaps and path forward |
-| [docs/records/ca-adb-trigger-plan.md](docs/records/ca-adb-trigger-plan.md) | record | Plan for generating the CA certificate via adb (implemented) |
-| [docs/records/ui-redesign.md](docs/records/ui-redesign.md) | record | Design document of the UI redesign |
 
 ## Citations
 

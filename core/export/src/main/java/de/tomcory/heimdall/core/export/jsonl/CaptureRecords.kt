@@ -5,7 +5,8 @@ import de.tomcory.heimdall.core.database.entity.Request
 import de.tomcory.heimdall.core.database.entity.Response
 import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.database.entity.Session
-import de.tomcory.heimdall.core.export.util.bodyAsText
+import de.tomcory.heimdall.core.export.util.BODY_ENCODING
+import de.tomcory.heimdall.core.export.util.base64
 import de.tomcory.heimdall.core.export.util.headerPairs
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -32,7 +33,6 @@ object CaptureRecords {
      * @param version Heimdall's version name.
      */
     fun message(request: Request, response: Response?, connection: Connection, session: Session?, version: String): JsonObject {
-        val (requestEncoding, requestBody) = bodyAsText(request.headers, request.content)
         return buildJsonObject {
             put("id", "${connection.sessionId}-${request.id}")
             put("time", buildJsonObject {
@@ -47,21 +47,20 @@ object CaptureRecords {
                 put("port", request.remotePort)
                 put("path", request.remotePath)
                 put("headers", headers(request.headers))
-                put("body", requestBody)
-                put("body_encoding", requestEncoding)
+                put("body", base64(request.content))
+                put("body_encoding", BODY_ENCODING)
                 put("body_truncated", request.contentTruncated)
                 put("content_length", request.contentLength)
             })
             if (response == null) {
                 put("http_response", JsonNull)
             } else {
-                val (responseEncoding, responseBody) = bodyAsText(response.headers, response.content)
                 put("http_response", buildJsonObject {
                     put("status", response.statusCode)
                     put("message", response.statusMsg)
                     put("headers", headers(response.headers))
-                    put("body", responseBody)
-                    put("body_encoding", responseEncoding)
+                    put("body", base64(response.content))
+                    put("body_encoding", BODY_ENCODING)
                     put("body_truncated", response.contentTruncated)
                     put("content_length", response.contentLength)
                 })

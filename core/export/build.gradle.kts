@@ -7,7 +7,7 @@ android {
     namespace = "de.tomcory.heimdall.core.export"
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 26
         compileSdk = 36
     }
 

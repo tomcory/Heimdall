@@ -15,6 +15,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import java.util.Base64
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -64,8 +66,8 @@ class CaptureRecordsTest {
         assertEquals("api.example.com", http.text("host"))
         assertEquals(443, http.getValue("port").jsonPrimitive.int)
         assertEquals("/v1/signup?ref=a", http.text("path"))
-        assertEquals("""{"email":"jane@example.org"}""", http.text("body"))
-        assertEquals("text", http.text("body_encoding"))
+        assertEquals("""{"email":"jane@example.org"}""", String(Base64.getDecoder().decode(http.text("body"))))
+        assertEquals("base64", http.text("body_encoding"))
         assertFalse(http.getValue("body_truncated").jsonPrimitive.boolean)
         val headers = http.getValue("headers").jsonArray.map { it.jsonObject.text("key") to it.jsonObject.text("value") }
         assertEquals(listOf("Host" to "api.example.com", "Content-Type" to "application/json"), headers)
@@ -88,7 +90,25 @@ class CaptureRecordsTest {
     }
 
     @Test
-    fun `a binary response body is Base64, a missing response is null`() {
+    fun `a compressed body with a textual content type keeps its bytes`() {
+        val gzip = byteArrayOf(0x1f, 0x8b.toByte(), 0x08, 0x00, 0xff.toByte(), 0x00, 0x0a, 0x22)
+        val http = CaptureRecords.message(
+            request().copy(headers = "Content-Type: application/json\nContent-Encoding: gzip", content = gzip),
+            null, connection(), session, "0.1"
+        ).obj("http_request")
+        assertEquals("base64", http.text("body_encoding"))
+        assertArrayEquals(gzip, java.util.Base64.getDecoder().decode(http.text("body")))
+    }
+
+    @Test
+    fun `an empty body is an empty string`() {
+        val http = CaptureRecords.message(request().copy(content = ByteArray(0)), null, connection(), session, "0.1").obj("http_request")
+        assertEquals("", http.text("body"))
+        assertEquals("base64", http.text("body_encoding"))
+    }
+
+    @Test
+    fun `a response body is Base64, a missing response is null`() {
         val withResponse = CaptureRecords.message(request(), response, connection(), session, "0.1").obj("http_response")
         assertEquals(200, withResponse.getValue("status").jsonPrimitive.int)
         assertEquals("base64", withResponse.text("body_encoding"))
@@ -129,6 +149,6 @@ class CaptureRecordsTest {
 
         assertFalse(line.contains('\n'))
         val parsed = Json.parseToJsonElement(line).jsonObject
-        assertEquals("line one\nline \"two\"\r\n\ttab ü €", parsed.obj("http_request").text("body"))
+        assertArrayEquals(body, java.util.Base64.getDecoder().decode(parsed.obj("http_request").text("body")))
     }
 }

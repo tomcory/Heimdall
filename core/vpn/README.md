@@ -25,6 +25,7 @@ Diagrams of this module live in [`docs/diagrams/`](../../docs/diagrams/README.md
   - [Database Connector](#database-connector)
 - [How a New Flow Is Handled](#how-a-new-flow-is-handled)
 - [TLS MitM Deep Dive](#tls-mitm-deep-dive)
+- [Host Blocking](#host-blocking)
 - [QUIC](#quic)
 - [Threading Model](#threading-model)
 - [Configuration](#configuration)
@@ -64,6 +65,10 @@ core/vpn/src/main/java/de/tomcory/heimdall/core/vpn/
 │
 ├── cache/
 │   └── ConnectionCache.kt          Active connections by (remote address, protocol, ports)
+│
+├── rules/
+│   ├── HostMatcher.kt              Domain-suffix and address matching, shared with MitmScope
+│   └── BlockList.kt                Hosts whose connections are dropped; block reasons
 │
 ├── metadata/
 │   ├── DnsCache.kt                 TTL-aware IP → hostname map filled from DNS answers
@@ -147,8 +152,6 @@ flowchart LR
     enc -. SNI, ALPN, passthrough reason .-> db
 ```
 
-Interactive version: [`docs/diagrams/vpn-architecture.html`](../../docs/diagrams/vpn-architecture.html).
-
 Each connection is a stack of three objects. Every layer has the same four entry points:
 
 | Method | Direction | Meaning |
@@ -163,10 +166,6 @@ A payload always travels up to the application layer and back down, even when no
 ---
 
 ## VPN Session Lifecycle
-
-![VPN session lifecycle (BPMN)](../../docs/diagrams/vpn-session-lifecycle.svg)
-
-Source: [`docs/diagrams/vpn-session-lifecycle.bpmn`](../../docs/diagrams/vpn-session-lifecycle.bpmn).
 
 Start and stop requests are serialised by `VpnServiceLifecycle` (`app/service`), a small state machine with the states `IDLE`, `STARTING`, `RUNNING` and `STOPPING`:
 
@@ -260,6 +259,7 @@ Instantiated once per VPN session by `HeimdallVpnService` and passed to every th
 | `sessionId: Long` | Room id of the current `Session` |
 | `doMitm` | Master switch for TLS interception |
 | `mitmScope: MitmScope` | Apps and hosts that may be intercepted |
+| `blockList: BlockList` | Hosts whose connections are dropped instead of forwarded |
 | `learnPassthrough` | Whether MitM failures are learned per (app, host) |
 | `pinningCloseWindowMs` | How soon after the handshake a data-less close counts as pinning (default 3 s) |
 | `quicPolicy: QuicPolicy` | `PASSTHROUGH` or `BLOCK`; always `PASSTHROUGH` without MitM |
@@ -408,7 +408,7 @@ The base class provides `interceptionHost()` (SNI, else DNS-derived name, else I
 | `updateConnectionBytesOut` / `In` | Adds a delta to the byte counters |
 | `updateConnectionSecurity` | `securityProtocol`, `sni`, `alpn`, `echOffered` |
 | `updateConnectionHost` | A corrected hostname and tracker label |
-| `markConnectionBlocked` | `blocked = true` (QUIC block policy) |
+| `markConnectionBlocked` | `blocked = true` and `blockReason` (`host_rule` or `quic_policy`) |
 | `updateConnectionPassthroughReason` | Why a TLS connection was not decrypted |
 | `persistHttpRequest` / `persistHttpResponse` | `Request` and `Response` rows |
 
@@ -417,10 +417,6 @@ DNS connections (remote port 53) get id 0 and no row.
 ---
 
 ## How a New Flow Is Handled
-
-![Handling of a new flow (BPMN)](../../docs/diagrams/flow-interception.svg)
-
-Source: [`docs/diagrams/flow-interception.bpmn`](../../docs/diagrams/flow-interception.bpmn). A condensed interactive version of the decision is [`docs/diagrams/interception-decision.html`](../../docs/diagrams/interception-decision.html).
 
 A TLS connection is decrypted only if all of the following hold when its ClientHello arrives:
 
@@ -465,8 +461,6 @@ sequenceDiagram
     Http-->>Tls: same bytes (Response row queued)
     Tls->>App: re-encrypted response
 ```
-
-Interactive versions: [`tls-mitm-handshake.html`](../../docs/diagrams/tls-mitm-handshake.html) and [`tls-mitm-exchange.html`](../../docs/diagrams/tls-mitm-exchange.html).
 
 `TlsConnection` holds two `SSLEngine`s. The names follow the role Heimdall plays towards each peer's counterpart:
 
@@ -513,6 +507,17 @@ A connection that is passed through never leaves `NEW`: with `doMitm = false` ev
 
 ---
 
+## Host Blocking
+
+`BlockList` holds hostnames, matched as domain suffixes by `HostMatcher`, and IP addresses, matched exactly. `TransportLayerConnection.applyBlockList()` checks a connection's name and address against it at two points:
+
+1. **When the connection is created**, with the name the DNS cache holds for the remote address, or the address itself. `TcpConnection.setUp()` then closes the connection before any socket is opened, which answers the device's SYN with a reset. `UdpConnection` opens no channel, stays in the connection cache, drops every datagram and answers the first three with ICMP port unreachable.
+2. **When the name is learned later**, in `refineRemoteHost()`: the SNI of a TLS ClientHello, of a QUIC Initial, or an HTTP Host header. The connection is marked and torn down (`dropBlocked()`); `TlsConnection` returns before it forwards the ClientHello.
+
+Both record the block through `markConnectionBlocked(id, BlockReason.HOST_RULE)`. In case 2 the upstream TCP handshake has already happened, since the socket is connected before the ClientHello arrives; no payload is forwarded. A plain-HTTP connection that is only named by its Host header is closed after its first request has been sent. `HostBlockingTest` covers both points for TCP, TLS, UDP and QUIC.
+
+---
+
 ## QUIC
 
 QUIC is never decrypted beyond its first packets. `QuicConnection` does two things:
@@ -520,7 +525,9 @@ QUIC is never decrypted beyond its first packets. `QuicConnection` does two thin
 1. **Passive inspection.** `QuicInitialInspector` derives the Initial keys from the client's Destination Connection ID (QUIC v1 and v2), decrypts the client's Initial packets, collects CRYPTO frames across up to four datagrams, and parses the ClientHello. SNI, ALPN and the ECH flag are stored on the connection and the hostname is refined, also when MitM is off. Datagrams are forwarded first, so inspection never delays traffic.
 2. **Block policy** (only with MitM on and `QuicPolicy.BLOCK`). The first datagrams are held back until the inspector has a verdict. If the flow offers HTTP/3 (`h3` or `h3-*`) and the TLS MitM would intercept the same app and host, the flow is blocked: the socket is released, the connection is marked `blocked`, every datagram is dropped, and the first three are answered with an ICMP port unreachable error so that the app falls back to TLS over TCP at once. Flows whose ClientHello cannot be read are forwarded.
 
-The default policy is `PASSTHROUGH`. See [`docs/records/quic-mitm.md`](../../docs/records/quic-mitm.md) for the analysis behind this design and what full QUIC termination would take.
+While a block list is set, the first datagrams are held back as well, whatever the policy, so that a flow whose server name is on the list is dropped before anything is forwarded.
+
+The default policy is `PASSTHROUGH`.
 
 ---
 
@@ -561,6 +568,7 @@ Everything is passed to `ComponentManager` at construction; nothing changes whil
 |---|---|---|
 | `doMitm` | `false` | `mitmEnable` |
 | `mitmScope` | `MitmScope.ALL` | MitM monitoring scope for apps and hosts (`MitmScopeResolver`) |
+| `blockList` | `BlockList.NONE` | `vpnBlockedHosts`, plus the `SESSION_BLOCK_HOSTS_EXTRA` intent extra for one session (`BlockListResolver`) |
 | `learnPassthrough` | `true` | `mitmAppLayerPassthrough` |
 | `trustAllUpstreamCertificates` | `false` | `mitmTrustAllUpstreamCerts` |
 | `quicPolicy` | `PASSTHROUGH` | `mitmQuicPolicy`, or the `QUIC_POLICY_EXTRA` intent extra for one session (`QuicPolicyResolver`) |

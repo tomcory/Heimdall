@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "de.tomcory.heimdall"
-        minSdk = 24
+        minSdk = 26
         compileSdk = 36
         targetSdk = 36
 

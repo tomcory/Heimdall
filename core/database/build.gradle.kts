@@ -9,7 +9,7 @@ android {
     namespace = "de.tomcory.heimdall.core.database"
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 26
         compileSdk = 36
     }
 
