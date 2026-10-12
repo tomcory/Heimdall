@@ -27,7 +27,7 @@ data class CaptureSessionOptions(
         /** The session without any options: the stored preferences apply. */
         val NONE = CaptureSessionOptions()
 
-        const val MAX_TAG_LENGTH = 64
+        const val MAX_TAG_LENGTH = 1023
 
         private val TAG_PATTERN = Regex("[A-Za-z0-9._:-]+")
         private val PACKAGE_PATTERN = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")

@@ -33,6 +33,7 @@ class CaptureSessionOptionsTest {
         assertEquals(false, options.mitm)
         assertEquals("block", options.quicPolicy)
         assertNull(parse(tag = "x").mitm)
+        assertEquals(CaptureSessionOptions.MAX_TAG_LENGTH, parse(tag = "x".repeat(CaptureSessionOptions.MAX_TAG_LENGTH)).tag?.length)
     }
 
     @Test
