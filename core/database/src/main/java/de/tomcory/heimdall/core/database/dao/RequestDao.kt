@@ -50,6 +50,9 @@ interface RequestDao {
     @Query("Select * FROM Request")
     suspend fun getAll(): List<Request>
 
+    @Query("SELECT COUNT(*) FROM Request r JOIN Connection c ON r.connectionId = c.id WHERE c.sessionId = :sessionId")
+    suspend fun countForSession(sessionId: Long): Int
+
     @Query("""
         SELECT r.id, r.connectionId, r.timestamp, r.headers, r.content, r.contentLength, r.contentTruncated, r.method,
                r.remoteHost, r.remotePath, r.remoteIp, r.remotePort, r.localIp, r.localPort,

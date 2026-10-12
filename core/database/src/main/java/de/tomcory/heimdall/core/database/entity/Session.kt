@@ -9,5 +9,7 @@ data class Session(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val startTime: Long = System.currentTimeMillis(),
-    var endTime: Long = -1
+    var endTime: Long = -1,
+    /** Label given to a session started from adb; written into its exports. */
+    val tag: String? = null
 )

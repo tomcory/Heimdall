@@ -14,7 +14,6 @@ import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import dagger.hilt.android.AndroidEntryPoint
-import de.tomcory.heimdall.MonitoringScopeApps.*
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
@@ -47,6 +46,7 @@ class HeimdallVpnService : VpnService() {
 
     @Inject lateinit var preferences: PreferencesDataSource
     @Inject lateinit var database: HeimdallDatabase
+    @Inject lateinit var captureState: CaptureState
 
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
     private var componentManager: ComponentManager? = null
@@ -55,6 +55,9 @@ class HeimdallVpnService : VpnService() {
     /** The DNS server the VPN interface announces; set by [establishInterface]. */
     private var vpnDnsServerAddress: InetAddress? = null
     private var startTime: Long = 0
+
+    /** Whether the running session intercepts TLS; set by [launchServiceComponents]. */
+    private var sessionMitm = false
     private var notificationUpdateHandler: Handler? = null
     private var notificationUpdateRunnable: Runnable? = null
 
@@ -91,7 +94,13 @@ class HeimdallVpnService : VpnService() {
             Timber.i("VpnService restarted by the system without an intent, starting the VPN")
         }
         val existingSessionId = intent?.getLongExtra(SESSION_ID_EXTRA, -1) ?: -1
-        val quicPolicyOverride = intent?.getStringExtra(QUIC_POLICY_EXTRA)
+        val options = CaptureSessionOptions(
+            tag = intent?.getStringExtra(SESSION_TAG_EXTRA),
+            apps = intent?.getStringArrayExtra(SESSION_APPS_EXTRA)?.toList() ?: emptyList(),
+            blockHosts = intent?.getStringArrayExtra(SESSION_BLOCK_HOSTS_EXTRA)?.toList() ?: emptyList(),
+            mitm = if (intent?.hasExtra(SESSION_MITM_EXTRA) == true) intent.getBooleanExtra(SESSION_MITM_EXTRA, false) else null,
+            quicPolicy = intent?.getStringExtra(QUIC_POLICY_EXTRA)
+        )
 
         return when(intent?.getIntExtra(VPN_ACTION, START_SERVICE) ?: START_SERVICE) {
 
@@ -99,6 +108,7 @@ class HeimdallVpnService : VpnService() {
                 val launch = lifecycle.requestStart()
                 if (launch) {
                     startTime = System.currentTimeMillis()
+                    captureState.starting(existingSessionId, options, startTime)
                 }
 
                 // Promote this service to the foreground to prevent it from being put to sleep.
@@ -128,7 +138,7 @@ class HeimdallVpnService : VpnService() {
                     Timber.w("The user has not consented to the VPN, it has to be started from the UI")
                     CoroutineScope(Dispatchers.IO).launch {
                         lifecycle.launchFinished(success = false)
-                        abortStart()
+                        abortStart("vpn_consent_missing")
                     }
                     return START_NOT_STICKY
                 }
@@ -138,12 +148,13 @@ class HeimdallVpnService : VpnService() {
                 // launch the VPN components on a background thread
                 CoroutineScope(Dispatchers.IO).launch {
                     Timber.d("Launching service components...")
-                    val launched = launchServiceComponents(existingSessionId, quicPolicyOverride)
+                    val launched = launchServiceComponents(existingSessionId, options)
                     when (lifecycle.launchFinished(launched)) {
                         VpnServiceLifecycle.LaunchOutcome.RUNNING -> {
                             Timber.d("VpnService started")
                             preferences.setVpnActive(true)
                             preferences.setVpnLastUpdated(System.currentTimeMillis())
+                            captureState.running(componentManager?.sessionId ?: existingSessionId, sessionMitm)
                         }
                         VpnServiceLifecycle.LaunchOutcome.SHUT_DOWN -> {
                             Timber.i("STOP_SERVICE was received while the VPN was starting, shutting it down")
@@ -151,7 +162,7 @@ class HeimdallVpnService : VpnService() {
                         }
                         VpnServiceLifecycle.LaunchOutcome.ABORT -> {
                             Timber.e("VpnService could not be started")
-                            abortStart()
+                            abortStart("start_failed")
                         }
                     }
                 }
@@ -269,14 +280,16 @@ class HeimdallVpnService : VpnService() {
     /**
      * Launches the VPN components. This function is responsible for establishing the VPN interface
      * and launching the traffic-handling threads via the [ComponentManager].
-     * @param quicPolicyOverride The QUIC policy for this session only, see [QUIC_POLICY_EXTRA].
+     * @param options What this session asks for beyond the stored preferences.
      * @return Whether the VPN interface was established and the components were launched successfully.
      * @see [onStartCommand]
      */
-    private suspend fun launchServiceComponents(existingSessionId: Long, quicPolicyOverride: String?): Boolean {
+    private suspend fun launchServiceComponents(existingSessionId: Long, options: CaptureSessionOptions): Boolean {
+        val quicPolicyOverride = options.quicPolicy
 
         // determine whether to launch in MitM mode
-        val doMitm = preferences.mitmEnable.first()
+        val doMitm = options.mitm ?: preferences.mitmEnable.first()
+        sessionMitm = doMitm
         val trustAllUpstreamCertificates = preferences.mitmTrustAllUpstreamCerts.first()
         val mitmScope = if (doMitm) resolveMitmScope() else MitmScope.ALL
         val learnPassthrough = preferences.mitmAppLayerPassthrough.first()
@@ -299,7 +312,7 @@ class HeimdallVpnService : VpnService() {
         withContext(Dispatchers.IO) { database.openHelper.writableDatabase }
 
         // establish the VPN interface
-        if (!establishInterface(doMitm)) {
+        if (!establishInterface(doMitm, options.apps)) {
             return false
         }
         // In Private DNS's opportunistic ("automatic") mode the resolver would use DNS over TLS
@@ -344,7 +357,7 @@ class HeimdallVpnService : VpnService() {
      * Stops the service after a start that did not bring the VPN up, and records that the VPN
      * is not active. Whatever the start had already set up is released.
      */
-    private suspend fun abortStart() {
+    private suspend fun abortStart(reason: String) {
         stopVpnComponents()
         stopNotificationUpdates()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -352,6 +365,7 @@ class HeimdallVpnService : VpnService() {
         preferences.setVpnActive(false)
         preferences.setVpnLastUpdated(System.currentTimeMillis())
         lifecycle.stopped()
+        captureState.idle(failure = reason)
     }
 
     /**
@@ -398,7 +412,7 @@ class HeimdallVpnService : VpnService() {
      * @return Whether the VPN interface was established successfully.
      * @see [launchServiceComponents]
      */
-    private suspend fun establishInterface(doMitm: Boolean): Boolean {
+    private suspend fun establishInterface(doMitm: Boolean, sessionApps: List<String>): Boolean {
 
         // only establish the VPN interface if it is not already established
         if (vpnInterface != null) {
@@ -498,58 +512,41 @@ class HeimdallVpnService : VpnService() {
 
         Timber.d("VPN in standalone mode")
 
-        // get the VPN monitoring scope from the preferences
+        // decide which apps are routed through the VPN: the session's own apps if it names any,
+        // the stored monitoring scope otherwise
         val monitoringScope = preferences.vpnMonitoringScope.first()
-        Timber.d("VPN monitoring scope: $monitoringScope")
+        Timber.d("VPN monitoring scope: $monitoringScope${if (sessionApps.isNotEmpty()) " (overridden by the session's apps)" else ""}")
+        val appScope = VpnAppScopeResolver.resolve(
+            scope = monitoringScope,
+            whitelistApps = preferences.vpnWhitelistApps.first(),
+            blacklistApps = preferences.vpnBlacklistApps.first(),
+            doMitm = doMitm,
+            sessionApps = sessionApps,
+            systemPackages = ::getSystemPackages
+        )
 
         val blacklist = mutableListOf<String>()
         val whitelist = mutableListOf<String>()
-
-        // if the monitoring scope excludes system apps, add them to the builder's blacklist
-        if(monitoringScope == APPS_NON_SYSTEM || monitoringScope == APPS_NON_SYSTEM_BLACKLIST) {
-            // add all system apps to the builder's blacklist
-            for (packageName in getSystemPackages()) {
-                try {
-                    blacklist.add(packageName)
-                    builder.addDisallowedApplication(packageName)
-                } catch (e: PackageManager.NameNotFoundException) {
-                    Timber.e(e, "Error adding system app to blacklist")
-                }
+        for (packageName in appScope.disallowed) {
+            try {
+                builder.addDisallowedApplication(packageName)
+                blacklist.add(packageName)
+            } catch (e: PackageManager.NameNotFoundException) {
+                Timber.e("Cannot add non-installed app to VPN blacklist: $packageName")
             }
         }
-
-        // if the monitoring scope excludes blacklisted apps, add them to the builder's blacklist
-        if(monitoringScope == APPS_BLACKLIST || monitoringScope == APPS_NON_SYSTEM_BLACKLIST) {
-            for(packageName in preferences.vpnBlacklistApps.first().filter { it != "de.tomcory.heimdall" }) {
-                try {
-                    blacklist.add(packageName)
-                    builder.addDisallowedApplication(packageName)
-                } catch (e: PackageManager.NameNotFoundException) {
-                    Timber.e("Cannot add non-installed app to VPN blacklist: $packageName")
-                }
+        for (packageName in appScope.allowed) {
+            try {
+                builder.addAllowedApplication(packageName)
+                whitelist.add(packageName)
+            } catch (e: PackageManager.NameNotFoundException) {
+                Timber.e("Cannot add non-installed app to VPN whitelist: $packageName")
             }
         }
-
-        // if the monitoring scope includes whitelisted apps, add them to the builder's whitelist
-        if(monitoringScope == APPS_WHITELIST) {
-            for(packageName in preferences.vpnWhitelistApps.first().filter { it != "de.tomcory.heimdall" }) {
-                try {
-                    whitelist.add(packageName)
-                    builder.addAllowedApplication(packageName)
-                } catch (e: PackageManager.NameNotFoundException) {
-                    Timber.e("Cannot add non-installed app to VPN whitelist: $packageName")
-                }
-            }
-        } else {
-            // if we're not using a whitelist, we have to add Heimdall to the blacklist so that we don't monitor ourselves
-            blacklist.add("de.tomcory.heimdall")
-            builder.addDisallowedApplication("de.tomcory.heimdall")
-
-            // if we're performing MitM, we also have to add Chrome to the blacklist because it doesn't work with MitM
-            if(doMitm && !blacklist.contains("com.android.chrome")) {
-                blacklist.add("com.android.chrome")
-                builder.addDisallowedApplication("com.android.chrome")
-            }
+        if (sessionApps.isNotEmpty() && whitelist.isEmpty()) {
+            // without a single allowed app the interface would route every app
+            Timber.e("None of the session's apps is installed, not establishing the VPN interface")
+            return false
         }
 
         val debugString = StringBuilder()
@@ -589,6 +586,7 @@ class HeimdallVpnService : VpnService() {
      */
     private suspend fun shutDown() {
         Timber.d("Shutting down VpnService")
+        captureState.stopping()
         stopVpnComponents()
         stopNotificationUpdates()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -596,6 +594,7 @@ class HeimdallVpnService : VpnService() {
         preferences.setVpnActive(false)
         preferences.setVpnLastUpdated(System.currentTimeMillis())
         lifecycle.stopped()
+        captureState.idle()
         Timber.d("VpnService stopped")
     }
 
@@ -669,6 +668,17 @@ class HeimdallVpnService : VpnService() {
          * exported, so only the app itself or a root shell can pass it.
          */
         const val QUIC_POLICY_EXTRA = "de.tomcory.heimdall.core.vpn.QUIC_POLICY"
+
+        /**
+         * Optional intent extras of a session started from adb, see [CaptureSessionOptions]: its
+         * tag, the packages it routes through the VPN and the hosts it blocks (string arrays),
+         * and whether it intercepts TLS (boolean). Like [QUIC_POLICY_EXTRA] they apply to this
+         * session only; [CaptureCommandReceiver] validates them before it passes them on.
+         */
+        const val SESSION_TAG_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_TAG"
+        const val SESSION_APPS_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_APPS"
+        const val SESSION_BLOCK_HOSTS_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_BLOCK_HOSTS"
+        const val SESSION_MITM_EXTRA = "de.tomcory.heimdall.core.vpn.SESSION_MITM"
 
         /**
          * Notification ID for the foreground notification.

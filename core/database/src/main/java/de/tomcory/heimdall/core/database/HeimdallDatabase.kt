@@ -32,7 +32,7 @@ import de.tomcory.heimdall.core.database.entity.Tracker
 import de.tomcory.heimdall.core.database.entity.TrackerXCategory
 
 @Database(
-    version = 10,
+    version = 11,
     entities = [
         App::class,
         AppXPermission::class,
