@@ -1,7 +1,5 @@
 # Heimdall — Architecture Overview
 
-This is the deep, human-facing reference for Heimdall's architecture. It complements [`CLAUDE.md`](../CLAUDE.md) (the terse, agent-instruction file at the repo root) rather than duplicating it — read this for the "why" and the detail; read `CLAUDE.md` for the quick-reference version an agent needs to start working.
-
 Heimdall is an on-device Android privacy-analysis toolkit. It lets researchers and developers inspect what installed apps actually do at runtime: which permissions they request, which tracking SDKs they embed, and what network traffic they send — including decrypted HTTPS when a MitM certificate is trusted. No data leaves the device.
 
 ---
@@ -19,8 +17,6 @@ Heimdall is an on-device Android privacy-analysis toolkit. It lets researchers a
 9. [Key Dependencies](#9-key-dependencies)
 10. [External Integrations](#10-external-integrations)
 
-**Known issues**: see [`records/architecture-issues.md`](records/architecture-issues.md) for a severity-ranked audit of coupling, concurrency, testability, and scalability problems found in the current implementation.
-
 ---
 
 ## 1. What the App Does
@@ -32,9 +28,11 @@ Heimdall is an on-device Android privacy-analysis toolkit. It lets researchers a
 | **Network traffic capture** | Runs a local VPN that intercepts all device traffic; logs connections, bytes, remote hosts |
 | **HTTPS decryption (MitM)** | With Heimdall's generated CA trusted (in practice: in the system store of a rooted device), decrypts TLS to log HTTP/1.1 requests/responses |
 | **Privacy scoring** | Computes a per-app score (0–1) from permissions, trackers, and privacy-policy analysis |
-| **Data export** | CSV and LaTeX export logic exists at the data layer (`core/export`); not yet wired into the UI |
+| **Data export** | Captured traffic as JSON Lines (messages, connections) and as a copy of the database, from the Database screen or over adb (`core/export`, `CaptureExporter`) |
+| **Host blocking** | Connections to hosts on a block list are dropped and recorded as blocked |
+| **Automation** | Capture start, stop, status and export over adb; see [automation.md](automation.md) |
 
-**Min SDK**: 24 (Android 7) · **Target/Compile SDK**: 36 · **Language**: Kotlin
+**Min SDK**: 26 (Android 8) · **Target/Compile SDK**: 36 · **Language**: Kotlin
 
 ---
 
@@ -48,7 +46,7 @@ Heimdall/
     ├── scanner/             PermissionScanner, LibraryScanner, Exodus API client
     ├── vpn/                VPN service components, packet pipeline, MitM engine
     ├── util/               Trie, AppFinder, file/network utilities
-    ├── export/             CSV, TeX export logic
+    ├── export/             JSON Lines export of captured traffic; TeX mapping
     ├── datastore/          DataStore preferences (type-safe wrappers)
     └── datastore-proto/    Protocol Buffer schema for preferences
 ```
@@ -88,7 +86,8 @@ Top-bar menu opens the **PreferencesScreen** (`ui/settings/PreferencesScreen.kt`
 
 ### Database (route: `database`)
 - Live viewer for captured **Connections**, **Requests**, and **Responses**, with an analytics summary and a filter bar (by app, hostname, protocol).
-- Per-row detail view. No export UI exists here yet — see [Data export](#1-what-the-app-does) above.
+- Per-row detail view, which also says whether and why a connection was blocked.
+- **Export** opens a dialog for the sessions and files to export (`ExportDialog`), runs `CaptureExporter` and offers to share the result.
 
 ### Cold start
 No longer a custom Compose splash screen — `MainActivity` uses the AndroidX `SplashScreen` API (`installSplashScreen()`), kept on screen via `viewModel.showSplashScreen` until the initial scan completes.
@@ -145,6 +144,10 @@ the first payload of a flow:
   record SNI and ALPN. With the QUIC policy set to *Block* (and MitM on), HTTP/3 flows that the TLS
   MitM would intercept are dropped and answered with ICMP port unreachable, so the app falls back
   to TLS over TCP. The default is *Passthrough*.
+- **Host blocking.** Connections to hosts on the block list (the stored list plus a session's own
+  hosts) are dropped: at once if the DNS cache names the host or its address is listed, and when
+  the TLS or QUIC server name is read otherwise. They are recorded with `blocked` and
+  `blockReason = host_rule`. See [automation.md](automation.md#host-blocking) for the limits.
 - **DNS.** Answers over UDP, TCP and decrypted DNS over TLS fill an IP → hostname cache that names
   later connections. DNS over TLS to the VPN's own DNS server is refused unless Private DNS is in
   strict mode, so the resolver falls back to plain DNS.
@@ -173,7 +176,7 @@ the first payload of a flow:
 
 Earlier versions also offered an alternative interception path via a LittleProxy-mitm-derived HTTP proxy (`core/proxy`). That module has been removed; the VPN/TUN-based engine above is the sole interception mechanism. `TrafficScannerViewModel.VpnMode` is `OFF`, `PLAIN_VPN` or `MITM_VPN`.
 
-For the full component-by-component reference (threading model, TLS MitM deep dive, configuration, limitations), see [`core/vpn/README.md`](../core/vpn/README.md). Diagrams of the component (architecture, sequence, BPMN) are in [`docs/diagrams/`](diagrams/README.md). The findings and fix packets behind the current implementation are in [`records/vpn-mitm-audit.md`](records/vpn-mitm-audit.md); the QUIC analysis is in [`records/quic-mitm.md`](records/quic-mitm.md).
+For the full component-by-component reference (threading model, TLS MitM deep dive, configuration, limitations), see [`core/vpn/README.md`](../core/vpn/README.md).
 
 ### Generating the CA via adb
 
@@ -190,6 +193,10 @@ adb pull /sdcard/Android/data/de.tomcory.heimdall/files/ca/ .
 - The pulled directory contains `heimdallmitm.pem` and `<subject_hash_old>.0`, the file name the system CA store (`/system/etc/security/cacerts`) expects.
 - Without `force`, an existing valid CA is reused (`status=reused`). With `force true`, a new CA is generated, which invalidates any installed copy. A forced run is refused while the VPN is active (`status=refused reason=vpn_active`, result=0).
 - `-f 0x20` (`FLAG_INCLUDE_STOPPED_PACKAGES`) lets the command work on a fresh install that has never been launched.
+
+### Controlling the capture via adb
+
+`CaptureCommandReceiver` (`app/service/`), guarded the same way, starts and stops the capture, reports its state and exports it. A start carries per-session options (`CaptureSessionOptions`: tag, apps, blocked hosts, MitM, QUIC policy) to `HeimdallVpnService` as intent extras; they change no preference. The service reports what it is doing through `CaptureState`, an in-process singleton, which is what the receiver waits on and answers from. Commands, answers and prerequisites are in [automation.md](automation.md).
 
 ---
 
@@ -224,6 +231,8 @@ Each module also provides a Compose `UICard` used on the Score detail screen.
 | `HeimdallVpnService` | `VpnService` (foreground) | User action / boot | Runs the traffic capture pipeline; notification shows elapsed time and Stop button |
 | `ScanWorker` | `CoroutineWorker` (WorkManager) | App launch, boot, package install/remove | Scans installed apps for permissions and tracker libraries |
 | `HeimdallBroadcastReceiver` | `BroadcastReceiver` (exported) | `BOOT_COMPLETED`, `PACKAGE_ADDED/REMOVED` | Schedules scans on boot; triggers single-package scan on install; marks apps uninstalled |
+| `CaptureCommandReceiver` | `BroadcastReceiver` (exported, `DUMP` permission) | adb broadcasts `START_CAPTURE`, `STOP_CAPTURE`, `CAPTURE_STATUS`, `EXPORT_CAPTURE` | Starts, stops, reports and exports the capture for scripted workflows |
+| `CaCertificateCommandReceiver` | `BroadcastReceiver` (exported, `DUMP` permission) | adb broadcast `GENERATE_CA_CERT` | Generates the MitM root CA without the UI |
 | `NotificationActionReceiver` | `BroadcastReceiver` (not exported) | VPN notification Stop button | Sends `STOP_SERVICE` intent to `HeimdallVpnService` |
 | `HeimdallApplication` | `Application` | Process start | Hilt init, Timber setup, notification channel creation, resets stale scan states |
 
@@ -231,7 +240,7 @@ Each module also provides a Compose `UICard` used on the Score detail screen.
 
 ## 8. Database Schema
 
-Room database, version 10, 14 entities. There is no migration path yet: every schema change bumps the version and wipes local data (`fallbackToDestructiveMigration`). See [`records/database-schema-audit.md`](records/database-schema-audit.md).
+Room database, version 12, 14 entities. There is no migration path yet: every schema change bumps the version and wipes local data (`fallbackToDestructiveMigration`). See [`records/database-schema-audit.md`](../docs-internal/records/database-schema-audit.md).
 
 ```
 App ──────── AppXPermission ── Permission
@@ -257,9 +266,9 @@ Foreign keys with `CASCADE` delete are declared on every edge shown.
 | `Tracker` | `id` (assigned by the Exodus API) | `name`, `codeSignature`, `networkSignature`, `web` |
 | `Category` / `TrackerXCategory` | `name` / (`trackerId`, `categoryName`) | Tracker categories |
 | `AppXTracker` | (`packageName`, `trackerId`) | FK → App, FK → Tracker |
-| `Session` | `id` (auto) | `startTime`, `endTime` |
+| `Session` | `id` (auto) | `startTime`, `endTime`, `tag` (label of a session started over adb) |
 | `SessionSummary` | `id` (auto) | `sessionStartTime`, `sessionEndTime`, connection, host and tracker counts, `bytesOut/In` |
-| `Connection` | `id` (assigned by `RoomDatabaseConnector`) | `sessionId`, `protocol` (`TCP`/`UDP`), `ipVersion`, `initiatorId`, `initiatorPkg`, `remoteHost`, `remoteIp`, `remotePort`, `isTracker`, `bytesOut/In`, `securityProtocol` (`PLAIN`/`TLS`/`QUIC`), `sni`, `alpn`, `echOffered`, `blocked`, `passthroughReason` |
+| `Connection` | `id` (assigned by `RoomDatabaseConnector`) | `sessionId`, `protocol` (`TCP`/`UDP`), `ipVersion`, `initiatorId`, `initiatorPkg`, `remoteHost`, `remoteIp`, `remotePort`, `isTracker`, `bytesOut/In`, `securityProtocol` (`PLAIN`/`TLS`/`QUIC`), `sni`, `alpn`, `echOffered`, `blocked`, `blockReason` (`host_rule`/`quic_policy`), `passthroughReason` |
 | `Request` | `id` (auto) | `connectionId`, `method`, `remoteHost`, `remotePath`, `headers`, `content` (bytes), `contentLength`, `contentTruncated` |
 | `Response` | `id` (auto) | `requestId`, `statusCode`, `statusMsg`, `headers`, `content` (bytes), `contentLength`, `contentTruncated` |
 | `Report` | `reportId` (auto) | `appPackageName`, `mainScore`, `timestamp` |

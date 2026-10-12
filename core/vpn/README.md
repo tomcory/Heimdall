@@ -2,8 +2,6 @@
 
 A local VPN-based traffic interception engine for Android. It reads every IP packet the device routes into a TUN interface, proxies TCP connections and UDP datagrams to their real destinations over protected sockets, optionally decrypts TLS with a man-in-the-middle (MitM), and persists sessions, connections, HTTP requests and responses to the Room database.
 
-Diagrams of this module live in [`docs/diagrams/`](../../docs/diagrams/README.md): a component architecture, sequence diagrams of an intercepted HTTPS connection, the classification of a new flow, and two BPMN processes. The most important ones are also inlined below.
-
 ---
 
 ## Table of Contents

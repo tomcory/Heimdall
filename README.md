@@ -106,11 +106,12 @@ For a deeper dive into Heimdall's architecture, see [docs/architecture.md](docs/
 
 ## Documentation
 
-| Document | Kind | Content |
-|---|---|---|
+| Document                                     | Kind | Content                                                                                                                      |
+|----------------------------------------------|---|------------------------------------------------------------------------------------------------------------------------------|
 | [docs/architecture.md](docs/architecture.md) | reference | Module structure, UI screens, the VPN and traffic inspection pipeline, scoring modules, background services, database schema |
-| [core/vpn/README.md](core/vpn/README.md) | reference | The VPN/MitM engine: threading model, TLS interception, configuration, limitations |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | reference | Development setup and guidelines |
+| [docs/automation.md](docs/automation.md)   | reference | Instructions for using Heimdall in headless mode via adb                                                                     |
+| [core/vpn/README.md](core/vpn/README.md)     | reference | The VPN/MitM engine: threading model, TLS interception, configuration, limitations                                           |
+| [CONTRIBUTING.md](CONTRIBUTING.md)           | reference | Development setup and guidelines                                                                                             |
 
 ## Citations
 
