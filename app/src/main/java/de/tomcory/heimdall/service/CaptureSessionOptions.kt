@@ -31,8 +31,6 @@ data class CaptureSessionOptions(
 
         private val TAG_PATTERN = Regex("[A-Za-z0-9._:-]+")
         private val PACKAGE_PATTERN = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
-        // a hostname, optionally with a leading "*.", or an IPv4 or IPv6 literal
-        private val HOST_PATTERN = Regex("(\\*\\.)?[a-z0-9]([a-z0-9._-]*[a-z0-9])?\\.?|[0-9a-f:.]+")
 
         /**
          * @param apps Package names separated by commas.
@@ -49,10 +47,7 @@ data class CaptureSessionOptions(
             if (packages.any { !PACKAGE_PATTERN.matches(it) }) {
                 throw InvalidOptionException("invalid_apps")
             }
-            val hosts = split(blockHosts).map { it.lowercase() }
-            if (hosts.any { !HOST_PATTERN.matches(it) }) {
-                throw InvalidOptionException("invalid_block_hosts")
-            }
+            val hosts = BlockListResolver.parse(blockHosts) ?: throw InvalidOptionException("invalid_block_hosts")
             val policy = quicPolicy?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
             if (policy != null && policy != QuicPolicyResolver.OVERRIDE_BLOCK && policy != QuicPolicyResolver.OVERRIDE_PASSTHROUGH) {
                 throw InvalidOptionException("invalid_quic_policy")

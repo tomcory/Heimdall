@@ -46,8 +46,9 @@ class CaptureState @Inject constructor() {
         )
     }
 
-    fun running(sessionId: Long, mitm: Boolean) {
-        _snapshot.value = _snapshot.value.copy(phase = Phase.RUNNING, sessionId = sessionId, mitm = mitm)
+    /** @param blockedHosts How many hosts the session blocks: the stored block list and its own. */
+    fun running(sessionId: Long, mitm: Boolean, blockedHosts: Int) {
+        _snapshot.value = _snapshot.value.copy(phase = Phase.RUNNING, sessionId = sessionId, mitm = mitm, blockedHosts = blockedHosts)
     }
 
     fun stopping() {

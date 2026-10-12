@@ -163,10 +163,10 @@ class RoomDatabaseConnector(
         }
     }
 
-    override suspend fun markConnectionBlocked(id: Long) {
+    override suspend fun markConnectionBlocked(id: Long, reason: String) {
         awaitConnection(id)
         try {
-            database.connectionDao().markBlocked(id)
+            database.connectionDao().markBlocked(id, reason)
         } catch (e: Exception) {
             Timber.e(e, "Error while marking connection as blocked (cID: $id)")
         }

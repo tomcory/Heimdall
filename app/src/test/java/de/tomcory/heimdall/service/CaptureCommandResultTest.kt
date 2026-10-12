@@ -20,7 +20,7 @@ class CaptureCommandResultTest {
         state.starting(12, options, since = 1000)
         assertEquals("status=starting session=12 tag=baseline-1", CaptureCommandResult.status(state.snapshot.value))
 
-        state.running(12, mitm = true)
+        state.running(12, mitm = true, blockedHosts = 2)
         assertEquals(
             "status=started session=12 mitm=true apps=1 blocked_hosts=2 tag=baseline-1",
             CaptureCommandResult.started(state.snapshot.value)

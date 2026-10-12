@@ -276,7 +276,7 @@ private fun ConnectionDetail(
             connection.sni?.let { ConnectionMetadataRow("SNI", it) }
             connection.alpn?.let { ConnectionMetadataRow("ALPN", it) }
             if (connection.blocked) {
-                ConnectionMetadataRow("QUIC", "blocked")
+                ConnectionMetadataRow("Blocked", blockReasonLabel(connection.blockReason))
             }
             connection.passthroughReason?.let { ConnectionMetadataRow("Not decrypted", passthroughReasonLabel(it)) }
             ConnectionMetadataRow("↑ Out", formatBytes(connection.bytesOut))
@@ -391,6 +391,13 @@ private fun formatBytes(bytes: Long): String = when {
     bytes < 1_048_576     -> "${"%.1f".format(bytes / 1_024f)}KB"
     bytes < 1_073_741_824 -> "${"%.1f".format(bytes / 1_048_576f)}MB"
     else                  -> "${"%.1f".format(bytes / 1_073_741_824f)}GB"
+}
+
+/** A readable form of [de.tomcory.heimdall.core.database.entity.Connection.blockReason]. */
+private fun blockReasonLabel(reason: String?): String = when (reason) {
+    "host_rule" -> "host is on the block list"
+    "quic_policy" -> "QUIC, to force a TLS fallback"
+    else -> "yes"
 }
 
 /** A readable form of [de.tomcory.heimdall.core.database.entity.Connection.passthroughReason]. */

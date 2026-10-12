@@ -34,8 +34,8 @@ interface ConnectionDao {
     @Query("UPDATE Connection SET remoteHost = :remoteHost, isTracker = :isTracker WHERE id = :id")
     suspend fun updateHost(id: Long, remoteHost: String, isTracker: Boolean)
 
-    @Query("UPDATE Connection SET blocked = 1 WHERE id = :id")
-    suspend fun markBlocked(id: Long)
+    @Query("UPDATE Connection SET blocked = 1, blockReason = :reason WHERE id = :id")
+    suspend fun markBlocked(id: Long, reason: String)
 
     @Query("UPDATE Connection SET passthroughReason = :reason WHERE id = :id")
     suspend fun updatePassthroughReason(id: Long, reason: String)

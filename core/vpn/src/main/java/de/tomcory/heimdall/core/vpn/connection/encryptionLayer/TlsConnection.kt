@@ -326,6 +326,12 @@ class TlsConnection(
                 echOffered = clientHello?.echOffered ?: false
             )
 
+            if (transportLayer.blockedByRule) {
+                // The server name is on the block list. The transport layer has closed the
+                // connection; the ClientHello is not forwarded.
+                return
+            }
+
             // only MitM connections within the user's MitM scope
             // that aren't marked for passthrough; the QUIC block rule makes the same check. A
             // connection that is passed through records why (PKT-56).

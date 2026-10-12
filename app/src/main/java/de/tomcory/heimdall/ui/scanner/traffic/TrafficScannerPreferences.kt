@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.hilt.navigation.compose.hiltViewModel
 import de.tomcory.heimdall.MitmQuicPolicy
+import de.tomcory.heimdall.service.BlockListResolver
 import de.tomcory.heimdall.TrafficRetentionUnit
 import de.tomcory.heimdall.core.util.InetAddressUtils
 import de.tomcory.heimdall.ui.settings.ActionPreference
@@ -80,6 +81,16 @@ fun VpnPreferences(
             value = viewModel.preferences.vpnRoute.collectAsState(initial = viewModel.prefInit.vpnRouteInitial).value,
             valueVerifier = { value -> InetAddressUtils.isValidInetAddressWithPort(value) },
             onValueChange = { value -> viewModel.preferences.setVpnRoute(value) }
+        )
+
+        // applies from the next capture on; a running one keeps the list it started with
+        StringPreference(
+            text = "Blocked hosts",
+            dialogText = "Hosts to block, separated by commas. A domain also blocks its subdomains; IP addresses match exactly.",
+            value = viewModel.preferences.vpnBlockedHosts.collectAsState(initial = viewModel.prefInit.vpnBlockedHostsInitial).value
+                .joinToString(", "),
+            valueVerifier = { value -> BlockListResolver.parse(value) != null },
+            onValueChange = { value -> viewModel.preferences.setVpnBlockedHosts(BlockListResolver.parse(value) ?: emptyList()) }
         )
     }
 }

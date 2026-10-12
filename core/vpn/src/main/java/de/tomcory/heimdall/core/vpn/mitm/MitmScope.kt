@@ -1,6 +1,6 @@
 package de.tomcory.heimdall.core.vpn.mitm
 
-import de.tomcory.heimdall.core.util.Trie
+import de.tomcory.heimdall.core.vpn.rules.HostMatcher
 
 /**
  * Which TLS connections the MitM engine may intercept, as configured by the user's MitM monitoring
@@ -32,9 +32,7 @@ data class MitmScope(
         BLACKLIST
     }
 
-    private val hostTrie = Trie<String> { it.split(".").reversed() }.apply {
-        hosts.map(::normaliseHost).filter { it.isNotEmpty() }.forEach { insert(it, it) }
-    }
+    private val hostMatcher = HostMatcher(hosts)
 
     /**
      * @param appPackage The package of the app that opened the connection, if known.
@@ -49,20 +47,13 @@ data class MitmScope(
         }
         return when (hostMode) {
             HostMode.ALL -> true
-            HostMode.WHITELIST -> matchesHost(hostname)
-            HostMode.BLACKLIST -> !matchesHost(hostname)
+            HostMode.WHITELIST -> hostMatcher.matches(hostname)
+            HostMode.BLACKLIST -> !hostMatcher.matches(hostname)
         }
-    }
-
-    private fun matchesHost(hostname: String): Boolean {
-        val host = normaliseHost(hostname)
-        return host.isNotEmpty() && hostTrie.search(host) != null
     }
 
     companion object {
         /** Intercept everything (the default when no scope is configured). */
         val ALL = MitmScope()
-
-        private fun normaliseHost(host: String) = host.trim().lowercase().removePrefix("*.").removeSuffix(".")
     }
 }

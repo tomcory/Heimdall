@@ -30,6 +30,7 @@ class PreferencesDataSource @Inject constructor(
     val vpnProxyAddress: Flow<String> = datastore.data.map { it.vpnProxyAddress }
     val vpnMonitoringScope: Flow<MonitoringScopeApps> = datastore.data.map { it.vpnMonitoringScope }
     val vpnWhitelistApps: Flow<List<String>> = datastore.data.map { it.vpnWhitelistAppsList }
+    val vpnBlockedHosts: Flow<List<String>> = datastore.data.map { it.vpnBlockedHostsList }
     val vpnBlacklistApps: Flow<List<String>> = datastore.data.map { it.vpnBlacklistAppsList }
 
     val mitmEnable: Flow<Boolean> = datastore.data.map { it.mitmEnable }
@@ -135,6 +136,12 @@ class PreferencesDataSource @Inject constructor(
     suspend fun setVpnMonitoringScope(vpnMonitoringScope: MonitoringScopeApps) {
         datastore.updateData { preferences ->
             preferences.toBuilder().setVpnMonitoringScope(vpnMonitoringScope).build()
+        }
+    }
+
+    suspend fun setVpnBlockedHosts(vpnBlockedHosts: List<String>) {
+        datastore.updateData { preferences ->
+            preferences.toBuilder().clearVpnBlockedHosts().addAllVpnBlockedHosts(vpnBlockedHosts).build()
         }
     }
 

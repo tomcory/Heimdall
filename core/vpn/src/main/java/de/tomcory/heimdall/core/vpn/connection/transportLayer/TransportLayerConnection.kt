@@ -7,6 +7,7 @@ import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.EncryptionLayerConnection
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
+import de.tomcory.heimdall.core.vpn.rules.BlockReason
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,6 +48,14 @@ abstract class TransportLayerConnection protected constructor(
      */
     @Volatile
     var remoteHost: String? = remoteHost
+        private set
+
+    /**
+     * Whether the connection was dropped because its host is on the block list. Nothing is
+     * forwarded for such a connection in either direction.
+     */
+    @Volatile
+    var blockedByRule = false
         private set
 
     /**
@@ -289,7 +298,41 @@ abstract class TransportLayerConnection protected constructor(
                 componentManager.databaseConnector.updateConnectionHost(id, refined, refinedIsTracker)
             }
         }
+
+        // the name may only now show that the host is on the block list
+        if (applyBlockList()) {
+            dropBlocked()
+        }
     }
+
+    /**
+     * Checks the connection's host against the block list and, if it is on it, records the
+     * block. The caller then has to make sure that nothing more is forwarded.
+     *
+     * @return whether the connection is blocked.
+     */
+    protected fun applyBlockList(): Boolean {
+        if (blockedByRule) {
+            return true
+        }
+        if (!componentManager.blockList.blocks(remoteHost, ipPacketBuilder.remoteAddress.hostAddress)) {
+            return false
+        }
+        blockedByRule = true
+        Timber.d("${protocol.name.lowercase()}$id Blocking connection to ${remoteHost ?: ipPacketBuilder.remoteAddress.hostAddress}:$remotePort (host rule)")
+        if (id > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                componentManager.databaseConnector.markConnectionBlocked(id, BlockReason.HOST_RULE)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Tears down a connection that turned out to be blocked after it was set up: the
+     * outward-facing channel is closed and the client is told as far as the protocol allows.
+     */
+    protected abstract fun dropBlocked()
 
     /**
      * Gives a connection that has no hostname yet the name [name], e.g. from an HTTP request's
@@ -506,7 +549,10 @@ abstract class TransportLayerConnection protected constructor(
                 ConnectionCache.addConnection(connection)
                 // A TCP connection is set up on another thread. If that failed at once, the
                 // connection was closed, and taken out of the cache, before it was put in.
-                if (connection.state == TransportLayerState.CLOSED || connection.state == TransportLayerState.ABORTED) {
+                // A blocked UDP flow stays, so that its further datagrams are dropped by the
+                // same connection instead of each opening, and recording, a new one.
+                val keptWhileBlocked = connection is UdpConnection && connection.blockedByRule
+                if (!keptWhileBlocked && (connection.state == TransportLayerState.CLOSED || connection.state == TransportLayerState.ABORTED)) {
                     ConnectionCache.removeConnection(connection)
                 }
             }

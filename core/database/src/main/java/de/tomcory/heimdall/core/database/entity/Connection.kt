@@ -49,6 +49,9 @@ data class Connection(
     val echOffered: Boolean = false,
     // Heimdall dropped this connection's traffic instead of forwarding it
     val blocked: Boolean = false,
+    // why it was dropped: "host_rule" (its host is on the block list) or "quic_policy" (HTTP/3
+    // blocked so that the client falls back to TLS). Null when it was not blocked.
+    val blockReason: String? = null,
     // why a TLS connection was not decrypted although MitM was on: the passthrough reason
     // learned for its app and host (e.g. CLIENT_HANDSHAKE_ERROR), OUT_OF_SCOPE, or
     // UPSTREAM_HANDSHAKE_FAILED for a connection whose own upstream handshake failed. Null when it

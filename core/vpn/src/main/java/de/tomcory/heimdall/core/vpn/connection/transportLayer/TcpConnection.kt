@@ -261,6 +261,13 @@ class TcpConnection internal constructor(
             }
             id = createDatabaseEntity()
 
+            if (applyBlockList()) {
+                // answer the device's SYN with a reset: its connect() fails at once, and no
+                // socket to the host is ever opened
+                closeHard()
+                return
+            }
+
             if(id > 0) {
                 Timber.d("tcp$id Creating TCP Connection to ${ipPacketBuilder.remoteAddress.hostAddress}:${remotePort} ($remoteHost)")
             }
@@ -1279,6 +1286,10 @@ class TcpConnection internal constructor(
     /**
      * Closes the client-side connection by sending a RST packet and setting the connection's state to ABORTED.
      */
+    override fun dropBlocked() {
+        closeHard()
+    }
+
     override fun closeClientSession() {
         state = TransportLayerState.ABORTED
         synchronized(sendLock) {

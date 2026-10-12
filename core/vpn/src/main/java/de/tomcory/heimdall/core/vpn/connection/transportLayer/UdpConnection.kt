@@ -6,6 +6,7 @@ import de.tomcory.heimdall.core.database.entity.Protocol
 import de.tomcory.heimdall.core.vpn.cache.ConnectionCache
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
+import de.tomcory.heimdall.core.vpn.connection.inetLayer.IcmpUnreachableBuilder
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IpPacketBuilder
 import org.pcap4j.packet.Packet
 import org.pcap4j.packet.UdpPacket
@@ -13,6 +14,7 @@ import org.pcap4j.packet.UnknownPacket
 import org.pcap4j.packet.namednumber.UdpPort
 import timber.log.Timber
 import java.io.IOException
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.BufferOverflowException
@@ -62,6 +64,9 @@ class UdpConnection internal constructor(
     var lastActivityAt: Long = System.currentTimeMillis()
         private set
 
+    /** ICMP errors sent for this flow so far; see [answerBlocked]. Only touched on the thread that handles the device's packets. */
+    private var icmpErrorsSent = 0
+
     init {
         // these values must be initialised in this order because they each depend on the previous one
         appId = componentManager.appFinder.getAppId(ipPacketBuilder.localAddress, ipPacketBuilder.remoteAddress, localPort, remotePort, OsConstants.IPPROTO_UDP)
@@ -73,7 +78,13 @@ class UdpConnection internal constructor(
         }
 
         selectableChannel = try {
-            openChannel(ipPacketBuilder.remoteAddress)
+            if (applyBlockList()) {
+                // a placeholder that is never connected: no datagram leaves for a blocked host
+                state = TransportLayerState.ABORTED
+                DatagramChannel.open()
+            } else {
+                openChannel(ipPacketBuilder.remoteAddress)
+            }
         } catch (e: Exception) {
             Timber.e("udp$id Error while creating UDP connection: ${e.message}")
             state = TransportLayerState.ABORTED
@@ -187,6 +198,10 @@ class UdpConnection internal constructor(
     }
 
     override fun unwrapOutbound(outgoingPacket: Packet) {
+        if (blockedByRule) {
+            outgoingPacket.payload?.let { answerBlocked(it.rawData) }
+            return
+        }
         if(state == TransportLayerState.ABORTED) {
             return
         }
@@ -255,7 +270,34 @@ class UdpConnection internal constructor(
 
     override fun closeClientSession() {}
 
+    /**
+     * Releases the socket. The connection stays in the cache, so that the client's further
+     * datagrams still reach it and are dropped, instead of opening new flows.
+     */
+    override fun dropBlocked() {
+        closeSoft()
+    }
+
+    /**
+     * Answers a datagram for a blocked host with an ICMP port unreachable error, so that the
+     * client gives up at once rather than after a timeout. Only the first few are answered, and
+     * only for IPv4: the VPN carries no IPv6 traffic today.
+     */
+    fun answerBlocked(datagram: ByteArray) {
+        if (icmpErrorsSent >= MAX_ICMP_ERRORS) {
+            return
+        }
+        val local = ipPacketBuilder.localAddress as? Inet4Address ?: return
+        val remote = ipPacketBuilder.remoteAddress as? Inet4Address ?: return
+        icmpErrorsSent++
+        val error = IcmpUnreachableBuilder.portUnreachable(local, localPort, remote, remotePort, datagram)
+        deviceWriter.sendMessage(deviceWriter.obtainMessage(DeviceWriteThread.WRITE_ICMP, error))
+    }
+
     companion object {
+        /** How many dropped datagrams of a blocked flow are answered with an ICMP error. */
+        private const val MAX_ICMP_ERRORS = 3
+
         /**
          * Default idle timeout after which a UDP "connection" with no activity is closed by
          * [sweepIdleConnections], matching typical NAT UDP session timeout conventions (RFC 4787

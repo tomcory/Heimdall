@@ -13,6 +13,7 @@ import de.tomcory.heimdall.core.vpn.connection.encryptionLayer.TlsConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
+import de.tomcory.heimdall.core.vpn.rules.BlockList
 import io.mockk.every
 import io.mockk.mockk
 import java.io.File
@@ -70,7 +71,8 @@ object ComponentManagerFixtures {
         pinningCloseWindowMs: Long = TlsConnection.DEFAULT_PINNING_CLOSE_WINDOW_MS,
         trustAllUpstream: Boolean = true,
         refuseDnsOverTlsTo: InetAddress? = null,
-        maxHttpBodySize: Int = HttpConnection.DEFAULT_MAX_BODY_SIZE
+        maxHttpBodySize: Int = HttpConnection.DEFAULT_MAX_BODY_SIZE,
+        blockList: BlockList = BlockList.NONE
     ): ComponentManager {
         val componentManager: ComponentManager = mockk(relaxed = true)
 
@@ -101,6 +103,9 @@ object ComponentManagerFixtures {
         // must be stubbed explicitly: a relaxed mock would return a MitmScope mock whose
         // shouldIntercept() is false, and false for learnPassthrough, silently disabling MitM
         every { componentManager.mitmScope } returns mitmScope
+        // explicit for the same reason: a mocked block list is neither empty nor blocks anything,
+        // which would make every QUIC flow hold its first datagrams
+        every { componentManager.blockList } returns blockList
         every { componentManager.learnPassthrough } returns learnPassthrough
         // a relaxed mock would return 0, and no close would ever count as pinning (PKT-54)
         every { componentManager.pinningCloseWindowMs } returns pinningCloseWindowMs

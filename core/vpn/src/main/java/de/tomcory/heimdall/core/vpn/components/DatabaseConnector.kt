@@ -74,9 +74,12 @@ interface DatabaseConnector {
 
     /**
      * Marks a connection whose traffic was dropped instead of forwarded.
+     *
+     * @param reason Why, see [de.tomcory.heimdall.core.vpn.rules.BlockReason].
      */
     suspend fun markConnectionBlocked(
-        id: Long
+        id: Long,
+        reason: String
     )
 
     /**

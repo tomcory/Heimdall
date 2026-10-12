@@ -3,10 +3,12 @@ package de.tomcory.heimdall.core.vpn.connection.encryptionLayer
 import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
+import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import de.tomcory.heimdall.core.vpn.components.DeviceWriteThread
 import de.tomcory.heimdall.core.vpn.connection.inetLayer.IcmpUnreachableBuilder
 import de.tomcory.heimdall.core.vpn.quic.QuicInitialInspector
 import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
+import de.tomcory.heimdall.core.vpn.rules.BlockReason
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,13 +44,17 @@ class QuicConnection(
      */
     private var inspector: QuicInitialInspector? = QuicInitialInspector()
 
+    /** Whether the Block policy applies to this session's QUIC flows. */
+    private val blockPolicyApplies = componentManager.doMitm && componentManager.quicPolicy == QuicPolicy.BLOCK
+
     /**
-     * Datagrams held back until the inspector's verdict, under the Block policy.
-     * Null when nothing is held: the policy does not apply, or
-     * the verdict is in. The inspector gives up after a few datagrams, which bounds this.
+     * Datagrams held back until the inspector's verdict: under the Block policy, and whenever
+     * there is a block list, because the flow's server name may be on it. Null when nothing is
+     * held: neither applies, or the verdict is in. The inspector gives up after a few datagrams,
+     * which bounds this.
      */
     private var held: MutableList<ByteArray>? =
-        if (componentManager.doMitm && componentManager.quicPolicy == QuicPolicy.BLOCK) mutableListOf() else null
+        if (blockPolicyApplies || !componentManager.blockList.isEmpty) mutableListOf() else null
 
     /** Whether the flow is blocked: everything the client sends is dropped. */
     private var blocked = false
@@ -72,7 +78,12 @@ class QuicConnection(
         held.add(payload)
         val verdict = inspect(payload) ?: return
         this.held = null
-        if (shouldBlock(verdict)) {
+        if (transportLayer.blockedByRule) {
+            // The server name is on the block list: the transport layer has recorded that and
+            // released the socket. What was held is dropped, and answered like the flow's
+            // later datagrams.
+            held.forEach { (transportLayer as? UdpConnection)?.answerBlocked(it) }
+        } else if (blockPolicyApplies && shouldBlock(verdict)) {
             // shouldBlock() only blocks a flow whose ClientHello was read
             block(held, interceptionHost((verdict as QuicInitialInspector.Result.Complete).clientHello.sni))
         } else {
@@ -154,7 +165,7 @@ class QuicConnection(
         Timber.d("quic$id Blocking HTTP/3 to ${transportLayer.remoteHost ?: transportLayer.ipPacketBuilder.remoteAddress.hostAddress} so that the client falls back to TLS")
         if (id > 0) {
             CoroutineScope(Dispatchers.IO).launch {
-                componentManager.databaseConnector.markConnectionBlocked(id)
+                componentManager.databaseConnector.markConnectionBlocked(id, BlockReason.QUIC_POLICY)
             }
         }
         // Release the socket now. The connection stays in the cache, so that the client's

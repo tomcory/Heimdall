@@ -17,6 +17,7 @@ import de.tomcory.heimdall.core.vpn.connection.transportLayer.UdpConnection
 import de.tomcory.heimdall.core.vpn.mitm.Authority
 import de.tomcory.heimdall.core.vpn.mitm.CertificateSniffingMitmManager
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
+import de.tomcory.heimdall.core.vpn.rules.BlockList
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
 import de.tomcory.heimdall.core.vpn.quic.QuicPolicy
 import kotlinx.coroutines.CoroutineScope
@@ -68,6 +69,8 @@ class ComponentManager(
     val doMitm: Boolean = false,
     val trustAllUpstreamCertificates: Boolean = false,
     val mitmScope: MitmScope = MitmScope.ALL,
+    // hosts whose connections are dropped instead of forwarded
+    val blockList: BlockList = BlockList.NONE,
     val learnPassthrough: Boolean = true,
     // how soon after its handshake a client must close a connection without data for the close
     // to count as certificate pinning

@@ -25,6 +25,7 @@ import de.tomcory.heimdall.core.vpn.components.VPN_MTU
 import de.tomcory.heimdall.core.vpn.components.RoomDatabaseConnector
 import de.tomcory.heimdall.core.vpn.mitm.MitmScope
 import de.tomcory.heimdall.core.vpn.mitm.VpnComponentLaunchException
+import de.tomcory.heimdall.core.vpn.rules.BlockList
 import de.tomcory.heimdall.ui.main.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,9 @@ class HeimdallVpnService : VpnService() {
 
     /** Whether the running session intercepts TLS; set by [launchServiceComponents]. */
     private var sessionMitm = false
+
+    /** How many hosts the running session blocks; set by [launchServiceComponents]. */
+    private var sessionBlockedHosts = 0
     private var notificationUpdateHandler: Handler? = null
     private var notificationUpdateRunnable: Runnable? = null
 
@@ -154,7 +158,7 @@ class HeimdallVpnService : VpnService() {
                             Timber.d("VpnService started")
                             preferences.setVpnActive(true)
                             preferences.setVpnLastUpdated(System.currentTimeMillis())
-                            captureState.running(componentManager?.sessionId ?: existingSessionId, sessionMitm)
+                            captureState.running(componentManager?.sessionId ?: existingSessionId, sessionMitm, sessionBlockedHosts)
                         }
                         VpnServiceLifecycle.LaunchOutcome.SHUT_DOWN -> {
                             Timber.i("STOP_SERVICE was received while the VPN was starting, shutting it down")
@@ -295,8 +299,11 @@ class HeimdallVpnService : VpnService() {
         val learnPassthrough = preferences.mitmAppLayerPassthrough.first()
         val quicPolicy = QuicPolicyResolver.resolve(doMitm, preferences.mitmQuicPolicy.first(), quicPolicyOverride)
         val maxHttpBodySize = HttpBodyLimitResolver.resolve(preferences.mitmHttpBodyLimitKb.first())
+        val blockedHosts = BlockListResolver.hosts(preferences.vpnBlockedHosts.first(), options.blockHosts)
+        sessionBlockedHosts = blockedHosts.size
 
         Timber.d("MitM mode: $doMitm")
+        Timber.d("Blocked hosts: ${blockedHosts.size} (${options.blockHosts.size} from the session)")
         Timber.d("QUIC policy: $quicPolicy${if (quicPolicyOverride != null) " (session override '$quicPolicyOverride')" else ""}")
         if (doMitm) {
             Timber.d("MitM scope: apps included=${mitmScope.includedApps?.size ?: "all"}, excluded=${mitmScope.excludedApps.size}, hosts=${mitmScope.hostMode} (${mitmScope.hosts.size}); learn passthrough: $learnPassthrough")
@@ -333,6 +340,7 @@ class HeimdallVpnService : VpnService() {
                 doMitm = doMitm,
                 trustAllUpstreamCertificates = trustAllUpstreamCertificates,
                 mitmScope = mitmScope,
+                blockList = BlockList(blockedHosts),
                 learnPassthrough = learnPassthrough,
                 quicPolicy = quicPolicy,
                 refuseDnsOverTlsTo = refuseDnsOverTlsTo,
