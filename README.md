@@ -3,8 +3,6 @@
 > Heimdall is the traffic capture and app scanner of the Asgard suite (Observation dimension of the
 > O/D/E framework).
 
-![Build Status](https://github.com/tomcory/Heimdall/actions/workflows/android.yml/badge.svg)
-
 Heimdall is an advanced toolkit designed to empower researchers, developers, and privacy enthusiasts in analysing and studying the privacy-related behavior of Android applications.
 By providing a comprehensive overview of permissions, embedded third-party libraries, and network traffic, Heimdall aims to foster transparency and awareness regarding mobile privacy.
 
