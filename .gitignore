@@ -11,3 +11,5 @@ secure.properties
 plan/
 apex/
 docs-internal/
+# Capture exports pulled from a device by hand
+/exports-*/

@@ -2,8 +2,8 @@
 
 Heimdall can be driven from a host machine without touching its UI: start and stop a capture, ask
 what it is doing, block hosts for a session, and export what was captured. This is what scripted
-workflows build on, in Asgard the app driver **Loki** (through its hooks) and the Expectation
-pipeline **Skuld**.
+workflows build on, in Asgard the app driver **Loki**, which starts, stops and exports a capture
+around each of its runs. The other components read what Loki puts into its run folders.
 
 Everything here was run on an emulator with Android 13 (API 33). Later Android versions are
 untested; see [Prerequisites](#prerequisites).
@@ -220,18 +220,24 @@ dir=$(adb shell "$H -a de.tomcory.heimdall.action.EXPORT_CAPTURE" | grep -o 'dir
 adb pull "$dir" ./capture-baseline-1
 ```
 
-With Loki, the same commands go into its hooks, so that every run is one tagged session:
+With Loki, a section of its configuration makes every run one tagged session, scoped to the app
+under test and exported into the run folder:
 
 ```yaml
-hooks:
-  run_start: [{cmd: "adb -s {serial} shell am broadcast -f 0x20 -n de.tomcory.heimdall/.service.CaptureCommandReceiver -a de.tomcory.heimdall.action.START_CAPTURE --es tag {run_id} --es apps {package}", required: true}]
-  run_end:   [{cmd: "adb -s {serial} shell am broadcast -f 0x20 -n de.tomcory.heimdall/.service.CaptureCommandReceiver -a de.tomcory.heimdall.action.STOP_CAPTURE"}]
+capture:
+  backend: heimdall
+  mitm: true
+  block_hosts: [ads.example.net]
 ```
 
-A hook command succeeds when `am broadcast` could send the broadcast, also if Heimdall answered
-`status=error`. A caller that depends on the capture has to read the answer; `skuld capture` (in
-Skuld) wraps the commands, exits with 1 on a refusal and pulls the export, and is what a Loki run
-has been captured with.
+Loki sends the commands above, reads every answer (a refusal ends the run with Heimdall's reason),
+waits where Heimdall answers `starting`, `stopping` or `running`, pulls the export and checks every
+record against its schema in Ratatoskr. `loki capture start|stop|status|export` does the same
+without a run. Both are described in `Loki/docs/capture.md`.
+
+A caller of its own, such as a script or one of Loki's hooks, has to read the answers itself: a
+command run with `am broadcast` succeeds when the broadcast could be sent, also if Heimdall
+answered `status=error`.
 
 ## Mapping records to Loki's actions
 
