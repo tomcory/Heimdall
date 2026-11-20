@@ -137,6 +137,13 @@ class TlsPassthroughCache(
 }
 
 /**
+ * Prefix of the passthrough reason recorded on the connection whose interception the app refused
+ * (e.g. `REJECTED:CLIENT_HANDSHAKE_ERROR`); the connections passed through afterwards record the
+ * learned reason alone.
+ */
+const val REJECTED_PREFIX = "REJECTED:"
+
+/**
  * Why a pair is passed through: signals that an app won't accept Heimdall's forged certificate
  * for a host, or that Heimdall could not complete its own handshake with the server.
  */

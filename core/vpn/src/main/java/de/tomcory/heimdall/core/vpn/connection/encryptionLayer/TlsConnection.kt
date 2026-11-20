@@ -4,6 +4,7 @@ import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 import de.tomcory.heimdall.core.vpn.components.ComponentManager
 import de.tomcory.heimdall.core.vpn.connection.transportLayer.TransportLayerConnection
 import de.tomcory.heimdall.core.vpn.metadata.PassthroughReason
+import de.tomcory.heimdall.core.vpn.metadata.REJECTED_PREFIX
 import de.tomcory.heimdall.core.vpn.mitm.Alpn
 import de.tomcory.heimdall.core.util.ByteUtils
 import kotlinx.coroutines.CancellationException
@@ -133,6 +134,9 @@ class TlsConnection(
     /** Whether [upstreamHandshakeFailed] has run for this connection. */
     private var upstreamFailureRecorded = false
 
+    /** Whether [rejected] has recorded the rejection on this connection. */
+    private var rejectionRecorded = false
+
     /** The application protocols the client offered in its ClientHello. */
     private var clientAlpn: List<String> = emptyList()
 
@@ -244,7 +248,7 @@ class TlsConnection(
         connectionScope.launch {
             if(log) Timber.d("tls$id onClientClosed in state $state")
             if(state == ConnectionState.CLIENT_HANDSHAKE) {
-                learnPassthrough(PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE)
+                rejected(PassthroughReason.CLIENT_CLOSED_DURING_HANDSHAKE)
             } else {
                 recordPinningSuspect()
             }
@@ -1041,7 +1045,7 @@ class TlsConnection(
             // the only signal that catches it reliably; the exception text differs by provider
             // (JDK vs Conscrypt), so any SSLException in this state counts.
             if(isOutbound && state == ConnectionState.CLIENT_HANDSHAKE) {
-                learnPassthrough(PassthroughReason.CLIENT_HANDSHAKE_ERROR)
+                rejected(PassthroughReason.CLIENT_HANDSHAKE_ERROR)
             }
             // the server-facing engine failing on the server's data mid-handshake: typically
             // its certificate did not verify
@@ -1406,6 +1410,24 @@ class TlsConnection(
     }
 
     /**
+     * The app refused this connection's interception: it rejected the forged certificate, closed
+     * during the handshake, or closed right after it without sending data. The reason is learned
+     * for the (app, host) pair, so that the app's retry is passed through, and recorded on this
+     * connection as [REJECTED_PREFIX] + reason, so that the database tells it apart from the retry,
+     * which records the learned reason alone. Nothing of the app's data passed on this connection.
+     */
+    private fun rejected(reason: PassthroughReason) {
+        if(!doMitm) {
+            return
+        }
+        learnPassthrough(reason)
+        if(!rejectionRecorded) {
+            rejectionRecorded = true
+            persistPassthroughReason(REJECTED_PREFIX + reason.name)
+        }
+    }
+
+    /**
      * Counts a pinning-style close (handshake completed, then closed without any application
      * data) toward passthrough. Called both when the client closes the TCP connection and when it
      * sends close_notify; the latter tears this connection down, so the two never double-count.
@@ -1430,7 +1452,7 @@ class TlsConnection(
             if(log) Timber.d("tls$id closed without data ${idleMs}ms after the handshake, not counted as pinning")
             return
         }
-        learnPassthrough(PassthroughReason.CLOSED_WITHOUT_DATA)
+        rejected(PassthroughReason.CLOSED_WITHOUT_DATA)
     }
 
     /**

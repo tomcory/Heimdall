@@ -425,7 +425,12 @@ private fun blockReasonLabel(reason: String?): String = when (reason) {
 }
 
 /** A readable form of [de.tomcory.heimdall.core.database.entity.Connection.passthroughReason]. */
-private fun passthroughReasonLabel(reason: String): String = when (reason) {
+private fun passthroughReasonLabel(reason: String): String = when {
+    reason.startsWith("REJECTED:") -> "app refused the interception: " + passthroughReasonLabel(reason.removePrefix("REJECTED:"))
+    else -> learnedReasonLabel(reason)
+}
+
+private fun learnedReasonLabel(reason: String): String = when (reason) {
     "OUT_OF_SCOPE"                   -> "outside the MitM scope"
     "CLIENT_HANDSHAKE_ERROR"         -> "app rejected the certificate"
     "CLIENT_CLOSED_DURING_HANDSHAKE" -> "app closed during the handshake"

@@ -110,6 +110,12 @@ class TlsPassthroughLearningTest {
             fakeTlsServer.leafCert,
             passthroughDriver.engine.session.peerCertificates[0]
         )
+        awaitCondition("the rejecting connection should record that the app refused it") {
+            passthroughReasonOf(45001) == "REJECTED:CLIENT_HANDSHAKE_ERROR"
+        }
+        awaitCondition("the retry should record the learned reason alone") {
+            passthroughReasonOf(45002) == "CLIENT_HANDSHAKE_ERROR"
+        }
     }
 
     @Test
@@ -125,6 +131,9 @@ class TlsPassthroughLearningTest {
         flow.sendFin()
 
         awaitCondition("the pair should have been marked for passthrough") { cache.get(appId, hostname) }
+        awaitCondition("the connection should record that the app refused it") {
+            passthroughReasonOf(45010) == "REJECTED:CLIENT_CLOSED_DURING_HANDSHAKE"
+        }
     }
 
     @Test
@@ -417,6 +426,8 @@ class TlsPassthroughLearningTest {
         // negative assertion: allow time for the rejection to be processed (see the normal-flow test)
         Thread.sleep(500)
         assertFalse(cache.get(appId, hostname))
+        // what happened on the connection is still recorded
+        assertEquals("REJECTED:CLIENT_HANDSHAKE_ERROR", passthroughReasonOf(45043))
     }
 
     /** Opens a connection and asserts the client sees the real upstream certificate, i.e. no MitM. */
