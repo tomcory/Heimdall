@@ -10,6 +10,9 @@ interface AppXTrackerDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(vararg crossRef: AppXTracker)
 
+    @Query("DELETE FROM AppXTracker WHERE packageName = :packageName")
+    suspend fun deleteForApp(packageName: String)
+
     @Transaction
     @Query("SELECT * FROM App WHERE packageName = :packageName")
     suspend fun getAppWithTrackers(packageName: String): AppWithTrackers

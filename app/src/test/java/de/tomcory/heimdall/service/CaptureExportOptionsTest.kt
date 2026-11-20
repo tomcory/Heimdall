@@ -26,6 +26,7 @@ class CaptureExportOptionsTest {
         assertEquals(listOf("com.example.app", "org.example.other"), options.apps)
         assertEquals(setOf(Format.SQLITE, Format.MESSAGES), options.formats)
         assertEquals(SessionSelector.All, CaptureExportOptions.parse("all", null, null).session)
+        assertEquals(setOf(Format.SCANS), CaptureExportOptions.parse(null, "com.example.app", "scans").formats)
     }
 
     @Test

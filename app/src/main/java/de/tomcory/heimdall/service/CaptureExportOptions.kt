@@ -4,7 +4,8 @@ package de.tomcory.heimdall.service
  * What a capture export covers. Kept free of Android dependencies so it can be unit tested.
  *
  * @param session Which session's traffic is exported.
- * @param apps If not empty, only the traffic of these packages. Does not apply to the database copy.
+ * @param apps If not empty, only the traffic of these packages, and the scans of these apps. Does not apply to the
+ *   database copy.
  * @param formats What is written.
  */
 data class CaptureExportOptions(
@@ -31,7 +32,10 @@ data class CaptureExportOptions(
         CONNECTIONS("connections", "connections.jsonl"),
 
         /** A copy of the whole database, whatever [session] and [apps] say. */
-        SQLITE("sqlite", "heimdall.sqlite")
+        SQLITE("sqlite", "heimdall.sqlite"),
+
+        /** One record per app of [apps] (the apps with traffic in the export if none are given), scanned when the export is made. */
+        SCANS("scans", "scans.jsonl")
     }
 
     /** A value of an adb extra that cannot be used; [reason] goes into the command's result. */

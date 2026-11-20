@@ -96,22 +96,8 @@ class ScanWorker(
             return
         }
 
-        val versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
-        val versionName = pkgInfo.versionName ?: ""
-
-        val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
-
         // Always update the app entry in database to ensure current data
-        database.appDao().insertApps(
-            App(
-                packageName = packageName,
-                label = label,
-                versionCode = versionCode,
-                versionName = versionName,
-                isSystem = ((pkgInfo.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
-                flags = pkgInfo.applicationInfo?.flags ?: 0
-            )
-        )
+        database.appDao().insertApps(appRow(pm, pkgInfo))
 
         Timber.d("Scanning $packageName...")
         if (scanPermissions) {
@@ -154,18 +140,7 @@ class ScanWorker(
                     existingApp.versionName != versionName ||
                     !existingApp.isInstalled
 
-            val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
-
-            appsToUpsert.add(
-                App(
-                    packageName = packageName,
-                    label = label,
-                    versionCode = versionCode,
-                    versionName = versionName,
-                    isSystem = ((pkgInfo.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
-                    flags = pkgInfo.applicationInfo?.flags ?: 0
-                )
-            )
+            appsToUpsert.add(appRow(pm, pkgInfo))
 
             if (isAppChanged) {
                 packagesToScan.add(pkgInfo)
@@ -235,3 +210,12 @@ class ScanWorker(
         }
     }
 }
+/** The database row of an installed app, as the scans and the scan export store it. */
+internal fun appRow(pm: PackageManager, pkgInfo: PackageInfo): App = App(
+    packageName = pkgInfo.packageName,
+    label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: pkgInfo.packageName,
+    versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo),
+    versionName = pkgInfo.versionName ?: "",
+    isSystem = ((pkgInfo.applicationInfo?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
+    flags = pkgInfo.applicationInfo?.flags ?: 0
+)

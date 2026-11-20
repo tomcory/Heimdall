@@ -14,6 +14,9 @@ interface AppXPermissionDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(vararg crossRef: AppXPermission)
 
+    @Query("DELETE FROM AppXPermission WHERE packageName = :packageName")
+    suspend fun deleteForApp(packageName: String)
+
     @Transaction
     @Query("SELECT * FROM App WHERE packageName = :packageName")
     suspend fun getAppWithPermissions(packageName: String): AppWithPermissions

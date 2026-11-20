@@ -63,6 +63,7 @@ fun ExportDialog(
                         FormatRow(Format.MESSAGES, "HTTP messages (JSON Lines)", formats) { formats = it }
                         FormatRow(Format.CONNECTIONS, "Connections (JSON Lines)", formats) { formats = it }
                         FormatRow(Format.SQLITE, "Copy of the whole database (SQLite)", formats) { formats = it }
+                        FormatRow(Format.SCANS, "Permissions and libraries of the apps (JSON Lines)", formats) { formats = it }
                     }
                     ExportState.Running -> {
                         Text("Exporting…")
