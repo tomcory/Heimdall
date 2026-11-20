@@ -17,6 +17,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import de.tomcory.heimdall.R
 import de.tomcory.heimdall.application.HeimdallApplication
 import de.tomcory.heimdall.core.database.HeimdallDatabase
+import de.tomcory.heimdall.core.export.jsonl.CaptureSettings
 import de.tomcory.heimdall.core.datastore.PreferencesDataSource
 import de.tomcory.heimdall.core.util.AppFinder
 import de.tomcory.heimdall.core.util.InetAddressUtils
@@ -48,6 +49,7 @@ class HeimdallVpnService : VpnService() {
     @Inject lateinit var preferences: PreferencesDataSource
     @Inject lateinit var database: HeimdallDatabase
     @Inject lateinit var captureState: CaptureState
+    @Inject lateinit var sessionSettings: SessionSettingsStore
 
     private val coroutineScope = CoroutineScope(Dispatchers.Default)
     private var componentManager: ComponentManager? = null
@@ -62,6 +64,9 @@ class HeimdallVpnService : VpnService() {
 
     /** How many hosts the running session blocks; set by [launchServiceComponents]. */
     private var sessionBlockedHosts = 0
+
+    /** What the running session was configured to do; set by [launchServiceComponents], recorded once it runs. */
+    private var resolvedSettings: CaptureSettings? = null
     private var notificationUpdateHandler: Handler? = null
     private var notificationUpdateRunnable: Runnable? = null
 
@@ -158,7 +163,9 @@ class HeimdallVpnService : VpnService() {
                             Timber.d("VpnService started")
                             preferences.setVpnActive(true)
                             preferences.setVpnLastUpdated(System.currentTimeMillis())
-                            captureState.running(componentManager?.sessionId ?: existingSessionId, sessionMitm, sessionBlockedHosts)
+                            val sessionId = componentManager?.sessionId ?: existingSessionId
+                            resolvedSettings?.let { if (sessionId >= 0) sessionSettings.write(sessionId, it) }
+                            captureState.running(sessionId, sessionMitm, sessionBlockedHosts)
                         }
                         VpnServiceLifecycle.LaunchOutcome.SHUT_DOWN -> {
                             Timber.i("STOP_SERVICE was received while the VPN was starting, shutting it down")
@@ -326,6 +333,20 @@ class HeimdallVpnService : VpnService() {
         // to the VPN's DNS server, which leaves Heimdall's DNS cache empty. Refusing it makes the
         // resolver fall back to plain DNS. In strict mode that would break DNS, so it is left.
         val refuseDnsOverTlsTo = if (strictPrivateDns) null else vpnDnsServerAddress
+        resolvedSettings = CaptureSettings(
+            mitm = doMitm,
+            includedApps = mitmScope.includedApps,
+            excludedApps = mitmScope.excludedApps,
+            hostMode = mitmScope.hostMode.name,
+            hosts = mitmScope.hosts,
+            learnPassthrough = learnPassthrough,
+            trustAllUpstreamCertificates = trustAllUpstreamCertificates,
+            quicPolicy = quicPolicy.name,
+            blockedHosts = blockedHosts,
+            maxHttpBodyBytes = maxHttpBodySize,
+            privateDnsStrict = strictPrivateDns,
+            apps = options.apps
+        )
         Timber.d("Private DNS strict mode: $strictPrivateDns; refusing DNS over TLS to: ${refuseDnsOverTlsTo?.hostAddress ?: "none"}")
         val interfaceDescriptor = vpnInterface?.fileDescriptor ?: return false
 

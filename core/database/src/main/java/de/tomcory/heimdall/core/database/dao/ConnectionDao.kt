@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import de.tomcory.heimdall.core.database.entity.Connection
+import de.tomcory.heimdall.core.database.entity.ConnectionFacts
 import de.tomcory.heimdall.core.database.entity.SecurityProtocol
 
 @Dao
@@ -63,6 +64,30 @@ interface ConnectionDao {
         LIMIT :limit OFFSET :offset
     """)
     suspend fun getForExport(sessionId: Long, filterApps: Boolean, apps: List<String>, limit: Int, offset: Int): List<Connection>
+
+    /**
+     * What tells, for each connection of an export, whether its traffic could be observed (see
+     * [ConnectionFacts]).
+     *
+     * @param sessionId The session, or -1 for all sessions.
+     * @param filterApps Whether only the connections of [apps] are returned.
+     */
+    @Query("""
+        SELECT protocol, securityProtocol, remotePort, bytesOut, blocked, blockReason, passthroughReason,
+               EXISTS (SELECT 1 FROM Request WHERE Request.connectionId = Connection.id) AS hasRequest
+        FROM Connection
+        WHERE (:sessionId < 0 OR sessionId = :sessionId)
+          AND (:filterApps = 0 OR initiatorPkg IN (:apps))
+    """)
+    suspend fun getFactsForExport(sessionId: Long, filterApps: Boolean, apps: List<String>): List<ConnectionFacts>
+
+    /** The apps with traffic in a session, or in all sessions with -1. */
+    @Query("""
+        SELECT DISTINCT initiatorPkg FROM Connection
+        WHERE (:sessionId = -1 OR sessionId = :sessionId) AND initiatorPkg IS NOT NULL AND initiatorPkg != ''
+        ORDER BY initiatorPkg
+    """)
+    suspend fun getAppsForExport(sessionId: Long): List<String>
 
     @Query("SELECT * FROM Connection ORDER BY initialTimestamp DESC")
     fun getAllObservable(): kotlinx.coroutines.flow.Flow<List<Connection>>
