@@ -56,7 +56,10 @@ class ConnectionCache {
 
         /** Snapshot of every currently-cached connection, regardless of protocol. */
         fun allConnections(): List<TransportLayerConnection> {
-            return cache.connections.values.toList()
+            // Not values.toList(): for a size of 1 it reads size, then iterator().next(), which throws
+            // NoSuchElementException if the connection was removed in between (crashed the capture,
+            // 2026-11-10 03:55, flushByteCounters). ArrayList copies via toArray(), safe on ConcurrentHashMap.
+            return ArrayList(cache.connections.values)
         }
 
         fun closeAllAndClear() {
